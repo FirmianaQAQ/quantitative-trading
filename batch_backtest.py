@@ -23,6 +23,7 @@ def batch_backtest(strategy_id: str | None = None) -> None:
 
     base_config = dict(spec.config)
     base_config["plot"] = False
+    base_config["print_log"] = False
 
     spec.validate_config(
         {

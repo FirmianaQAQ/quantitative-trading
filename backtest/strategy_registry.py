@@ -59,7 +59,7 @@ def list_strategy_specs() -> tuple[StrategySpec, ...]:
             specs.append(spec)
 
     if not specs:
-        raise RuntimeError("未找到可用的 simple_ma_backtest 策略版本")
+        raise RuntimeError("未找到可用的回测策略")
     return tuple(specs)
 
 

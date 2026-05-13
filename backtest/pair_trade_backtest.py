@@ -32,14 +32,14 @@ from utils.project_utils import load_daily_data
 
 TEST_CASES = [
     {
-        "code": "pair_000100_000725",
-        "label": "TCL科技 / 京东方A",
-        "required_codes": ["sz.000100", "sz.000725"],
-    },
-    {
         "code": "pair_000100_001308",
         "label": "TCL科技 / 康冠科技",
         "required_codes": ["sz.000100", "sz.001308"],
+    },
+    {
+        "code": "pair_000100_000725",
+        "label": "TCL科技 / 京东方A",
+        "required_codes": ["sz.000100", "sz.000725"],
     },
     {
         "code": "pair_000725_001308",
@@ -51,7 +51,7 @@ TEST_CASES = [
 PAIR_CASE_MAP = {item["code"]: item for item in TEST_CASES}
 
 CONFIG: dict[str, Any] = {
-    "code": "pair_000100_000725",
+    "code": "pair_000100_001308",
     "adjust_flag": "hfq",
     "from_date": "2020-01-01",
     "to_date": None,
@@ -60,11 +60,11 @@ CONFIG: dict[str, Any] = {
     "commission": 0.0001,
     "lot_size": 100,
     "gross_exposure_ratio": 0.9,
-    "lookback": 60,
-    "entry_z": 2.0,
-    "exit_z": 0.35,
-    "pair_stop_loss_pct": 0.06,
-    "max_holding_days": 30,
+    "lookback": 50,
+    "entry_z": 1.8,
+    "exit_z": 0.1,
+    "pair_stop_loss_pct": 0.04,
+    "max_holding_days": 20,
     "print_log": True,
     "plot": True,
     "report_dir": "logs/backtest",
