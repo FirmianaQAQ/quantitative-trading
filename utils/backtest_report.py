@@ -300,7 +300,7 @@ def _build_log_panel(log_lines: list[str] | None) -> str:
     else:
         items = "".join(
             f'<div class="log-line">{html_escape(str(line))}</div>'
-            for line in log_lines
+            for line in reversed(log_lines)
         )
         body = f'<div class="log-list">{items}</div>'
 

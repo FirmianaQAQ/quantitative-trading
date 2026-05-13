@@ -8,7 +8,7 @@ from backtest.strategy_registry import (
 from utils.project_utils import load_daily_data
 
 
-def batch_backtest(strategy_id: str | None = None) -> None:
+def batch_backtest(strategy_id: str | None = None, cash: float | None = None) -> None:
     """
     批量测试多只股票，每只股票单独跑一次回测。
     strategy_id 为空时，默认跑基础版 simple_ma_backtest。
@@ -24,6 +24,8 @@ def batch_backtest(strategy_id: str | None = None) -> None:
     base_config = dict(spec.config)
     base_config["plot"] = False
     base_config["print_log"] = False
+    if cash is not None:
+        base_config["cash"] = cash
 
     spec.validate_config(
         {
@@ -32,6 +34,7 @@ def batch_backtest(strategy_id: str | None = None) -> None:
         }
     )
     print(f"已选择策略: {spec.display_name} ({spec.strategy_id})")
+    print(f"初始资金: {base_config['cash']:.2f}")
 
     for test_case in spec.test_cases:
         config = dict(base_config)

@@ -34,6 +34,7 @@ EXIT_ALL_MENU_VALUE = "__exit_all__"
 MANUAL_MENU_VALUE = "__manual__"
 RECOMMEND_MENU_VALUE = "__recommend__"
 FULL_EXIT_CODE = 86
+DEFAULT_CASH = 100000.0
 
 
 def normalize_code(raw_code: str) -> str:
@@ -46,6 +47,24 @@ def normalize_code(raw_code: str) -> str:
         raise ValueError("股票代码格式错误，应为 sz.000725 或 000725")
     prefix = "sh" if code.startswith("6") else "sz"
     return f"{prefix}.{code}"
+
+
+def parse_cash_input(raw_value: str) -> float:
+    text = raw_value.strip().lower()
+    if not text:
+        return DEFAULT_CASH
+
+    normalized = text.replace(",", "").replace(" ", "")
+    if normalized.endswith("万"):
+        normalized = normalized[:-1] + "w"
+    if normalized.endswith("w"):
+        value = float(normalized[:-1]) * 10000
+    else:
+        value = float(normalized)
+
+    if value <= 0:
+        raise ValueError("初始资金必须大于 0")
+    return round(value, 2)
 
 
 def get_stock_label(code: str) -> str:
@@ -198,6 +217,17 @@ def choose_stock_interactively(spec: StrategySpec) -> str:
         return selected
 
 
+def prompt_initial_cash() -> float:
+    while True:
+        raw_value = input("请输入初始资金，直接回车默认 10w: ").strip()
+        if raw_value.lower() == "q":
+            raise SystemExit(FULL_EXIT_CODE)
+        try:
+            return parse_cash_input(raw_value)
+        except ValueError as exc:
+            print(f"输入无效: {exc}")
+
+
 def parse_cli_args() -> tuple[str | None, str | None]:
     if len(sys.argv) <= 1:
         return None, None
@@ -224,10 +254,11 @@ def choose_strategy_spec(cli_strategy_id: str | None) -> StrategySpec:
     return get_strategy_spec(selected)
 
 
-def resolve_config(spec: StrategySpec, stock_code: str | None) -> dict:
+def resolve_config(spec: StrategySpec, stock_code: str | None, cash: float) -> dict:
     config = dict(spec.config)
     if stock_code:
         config["code"] = stock_code
+    config["cash"] = cash
 
     config["plot"] = True
     config["print_log"] = False
@@ -425,10 +456,12 @@ def main() -> None:
             cli_stock_code = None
             continue
         break
-    config = resolve_config(spec, stock_code)
+    cash = prompt_initial_cash()
+    config = resolve_config(spec, stock_code, cash)
 
     print(f"已选择策略: {spec.display_name} ({spec.strategy_id})")
     print(f"已选择股票: {config['code']} {get_display_label(spec, config['code'])}")
+    print(f"初始资金: {config['cash']:.2f}")
 
     validate_required_data_files(spec, config)
     spec.validate_config(config)

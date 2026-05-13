@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 import time
+from collections import defaultdict, deque
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -37,6 +38,9 @@ FAILED_QUEUE_RETRY_ROUNDS = 1
 FAILED_QUEUE_RETRY_COOLDOWN_SECONDS = 8
 TUSHARE_TOKEN = "2755050aba62303e45f6842ee9e67defdf6e3c1b32bb033ca4ba037e"
 TUSHARE_DAILY_ONLY = True
+TUSHARE_DAILY_BATCH_SIZE = 20
+TUSHARE_DAILY_MAX_CALLS_PER_MINUTE = 45
+TUSHARE_DAILY_WINDOW_SECONDS = 60
 
 STORAGE_COLUMNS = [
     "date",
@@ -58,6 +62,7 @@ STORAGE_COLUMNS = [
 ]
 
 _TUSHARE_PRO_CLIENT = None
+_TUSHARE_DAILY_CALL_TIMESTAMPS: deque[float] = deque()
 
 
 def configure_logging() -> None:
@@ -214,6 +219,19 @@ def resolve_effective_adjust_flag(config_adjust_flag: str) -> str:
     return "cq"
 
 
+def is_tushare_rate_limit_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    keywords = [
+        "频率超限",
+        "每分钟最多访问",
+        "too many requests",
+        "rate limit",
+        "rate exceeded",
+        "50次/分钟",
+    ]
+    return any(keyword in message for keyword in keywords)
+
+
 def is_retryable_request_error(exc: Exception) -> bool:
     message = str(exc).lower()
     keywords = [
@@ -226,6 +244,7 @@ def is_retryable_request_error(exc: Exception) -> bool:
         "bad gateway",
         "service unavailable",
         "too many requests",
+        "频率超限",
     ]
     if isinstance(
         exc,
@@ -249,6 +268,8 @@ def retry_request_call(func, *, action_name: str):
             if not is_retryable_request_error(exc) or attempt >= REQUEST_RETRY_TIMES:
                 raise
             wait_seconds = REQUEST_RETRY_SLEEP_SECONDS * attempt
+            if is_tushare_rate_limit_error(exc):
+                wait_seconds = max(wait_seconds, TUSHARE_DAILY_WINDOW_SECONDS + 2)
             logger.warning(
                 "%s 第 %s/%s 次失败: %s，%s 秒后重试",
                 action_name,
@@ -261,6 +282,31 @@ def retry_request_call(func, *, action_name: str):
     if last_error is not None:
         raise last_error
     raise RuntimeError(f"{action_name} 未执行")
+
+
+def enforce_tushare_daily_rate_limit() -> None:
+    while True:
+        now = time.time()
+        while _TUSHARE_DAILY_CALL_TIMESTAMPS and (
+            now - _TUSHARE_DAILY_CALL_TIMESTAMPS[0] >= TUSHARE_DAILY_WINDOW_SECONDS
+        ):
+            _TUSHARE_DAILY_CALL_TIMESTAMPS.popleft()
+
+        if len(_TUSHARE_DAILY_CALL_TIMESTAMPS) < TUSHARE_DAILY_MAX_CALLS_PER_MINUTE:
+            _TUSHARE_DAILY_CALL_TIMESTAMPS.append(now)
+            return
+
+        wait_seconds = (
+            TUSHARE_DAILY_WINDOW_SECONDS
+            - (now - _TUSHARE_DAILY_CALL_TIMESTAMPS[0])
+            + 1
+        )
+        wait_seconds = max(wait_seconds, 1)
+        logger.warning(
+            "Tushare daily 调用已接近频控阈值，等待 %.1f 秒后继续",
+            wait_seconds,
+        )
+        time.sleep(wait_seconds)
 
 
 def fetch_stock_history(symbol: str, start_date: str, end_date: str, adjust_flag: str) -> pd.DataFrame:
@@ -336,13 +382,10 @@ def fetch_stock_history_from_tushare(
     start_date_compact = start_date.replace("-", "")
     end_date_compact = end_date.replace("-", "")
 
-    pro = get_tushare_pro_client()
-    raw_df = retry_request_call(
-        lambda: pro.daily(
-            ts_code=ts_code,
-            start_date=start_date_compact,
-            end_date=end_date_compact,
-        ),
+    raw_df = fetch_tushare_daily_data(
+        ts_codes=[ts_code],
+        start_date=start_date_compact,
+        end_date=end_date_compact,
         action_name=f"拉取股票 {ts_code} Tushare 日线",
     )
     return normalize_tushare_stock_history_df(
@@ -350,6 +393,30 @@ def fetch_stock_history_from_tushare(
         full_code=full_code,
         adjust_flag=adjust_flag,
     )
+
+
+def fetch_tushare_daily_data(
+    ts_codes: list[str],
+    start_date: str,
+    end_date: str,
+    action_name: str,
+) -> pd.DataFrame:
+    if ts is None:
+        raise RuntimeError("未安装 tushare")
+    if not ts_codes:
+        return pd.DataFrame()
+
+    pro = get_tushare_pro_client()
+
+    def _request():
+        enforce_tushare_daily_rate_limit()
+        return pro.daily(
+            ts_code=",".join(ts_codes),
+            start_date=start_date,
+            end_date=end_date,
+        )
+
+    return retry_request_call(_request, action_name=action_name)
 
 
 def fetch_stock_history_from_eastmoney(
@@ -663,6 +730,115 @@ def merge_and_save_history(csv_path: Path, existing_df: pd.DataFrame, new_df: pd
     return len(new_df)
 
 
+def build_stock_sync_plan(
+    full_code: str,
+    start_date: str,
+    end_date: str,
+    adjust_flag: str,
+) -> dict[str, object]:
+    csv_path = get_daily_csv_path(full_code, adjust_flag)
+    existing_df = read_existing_history(csv_path)
+    request_start_date = compute_incremental_start_date(existing_df, start_date)
+    return {
+        "full_code": full_code,
+        "ts_code": to_tushare_code(full_code),
+        "csv_path": csv_path,
+        "existing_df": existing_df,
+        "request_start_date": request_start_date,
+        "end_date": end_date,
+    }
+
+
+def chunked(items: list[dict[str, object]], chunk_size: int) -> list[list[dict[str, object]]]:
+    return [items[index : index + chunk_size] for index in range(0, len(items), chunk_size)]
+
+
+def sync_stock_plans_via_tushare_batch(
+    stock_plans: list[dict[str, object]],
+    adjust_flag: str,
+    batch_name: str,
+) -> tuple[int, list[str]]:
+    success = 0
+    failed_codes: list[str] = []
+    grouped_plans: dict[str, list[dict[str, object]]] = defaultdict(list)
+
+    for plan in stock_plans:
+        grouped_plans[str(plan["request_start_date"])].append(plan)
+
+    total_batches = sum(
+        len(chunked(group_plans, TUSHARE_DAILY_BATCH_SIZE))
+        for group_plans in grouped_plans.values()
+    )
+    batch_index = 0
+
+    for request_start_date, group_plans in sorted(grouped_plans.items()):
+        plan_chunks = chunked(group_plans, TUSHARE_DAILY_BATCH_SIZE)
+        for plan_chunk in plan_chunks:
+            batch_index += 1
+            ts_codes = [str(plan["ts_code"]) for plan in plan_chunk]
+            logger.info(
+                "%s Tushare 批量拉取 %s/%s: start=%s size=%s",
+                batch_name,
+                batch_index,
+                total_batches,
+                request_start_date,
+                len(ts_codes),
+            )
+            try:
+                batch_df = fetch_tushare_daily_data(
+                    ts_codes=ts_codes,
+                    start_date=request_start_date.replace("-", ""),
+                    end_date=str(plan_chunk[0]["end_date"]).replace("-", ""),
+                    action_name=f"{batch_name} Tushare 批量日线",
+                )
+            except Exception as exc:
+                logger.warning(
+                    "%s Tushare 批量失败，整批进入单票回退: %s",
+                    batch_name,
+                    exc,
+                )
+                failed_codes.extend(str(plan["full_code"]) for plan in plan_chunk)
+                continue
+
+            if batch_df is None or batch_df.empty:
+                logger.warning("%s Tushare 批量返回空数据，整批进入单票回退", batch_name)
+                failed_codes.extend(str(plan["full_code"]) for plan in plan_chunk)
+                continue
+
+            grouped_batch_df = {
+                ts_code: code_df.copy()
+                for ts_code, code_df in batch_df.groupby("ts_code", sort=False)
+            }
+
+            for plan in plan_chunk:
+                full_code = str(plan["full_code"])
+                code_df = grouped_batch_df.get(str(plan["ts_code"]))
+                if code_df is None or code_df.empty:
+                    logger.warning("%s Tushare 批量未返回 %s，转单票回退", batch_name, full_code)
+                    failed_codes.append(full_code)
+                    continue
+
+                normalized_df = normalize_tushare_stock_history_df(
+                    raw_df=code_df,
+                    full_code=full_code,
+                    adjust_flag=adjust_flag,
+                )
+                if normalized_df.empty:
+                    logger.warning("%s Tushare 批量标准化后 %s 为空，转单票回退", batch_name, full_code)
+                    failed_codes.append(full_code)
+                    continue
+
+                save_count = merge_and_save_history(
+                    csv_path=plan["csv_path"],
+                    existing_df=plan["existing_df"],
+                    new_df=normalized_df,
+                )
+                logger.info("%s Tushare 批量同步完成 %s，新增 %s 条", batch_name, full_code, save_count)
+                success += 1
+
+    return success, failed_codes
+
+
 def sync_one_code(full_code: str, start_date: str, end_date: str, adjust_flag: str) -> str:
     csv_path = get_daily_csv_path(full_code, adjust_flag)
     existing_df = read_existing_history(csv_path)
@@ -729,6 +905,8 @@ def run_sync_batch(
     skipped = 0
     failed = 0
     failed_codes: list[str] = []
+    fallback_codes: list[str] = []
+    stock_plans: list[dict[str, object]] = []
 
     if not target_codes:
         logger.info("%s 没有待同步代码", batch_name)
@@ -741,9 +919,35 @@ def run_sync_batch(
         CODE_SYNC_INTERVAL_SECONDS,
     )
 
-    for index, full_code in enumerate(target_codes, start=1):
+    for full_code in target_codes:
+        if full_code == CONFIG["benchmark_code"]:
+            fallback_codes.append(full_code)
+            continue
+
+        stock_plan = build_stock_sync_plan(
+            full_code=full_code,
+            start_date=start_date,
+            end_date=end_date,
+            adjust_flag=adjust_flag,
+        )
+        if str(stock_plan["request_start_date"]) > end_date:
+            logger.info("%s 已是最新，跳过", full_code)
+            skipped += 1
+            continue
+        stock_plans.append(stock_plan)
+
+    if stock_plans:
+        batch_success, batch_failed_codes = sync_stock_plans_via_tushare_batch(
+            stock_plans=stock_plans,
+            adjust_flag=adjust_flag,
+            batch_name=batch_name,
+        )
+        success += batch_success
+        fallback_codes.extend(batch_failed_codes)
+
+    for index, full_code in enumerate(fallback_codes, start=1):
         try:
-            logger.info("%s 进度 %s/%s: %s", batch_name, index, len(target_codes), full_code)
+            logger.info("%s 单票回退 %s/%s: %s", batch_name, index, len(fallback_codes), full_code)
             result = sync_one_code(
                 full_code=full_code,
                 start_date=start_date,
@@ -766,7 +970,7 @@ def run_sync_batch(
             failed += 1
             failed_codes.append(full_code)
 
-        if index < len(target_codes):
+        if index < len(fallback_codes):
             sleep_between_code_sync()
 
     logger.info(

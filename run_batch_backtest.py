@@ -18,6 +18,25 @@ from utils.project_utils import get_daily_csv_path
 BACK_MENU_VALUE = "__back__"
 EXIT_ALL_MENU_VALUE = "__exit_all__"
 FULL_EXIT_CODE = 86
+DEFAULT_CASH = 100000.0
+
+
+def parse_cash_input(raw_value: str) -> float:
+    text = raw_value.strip().lower()
+    if not text:
+        return DEFAULT_CASH
+
+    normalized = text.replace(",", "").replace(" ", "")
+    if normalized.endswith("万"):
+        normalized = normalized[:-1] + "w"
+    if normalized.endswith("w"):
+        value = float(normalized[:-1]) * 10000
+    else:
+        value = float(normalized)
+
+    if value <= 0:
+        raise ValueError("初始资金必须大于 0")
+    return round(value, 2)
 
 
 def prompt_strategy_menu() -> str:
@@ -86,6 +105,17 @@ def validate_required_data_files(spec: StrategySpec) -> None:
     )
 
 
+def prompt_initial_cash() -> float:
+    while True:
+        raw_value = input("请输入初始资金，直接回车默认 10w: ").strip()
+        if raw_value.lower() == "q":
+            raise SystemExit(FULL_EXIT_CODE)
+        try:
+            return parse_cash_input(raw_value)
+        except ValueError as exc:
+            print(f"输入无效: {exc}")
+
+
 def main() -> None:
     strategy_id = parse_strategy_id()
     spec = (
@@ -93,8 +123,9 @@ def main() -> None:
         if not strategy_id
         else get_strategy_spec(strategy_id)
     )
+    cash = prompt_initial_cash()
     validate_required_data_files(spec)
-    batch_backtest(spec.strategy_id)
+    batch_backtest(spec.strategy_id, cash)
 
 
 if __name__ == "__main__":
