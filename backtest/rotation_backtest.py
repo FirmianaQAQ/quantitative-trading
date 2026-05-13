@@ -89,6 +89,7 @@ CONFIG: dict[str, Any] = {
     "report_dir": "logs/backtest",
     "report_name": "rotation_backtest",
     "strategy_name": "多因子轮动策略",
+    "strategy_brief": "多股强弱轮动",
 }
 
 

@@ -52,6 +52,7 @@ CONFIG: dict[str, Any] = {
     "report_dir": "logs/backtest",
     "report_name": "cta_event_backtest",
     "strategy_name": "CTA事件驱动策略",
+    "strategy_brief": "放量突破事件驱动",
 }
 
 

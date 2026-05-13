@@ -29,8 +29,10 @@ DEFAULT_STOCK_NAMES = {
     "sz.000001": "平安银行/深市代码样例",
 }
 EXIT_MENU_VALUE = "__exit__"
+EXIT_ALL_MENU_VALUE = "__exit_all__"
 MANUAL_MENU_VALUE = "__manual__"
 RECOMMEND_MENU_VALUE = "__recommend__"
+FULL_EXIT_CODE = 86
 
 
 def normalize_code(raw_code: str) -> str:
@@ -84,10 +86,14 @@ def prompt_strategy_menu() -> str:
         for index, (family_name, _family_specs) in enumerate(grouped_specs, start=1):
             print(f"  {index}. {family_name}")
         print("  q. 退出")
+        print("  e. 完全退出")
 
         choice = input("请输入编号: ").strip()
-        if choice.lower() == "q":
+        lower_choice = choice.lower()
+        if lower_choice == "q":
             return EXIT_MENU_VALUE
+        if lower_choice == "e":
+            return EXIT_ALL_MENU_VALUE
         if not choice.isdigit():
             print("输入无效，请输入数字编号")
             continue
@@ -103,14 +109,17 @@ def prompt_strategy_menu() -> str:
             print(f"已选择大类：{family_name}")
             print("请选择具体策略版本：")
             for index, spec in enumerate(family_specs, start=1):
-                print(f"  {index}. {spec.display_name} ({spec.strategy_id})")
+                print(f"  {index}. {spec.display_name} ({spec.brief_description})")
             print("  b. 返回上一级")
             print("  q. 退出")
+            print("  e. 完全退出")
 
             sub_choice = input("请输入编号: ").strip()
             lower_sub_choice = sub_choice.lower()
             if lower_sub_choice == "q":
                 return EXIT_MENU_VALUE
+            if lower_sub_choice == "e":
+                return EXIT_ALL_MENU_VALUE
             if lower_sub_choice == "b":
                 break
             if not sub_choice.isdigit():
@@ -135,11 +144,14 @@ def prompt_stock_menu(spec: StrategySpec) -> str:
         if allow_manual:
             print("  0. 手动输入")
         print("  q. 退出")
+        print("  e. 完全退出")
 
         choice = input("请输入编号: ").strip()
         lower_choice = choice.lower()
         if lower_choice == "q":
             return EXIT_MENU_VALUE
+        if lower_choice == "e":
+            return EXIT_ALL_MENU_VALUE
         if lower_choice == "r":
             return RECOMMEND_MENU_VALUE
         if allow_manual and choice == "0":
@@ -159,11 +171,16 @@ def choose_stock_interactively(spec: StrategySpec) -> str:
         selected = prompt_stock_menu(spec)
         if selected == EXIT_MENU_VALUE:
             raise SystemExit(0)
+        if selected == EXIT_ALL_MENU_VALUE:
+            raise SystemExit(FULL_EXIT_CODE)
         if selected == MANUAL_MENU_VALUE:
             while True:
                 raw_code = input("请输入股票代码，例如 sz.000725 或 000725: ").strip()
-                if raw_code.lower() == "q":
+                lower_raw_code = raw_code.lower()
+                if lower_raw_code == "q":
                     raise SystemExit(0)
+                if lower_raw_code == "e":
+                    raise SystemExit(FULL_EXIT_CODE)
                 try:
                     return normalize_code(raw_code)
                 except ValueError as exc:
@@ -197,6 +214,8 @@ def choose_strategy_spec(cli_strategy_id: str | None) -> StrategySpec:
     selected = prompt_strategy_menu()
     if selected == EXIT_MENU_VALUE:
         raise SystemExit(0)
+    if selected == EXIT_ALL_MENU_VALUE:
+        raise SystemExit(FULL_EXIT_CODE)
     return get_strategy_spec(selected)
 
 
@@ -350,10 +369,14 @@ def choose_recommended_stock(spec: StrategySpec) -> str | None:
                 f"年化={annual_text}  回撤={drawdown_text}  夏普={sharpe_text}"
             )
         print("  q. 返回上一级")
+        print("  e. 完全退出")
 
         choice = input("请输入编号: ").strip()
-        if choice.lower() == "q":
+        lower_choice = choice.lower()
+        if lower_choice == "q":
             return None
+        if lower_choice == "e":
+            raise SystemExit(FULL_EXIT_CODE)
         if not choice.isdigit():
             print("输入无效，请输入数字编号")
             continue

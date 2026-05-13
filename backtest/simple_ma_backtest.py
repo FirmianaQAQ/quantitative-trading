@@ -99,6 +99,7 @@ CONFIG: dict[str, Any] = {
     "report_dir": "logs/backtest",
     "report_name": "simple_ma_backtest",
     "strategy_name": "普通双均线",
+    "strategy_brief": "基础版",
 }
 
 # 如需找到最合适的均线周期，启用这里的参数

@@ -9,7 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TEST_CASES = [
     {
         "code": "intraday_t_placeholder",
-        "label": "做T策略（占位）",
+        "label": "做T策略",
         "required_codes": ["sz.000100"],
     }
 ]
@@ -22,7 +22,8 @@ CONFIG: dict[str, Any] = {
     "plot": True,
     "report_dir": "logs/backtest",
     "report_name": "intraday_t_backtest",
-    "strategy_name": "做T策略占位",
+    "strategy_name": "做T策略",
+    "strategy_brief": "预留入口",
 }
 
 
@@ -66,7 +67,7 @@ def _write_placeholder_report(config: dict[str, Any], title: str, message: str) 
 def run_backtest(config: dict[str, Any], df: Any = None) -> dict[str, Any]:
     del df
     validate_config(config)
-    title = "做T策略占位"
+    title = "做T策略"
     message = (
         "当前仓库只有日线数据，没有分时/分钟级成交数据，暂时无法严肃回测真正的做T逻辑。"
         "这里先保留策略入口，后续补齐分钟线数据和仓位规则后再落地。"
@@ -94,7 +95,7 @@ def run_backtest(config: dict[str, Any], df: Any = None) -> dict[str, Any]:
         "idle_cash_days_total": 0,
     }
     print("回测结果:")
-    print("  策略状态: 占位")
+    print("  策略状态: 预留")
     print("  说明: 当前仅保留入口，等待后续补充分时数据与做T执行规则")
     return summary
 

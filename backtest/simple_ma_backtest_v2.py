@@ -48,6 +48,7 @@ CONFIG.update(
         "benchmark_code": "",
         "report_name": "simple_ma_backtest_v2",
         "strategy_name": "普通双均线V2",
+        "strategy_brief": "稳健轮动版",
     }
 )
 

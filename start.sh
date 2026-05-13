@@ -15,6 +15,7 @@ while true; do
   echo "  1. GUI 回测"
   echo "  2. 终端批量回测"
   echo "  q. 退出"
+  echo "  e. 完全退出"
   printf "请输入编号: "
   if ! read -r choice; then
     echo
@@ -23,16 +24,30 @@ while true; do
 
   case "$choice" in
     1)
-      ./start_backtest_gui.sh
-      echo
-      echo "已返回主菜单"
+      if ./start_backtest_gui.sh; then
+        echo
+        echo "已返回主菜单"
+      else
+        child_exit_code=$?
+        if [[ $child_exit_code -eq 86 ]]; then
+          exit 0
+        fi
+        exit "$child_exit_code"
+      fi
       ;;
     2)
-      ./start_backtest.sh
-      echo
-      echo "已返回主菜单"
+      if ./start_backtest.sh; then
+        echo
+        echo "已返回主菜单"
+      else
+        child_exit_code=$?
+        if [[ $child_exit_code -eq 86 ]]; then
+          exit 0
+        fi
+        exit "$child_exit_code"
+      fi
       ;;
-    q|Q)
+    q|Q|e|E)
       exit 0
       ;;
     *)

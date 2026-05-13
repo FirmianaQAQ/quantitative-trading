@@ -9,7 +9,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 TEST_CASES = [
     {
         "code": "asset_allocation_placeholder",
-        "label": "大类资产配置 / 固收+（占位）",
+        "label": "大类资产配置 / 固收+",
         "required_codes": ["sz.000100"],
     }
 ]
@@ -22,7 +22,8 @@ CONFIG: dict[str, Any] = {
     "plot": True,
     "report_dir": "logs/backtest",
     "report_name": "asset_allocation_backtest",
-    "strategy_name": "固收+策略占位",
+    "strategy_name": "固收+策略",
+    "strategy_brief": "预留入口",
 }
 
 
@@ -66,7 +67,7 @@ def _write_placeholder_report(config: dict[str, Any], title: str, message: str) 
 def run_backtest(config: dict[str, Any], df: Any = None) -> dict[str, Any]:
     del df
     validate_config(config)
-    title = "大类资产配置 / 固收+ 占位策略"
+    title = "大类资产配置 / 固收+"
     message = (
         "当前仓库还没有债券、ETF、货基等跨资产数据，因此这里只先保留策略入口。"
         "后续补齐资产池和再平衡规则后，再把它升级为真正可回测版本。"
@@ -94,7 +95,7 @@ def run_backtest(config: dict[str, Any], df: Any = None) -> dict[str, Any]:
         "idle_cash_days_total": 0,
     }
     print("回测结果:")
-    print("  策略状态: 占位")
+    print("  策略状态: 预留")
     print("  说明: 当前仅保留入口，等待后续补充跨资产数据与配置规则")
     return summary
 

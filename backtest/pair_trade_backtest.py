@@ -70,6 +70,7 @@ CONFIG: dict[str, Any] = {
     "report_dir": "logs/backtest",
     "report_name": "pair_trade_backtest",
     "strategy_name": "套利配对交易",
+    "strategy_brief": "价差均值回归",
 }
 
 

@@ -35,6 +35,7 @@ CONFIG.update(
         "benchmark_code": "",
         "report_name": "simple_ma_backtest_v1",
         "strategy_name": "普通双均线V1",
+        "strategy_brief": "强化收益版",
     }
 )
 

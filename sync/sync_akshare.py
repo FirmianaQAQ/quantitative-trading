@@ -26,6 +26,9 @@ SH_MAIN_BOARD_PREFIXES = ("600", "601", "603", "605")
 EXCLUDED_NAME_KEYWORDS = ("融创",)
 REQUEST_RETRY_TIMES = 3
 REQUEST_RETRY_SLEEP_SECONDS = 2
+CODE_SYNC_INTERVAL_SECONDS = 0.5
+FAILED_QUEUE_RETRY_ROUNDS = 1
+FAILED_QUEUE_RETRY_COOLDOWN_SECONDS = 8
 
 STORAGE_COLUMNS = [
     "date",
@@ -561,22 +564,39 @@ def is_network_unavailable_error(exc: Exception) -> bool:
     return any(keyword in message for keyword in keywords)
 
 
-def main() -> None:
-    configure_logging()
-    adjust_flag = CONFIG["adjust_flag"]
-    start_date = resolve_sync_start_date()
-    end_date = resolve_sync_end_date()
-    target_codes = resolve_target_codes()
+def sleep_between_code_sync() -> None:
+    if CODE_SYNC_INTERVAL_SECONDS <= 0:
+        return
+    time.sleep(CODE_SYNC_INTERVAL_SECONDS)
 
-    logger.info("使用 Akshare 同步启动所需数据")
-    logger.info("目标代码: %s", ", ".join(target_codes))
-    logger.info("同步区间: %s ~ %s", start_date, end_date)
 
+def run_sync_batch(
+    target_codes: list[str],
+    *,
+    start_date: str,
+    end_date: str,
+    adjust_flag: str,
+    batch_name: str,
+) -> tuple[int, int, int, list[str]]:
     success = 0
     skipped = 0
     failed = 0
-    for full_code in target_codes:
+    failed_codes: list[str] = []
+
+    if not target_codes:
+        logger.info("%s 没有待同步代码", batch_name)
+        return success, skipped, failed, failed_codes
+
+    logger.info(
+        "%s 开始: count=%s interval=%ss",
+        batch_name,
+        len(target_codes),
+        CODE_SYNC_INTERVAL_SECONDS,
+    )
+
+    for index, full_code in enumerate(target_codes, start=1):
         try:
+            logger.info("%s 进度 %s/%s: %s", batch_name, index, len(target_codes), full_code)
             result = sync_one_code(
                 full_code=full_code,
                 start_date=start_date,
@@ -589,15 +609,78 @@ def main() -> None:
                 skipped += 1
             else:
                 failed += 1
+                failed_codes.append(full_code)
         except Exception:
             logger.exception("%s 同步失败", full_code)
-            if is_network_unavailable_error(sys.exc_info()[1] or Exception()):
-                logger.error("检测到行情源网络不可用，停止后续同步")
+            current_error = sys.exc_info()[1] or Exception()
+            if is_network_unavailable_error(current_error):
+                logger.error("检测到网络不可用，停止当前批次")
                 raise SystemExit(2)
             failed += 1
+            failed_codes.append(full_code)
 
-    logger.info("同步结束: success=%s skipped=%s failed=%s", success, skipped, failed)
-    if failed:
+        if index < len(target_codes):
+            sleep_between_code_sync()
+
+    logger.info(
+        "%s 结束: success=%s skipped=%s failed=%s",
+        batch_name,
+        success,
+        skipped,
+        failed,
+    )
+    if failed_codes:
+        logger.warning("%s 失败代码: %s", batch_name, ", ".join(failed_codes))
+    return success, skipped, failed, failed_codes
+
+
+def main() -> None:
+    configure_logging()
+    adjust_flag = CONFIG["adjust_flag"]
+    start_date = resolve_sync_start_date()
+    end_date = resolve_sync_end_date()
+    target_codes = resolve_target_codes()
+
+    logger.info("使用 Akshare 同步启动所需数据")
+    logger.info("目标代码: %s", ", ".join(target_codes))
+    logger.info("同步区间: %s ~ %s", start_date, end_date)
+
+    total_success, total_skipped, _, failed_codes = run_sync_batch(
+        target_codes,
+        start_date=start_date,
+        end_date=end_date,
+        adjust_flag=adjust_flag,
+        batch_name="首轮同步",
+    )
+
+    for retry_round in range(1, FAILED_QUEUE_RETRY_ROUNDS + 1):
+        if not failed_codes:
+            break
+        logger.info(
+            "失败队列重跑第 %s/%s 轮，冷却 %s 秒后开始",
+            retry_round,
+            FAILED_QUEUE_RETRY_ROUNDS,
+            FAILED_QUEUE_RETRY_COOLDOWN_SECONDS,
+        )
+        time.sleep(FAILED_QUEUE_RETRY_COOLDOWN_SECONDS)
+        retry_success, retry_skipped, _, failed_codes = run_sync_batch(
+            failed_codes,
+            start_date=start_date,
+            end_date=end_date,
+            adjust_flag=adjust_flag,
+            batch_name=f"失败队列重跑第{retry_round}轮",
+        )
+        total_success += retry_success
+        total_skipped += retry_skipped
+
+    logger.info(
+        "同步结束: success=%s skipped=%s remaining_failed=%s",
+        total_success,
+        total_skipped,
+        len(failed_codes),
+    )
+    if failed_codes:
+        logger.error("最终失败代码: %s", ", ".join(failed_codes))
         raise SystemExit(1)
 
 

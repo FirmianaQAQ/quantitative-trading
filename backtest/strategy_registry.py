@@ -14,6 +14,7 @@ class StrategySpec:
     strategy_id: str
     module_name: str
     display_name: str
+    brief_description: str
     family_id: str
     family_display_name: str
     version_number: int
@@ -24,20 +25,20 @@ class StrategySpec:
 
 
 STRATEGY_FAMILY_DISPLAY_NAMES = {
-    "simple_ma_backtest": "普通双均线",
-    "pair_trade_backtest": "套利配对交易",
+    "simple_ma_backtest": "普通双均线策略",
+    "pair_trade_backtest": "套利配对交易策略",
     "rotation_backtest": "多因子轮动策略",
-    "asset_allocation_backtest": "大类资产配置 / 固收+",
-    "cta_event_backtest": "CTA策略 / 宏观择时 / 事件驱动",
-    "intraday_t_backtest": "做T策略",
+    "cta_event_backtest": "CTA策略",
+    "intraday_t_backtest": "T策略",
+    "asset_allocation_backtest": "大类资产配置策略",
 }
 STRATEGY_FAMILY_ORDER = {
     "simple_ma_backtest": 0,
     "pair_trade_backtest": 1,
     "rotation_backtest": 2,
-    "asset_allocation_backtest": 3,
-    "cta_event_backtest": 4,
-    "intraday_t_backtest": 5,
+    "asset_allocation_backtest": 5,
+    "cta_event_backtest": 3,
+    "intraday_t_backtest": 4,
 }
 
 
@@ -71,6 +72,7 @@ def _build_strategy_spec(module: ModuleType, strategy_id: str) -> StrategySpec |
         strategy_id=strategy_id,
         module_name=module.__name__,
         display_name=str(config.get("strategy_name", strategy_id)),
+        brief_description=str(config.get("strategy_brief", strategy_id)),
         family_id=family_id,
         family_display_name=STRATEGY_FAMILY_DISPLAY_NAMES.get(
             family_id,
