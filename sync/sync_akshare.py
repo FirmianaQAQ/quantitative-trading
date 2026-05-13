@@ -71,11 +71,13 @@ _TUSHARE_DAILY_CALL_TIMESTAMPS: deque[float] = deque()
 _BAOSTOCK_LOGGED_IN = False
 _BAOSTOCK_DISABLED = False
 SYNC_SOURCE_AUTO = "auto"
+SYNC_SOURCE_EASTMONEY = "eastmoney"
 SYNC_SOURCE_BAOSTOCK = "baostock"
 SYNC_SOURCE_AKSHARE = "akshare"
 SYNC_SOURCE_TUSHARE = "tushare"
 SYNC_SOURCE_CHOICES = {
     SYNC_SOURCE_AUTO,
+    SYNC_SOURCE_EASTMONEY,
     SYNC_SOURCE_BAOSTOCK,
     SYNC_SOURCE_AKSHARE,
     SYNC_SOURCE_TUSHARE,
@@ -104,6 +106,20 @@ def get_tushare_token() -> str:
 
 def get_eastmoney_cookie_path() -> Path:
     return PROJECT_ROOT / "data" / "cookie.txt"
+
+
+def build_eastmoney_quote_url(full_code: str) -> str:
+    market, symbol = full_code.split(".", 1)
+    return f"https://quote.eastmoney.com/{market}{symbol}.html"
+
+
+def resolve_eastmoney_cookie_bootstrap_urls(full_code: str) -> list[str]:
+    urls = [build_eastmoney_quote_url(full_code), EASTMONEY_COOKIE_BOOTSTRAP_URL]
+    deduplicated_urls: list[str] = []
+    for url in urls:
+        if url not in deduplicated_urls:
+            deduplicated_urls.append(url)
+    return deduplicated_urls
 
 
 def format_cookie_header(cookie_jar) -> str:
@@ -146,22 +162,33 @@ def build_eastmoney_headers(referer_url: str, cookie_str: str = "") -> dict[str,
     return headers
 
 
-def refresh_eastmoney_cookie() -> tuple[requests.Session, str]:
-    session = requests.Session()
-    response = retry_request_call(
-        lambda: session.get(
-            EASTMONEY_COOKIE_BOOTSTRAP_URL,
-            headers=build_eastmoney_headers(EASTMONEY_COOKIE_BOOTSTRAP_URL),
-            timeout=30,
-        ),
-        action_name="访问东方财富页面获取 cookie",
-    )
-    response.raise_for_status()
-    cookie_str = format_cookie_header(session.cookies)
-    if not cookie_str:
-        raise RuntimeError("访问东方财富页面后未拿到有效 cookie")
-    write_eastmoney_cookie(cookie_str)
-    return session, cookie_str
+def refresh_eastmoney_cookie(bootstrap_urls: list[str]) -> tuple[requests.Session, str]:
+    last_error: Exception | None = None
+    for bootstrap_url in bootstrap_urls:
+        session = requests.Session()
+        try:
+            response = retry_request_call(
+                lambda: session.get(
+                    bootstrap_url,
+                    headers=build_eastmoney_headers(bootstrap_url),
+                    timeout=30,
+                ),
+                action_name=f"访问东方财富页面获取 cookie: {bootstrap_url}",
+            )
+            response.raise_for_status()
+            cookie_str = format_cookie_header(session.cookies)
+            if not cookie_str:
+                raise RuntimeError(f"页面 {bootstrap_url} 未返回有效 cookie")
+            write_eastmoney_cookie(cookie_str)
+            logger.info("东方财富 cookie 来源页面: %s", bootstrap_url)
+            return session, cookie_str
+        except Exception as exc:
+            last_error = exc
+            logger.warning("从页面 %s 获取东方财富 cookie 失败: %s", bootstrap_url, exc)
+
+    if last_error is not None:
+        raise RuntimeError(f"所有东方财富 cookie 页面都失败: {last_error}")
+    raise RuntimeError("未配置可用的东方财富 cookie 页面")
 
 
 def ensure_baostock_login() -> None:
@@ -276,7 +303,9 @@ def resolve_all_sh_main_codes(source_name: str) -> list[str]:
     北交所和 ignore_stock_code 中的特殊个股。
     此外会额外排除名称中包含“融创”的股票。
     """
-    if source_name == SYNC_SOURCE_BAOSTOCK:
+    if source_name == SYNC_SOURCE_EASTMONEY:
+        stock_df = get_a_share_code_name_df_and_filter()
+    elif source_name == SYNC_SOURCE_BAOSTOCK:
         stock_df = fetch_sh_main_stock_pool_from_baostock()
     elif source_name == SYNC_SOURCE_AKSHARE:
         stock_df = get_a_share_code_name_df_and_filter()
@@ -284,13 +313,13 @@ def resolve_all_sh_main_codes(source_name: str) -> list[str]:
         stock_df = fetch_sh_main_stock_pool_from_tushare()
     else:
         try:
-            stock_df = fetch_sh_main_stock_pool_from_baostock()
-        except Exception as exc:
-            logger.warning("Baostock 股票池获取失败，回退到 Akshare: %s", exc)
+            stock_df = get_a_share_code_name_df_and_filter()
+        except Exception as eastmoney_exc:
+            logger.warning("东方财富股票池获取失败，回退到 Baostock: %s", eastmoney_exc)
             try:
-                stock_df = get_a_share_code_name_df_and_filter()
-            except Exception as ak_exc:
-                logger.warning("Akshare 股票池获取失败，回退到 Tushare: %s", ak_exc)
+                stock_df = fetch_sh_main_stock_pool_from_baostock()
+            except Exception as exc:
+                logger.warning("Baostock 股票池获取失败，回退到 Tushare: %s", exc)
                 stock_df = fetch_sh_main_stock_pool_from_tushare()
 
     sh_main_df = stock_df[
@@ -538,20 +567,20 @@ def fetch_stock_history(
             adjust_flag=adjust_flag,
         ),
     )
-    akshare_sources = [
-        (
-            "akshare-eastmoney",
-            lambda: normalize_stock_history_df(
-                fetch_stock_history_from_eastmoney(
-                    symbol=symbol,
-                    start_date=start_date,
-                    end_date=end_date,
-                    adjust_flag=adjust_flag,
-                ),
-                full_code=full_code,
+    eastmoney_source = (
+        "eastmoney-direct",
+        lambda: normalize_stock_history_df(
+            fetch_stock_history_from_eastmoney(
+                symbol=symbol,
+                start_date=start_date,
+                end_date=end_date,
                 adjust_flag=adjust_flag,
             ),
+            full_code=full_code,
+            adjust_flag=adjust_flag,
         ),
+    )
+    akshare_sources = [
         (
             "akshare-sina",
             lambda: normalize_sina_stock_history_df(
@@ -577,7 +606,9 @@ def fetch_stock_history(
         ),
     )
 
-    if source_name == SYNC_SOURCE_BAOSTOCK:
+    if source_name == SYNC_SOURCE_EASTMONEY:
+        stock_sources = [eastmoney_source]
+    elif source_name == SYNC_SOURCE_BAOSTOCK:
         stock_sources = [baostock_source]
     elif source_name == SYNC_SOURCE_AKSHARE:
         stock_sources = akshare_sources
@@ -586,7 +617,7 @@ def fetch_stock_history(
             raise RuntimeError(f"Tushare 仅支持不复权日线，不支持 {adjust_flag}")
         stock_sources = [tushare_source]
     else:
-        stock_sources = [baostock_source, *akshare_sources]
+        stock_sources = [eastmoney_source, baostock_source, *akshare_sources]
         if is_unadjusted_flag(adjust_flag):
             stock_sources.append(tushare_source)
         else:
@@ -706,6 +737,7 @@ def fetch_stock_history_from_eastmoney(
     adjust_flag: str,
 ) -> pd.DataFrame:
     url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+    full_code = to_full_code(symbol)
     market_prefix = "sh" if symbol.startswith("6") else "sz"
     referer_url = f"https://quote.eastmoney.com/concept/{market_prefix}{symbol}.html"
     market_code = "1" if symbol.startswith("6") else "0"
@@ -743,7 +775,9 @@ def fetch_stock_history_from_eastmoney(
             raise RuntimeError("东方财富接口返回空数据")
     except Exception as exc:
         logger.warning("东方财富接口首次请求失败，尝试刷新 cookie 后重试: %s", exc)
-        session, refreshed_cookie = refresh_eastmoney_cookie()
+        session, refreshed_cookie = refresh_eastmoney_cookie(
+            resolve_eastmoney_cookie_bootstrap_urls(full_code)
+        )
         response = request_with_cookie(cookie_str=refreshed_cookie, session=session)
         data_json = response.json()
         if not data_json.get("data") or not data_json["data"].get("klines"):
@@ -814,14 +848,16 @@ def fetch_index_history(
         ),
     )
 
-    if source_name == SYNC_SOURCE_BAOSTOCK:
+    if source_name == SYNC_SOURCE_EASTMONEY:
+        index_sources = [akshare_source]
+    elif source_name == SYNC_SOURCE_BAOSTOCK:
         index_sources = [baostock_source]
     elif source_name == SYNC_SOURCE_AKSHARE:
         index_sources = [akshare_source]
     elif source_name == SYNC_SOURCE_TUSHARE:
         raise RuntimeError("Tushare 暂不支持指数日线同步，请改用 Baostock 或 Akshare")
     else:
-        index_sources = [baostock_source, akshare_source]
+        index_sources = [akshare_source, baostock_source]
 
     for source_name, fetcher in index_sources:
         try:
@@ -876,7 +912,8 @@ def fetch_index_history_from_baostock(
 
 def fetch_index_history_from_eastmoney(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
     url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
-    referer_url = EASTMONEY_COOKIE_BOOTSTRAP_URL
+    full_code = to_full_code(symbol)
+    referer_url = build_eastmoney_quote_url(full_code)
     secid_candidates = ["1", "0", "2", "47"]
     last_error: Exception | None = None
 
@@ -914,7 +951,9 @@ def fetch_index_history_from_eastmoney(symbol: str, start_date: str, end_date: s
                     raise RuntimeError("东方财富指数接口返回空数据")
             except Exception as exc:
                 logger.warning("东方财富指数接口首次请求失败，尝试刷新 cookie 后重试: %s", exc)
-                session, refreshed_cookie = refresh_eastmoney_cookie()
+                session, refreshed_cookie = refresh_eastmoney_cookie(
+                    resolve_eastmoney_cookie_bootstrap_urls(full_code)
+                )
                 response = request_with_cookie(cookie_str=refreshed_cookie, session=session)
                 data_json = response.json()
                 if not data_json.get("data") or not data_json["data"].get("klines"):
@@ -1275,7 +1314,7 @@ def main() -> None:
     target_codes = resolve_target_codes(code_args, sync_all_sh_main, source_name)
 
     if source_name == SYNC_SOURCE_AUTO:
-        logger.info("使用 Baostock -> Akshare -> Tushare 的优先级同步所需数据")
+        logger.info("使用 东方财富直连 -> Baostock -> Akshare -> Tushare 的优先级同步所需数据")
     else:
         logger.info("按用户指定的数据源同步: %s", source_name)
     logger.info("目标代码: %s", ", ".join(target_codes))
