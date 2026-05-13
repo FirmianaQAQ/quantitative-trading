@@ -27,6 +27,7 @@ DEFAULT_STOCK_NAMES = {
     "sz.000100": "TCL科技",
     "sz.000725": "京东方A",
     "sz.001308": "康冠科技",
+    "sz.002594": "比亚迪",
     "sh.600255": "鑫科材料",
 }
 BACK_MENU_VALUE = "__back__"
@@ -90,6 +91,7 @@ def collect_stock_candidates(spec: StrategySpec) -> list[str]:
         candidate_code = item.get("code")
         if candidate_code:
             codes.add(candidate_code)
+
     return sorted(codes)
 
 
@@ -255,14 +257,6 @@ def resolve_config(
         config["code"] = stock_selection
     config["cash"] = cash
 
-    resolved_adjust_flag = resolve_best_local_adjust_flag(
-        spec,
-        config["code"],
-        str(config["adjust_flag"]),
-    )
-    if resolved_adjust_flag is not None:
-        config["adjust_flag"] = resolved_adjust_flag
-
     config["plot"] = True
     config["print_log"] = False
 
@@ -374,17 +368,6 @@ def collect_recommendation_adjust_flags(spec: StrategySpec, code: str) -> list[s
             flag,
         ),
     )
-
-
-def resolve_best_local_adjust_flag(
-    spec: StrategySpec,
-    code: str,
-    preferred_adjust_flag: str,
-) -> str | None:
-    candidate_flags = collect_recommendation_adjust_flags(spec, code)
-    if not candidate_flags:
-        return None
-    return candidate_flags[0]
 
 
 def collect_local_stock_codes(adjust_flag: str) -> list[str]:
@@ -584,28 +567,12 @@ def choose_recommended_stock(spec: StrategySpec) -> tuple[str, str] | None:
 
 
 def validate_required_data_files(spec: StrategySpec, config: dict) -> None:
-    resolved_adjust_flag = resolve_best_local_adjust_flag(
-        spec,
-        config["code"],
-        str(config["adjust_flag"]),
-    )
-    if resolved_adjust_flag is not None:
-        config["adjust_flag"] = resolved_adjust_flag
-
     missing_files: list[Path] = []
     for code in get_required_codes(spec, config["code"]):
         csv_path = get_daily_csv_path(code, config["adjust_flag"])
         if csv_path.exists():
             continue
         sync_single_stock_data(code)
-        resolved_adjust_flag = resolve_best_local_adjust_flag(
-            spec,
-            config["code"],
-            str(config["adjust_flag"]),
-        )
-        if resolved_adjust_flag is not None:
-            config["adjust_flag"] = resolved_adjust_flag
-            csv_path = get_daily_csv_path(code, config["adjust_flag"])
         if not csv_path.exists():
             missing_files.append(csv_path)
 
