@@ -334,8 +334,7 @@ def _build_filter_toolbar() -> str:
         </div>
         <div class="filter-actions">
           <button type="button" id="report-filter-reset">重置筛选</button>
-          <button type="button" id="log-expand-all">展开全部年份</button>
-          <button type="button" id="log-collapse-all">收起全部年份</button>
+          <button type="button" id="log-toggle-all">展开全部年份</button>
         </div>
       </div>
     </section>
@@ -1130,8 +1129,13 @@ def _build_report_bootstrap_script() -> str:
           .filter((item) => item.value != null && Number.isFinite(Number(item.value)));
         if (!validPoints.length) return;
 
-        const assetValues = validPoints.map((item) => baseInitial * (1 + Number(item.value)));
-        const initialValue = assetValues[0];
+        const firstCumulativeReturn = Number(validPoints[0].value);
+        const rebasedReturns = validPoints.map((item) => {
+          const currentReturn = Number(item.value);
+          return (1 + currentReturn) / (1 + firstCumulativeReturn) - 1;
+        });
+        const assetValues = rebasedReturns.map((value) => baseInitial * (1 + value));
+        const initialValue = baseInitial;
         const finalValue = assetValues[assetValues.length - 1];
         const totalReturnPct = initialValue > 0 ? (finalValue / initialValue - 1) * 100 : null;
         const firstDate = new Date(validPoints[0].date);
@@ -1237,6 +1241,23 @@ def _build_report_bootstrap_script() -> str:
             group.open = true;
           }
         });
+        updateLogToggleButton();
+      }
+
+      function updateLogToggleButton() {
+        const toggleButton = document.getElementById('log-toggle-all');
+        if (!toggleButton) return;
+        const visibleGroups = Array.from(document.querySelectorAll('.log-year-group')).filter(
+          (group) => group.style.display !== 'none'
+        );
+        if (!visibleGroups.length) {
+          toggleButton.textContent = '展开全部年份';
+          toggleButton.disabled = true;
+          return;
+        }
+        toggleButton.disabled = false;
+        const allExpanded = visibleGroups.every((group) => group.open);
+        toggleButton.textContent = allExpanded ? '收起全部年份' : '展开全部年份';
       }
 
       function applyFilter() {
@@ -1248,23 +1269,22 @@ def _build_report_bootstrap_script() -> str:
 
       function bindFilterEvents() {
         const resetButton = document.getElementById('report-filter-reset');
-        const expandButton = document.getElementById('log-expand-all');
-        const collapseButton = document.getElementById('log-collapse-all');
+        const toggleButton = document.getElementById('log-toggle-all');
         resetButton?.addEventListener('click', () => {
           currentFilter.year = '';
           currentFilter.month = '';
           currentFilter.day = '';
           applyFilter();
         });
-        expandButton?.addEventListener('click', () => {
-          document.querySelectorAll('.log-year-group').forEach((group) => {
-            if (group.style.display !== 'none') group.open = true;
+        toggleButton?.addEventListener('click', () => {
+          const visibleGroups = Array.from(document.querySelectorAll('.log-year-group')).filter(
+            (group) => group.style.display !== 'none'
+          );
+          const allExpanded = visibleGroups.length > 0 && visibleGroups.every((group) => group.open);
+          visibleGroups.forEach((group) => {
+            group.open = !allExpanded;
           });
-        });
-        collapseButton?.addEventListener('click', () => {
-          document.querySelectorAll('.log-year-group').forEach((group) => {
-            if (group.style.display !== 'none') group.open = false;
-          });
+          updateLogToggleButton();
         });
       }
 
