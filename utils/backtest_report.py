@@ -303,9 +303,9 @@ def _build_metric_cards(report_data: list[dict[str, Any]]) -> str:
         display = "-" if _is_missing(value) else str(value)
         cards.append(
             f"""
-            <div class="metric-card">
+            <div class="metric-card" data-metric-label="{html_escape(key)}" data-original-value="{html_escape(display)}">
               <div class="metric-label">{key}</div>
-              <div class="metric-value">{display}</div>
+              <div class="metric-value" data-metric-value>{display}</div>
             </div>
             """
         )
@@ -320,24 +320,18 @@ def _build_filter_toolbar() -> str:
         <p>支持按年、月、日筛选页面图表与交易日志。</p>
       </div>
       <div class="filter-toolbar-controls">
-        <label class="filter-field">
-          <span>年</span>
-          <select id="report-filter-year">
-            <option value="">全部</option>
-          </select>
-        </label>
-        <label class="filter-field">
-          <span>月</span>
-          <select id="report-filter-month" disabled>
-            <option value="">全部</option>
-          </select>
-        </label>
-        <label class="filter-field">
-          <span>日</span>
-          <select id="report-filter-day" disabled>
-            <option value="">全部</option>
-          </select>
-        </label>
+        <div class="filter-group">
+          <span class="filter-group-label">年</span>
+          <div class="filter-chip-row" id="report-filter-year-group"></div>
+        </div>
+        <div class="filter-group">
+          <span class="filter-group-label">月</span>
+          <div class="filter-chip-row" id="report-filter-month-group"></div>
+        </div>
+        <div class="filter-group">
+          <span class="filter-group-label">日</span>
+          <div class="filter-chip-row" id="report-filter-day-group"></div>
+        </div>
         <div class="filter-actions">
           <button type="button" id="report-filter-reset">重置筛选</button>
           <button type="button" id="log-expand-all">展开全部年份</button>
@@ -536,24 +530,44 @@ def _build_report_bootstrap_script() -> str:
         return Array.from(dates).sort();
       }
 
-      function buildOptions(select, values, placeholder, selectedValue) {
-        const options = [`<option value="">${placeholder}</option>`];
+      function renderChipGroup(containerId, values, selectedValue, labelFormatter, onSelect, disabledText) {
+        const container = document.getElementById(containerId);
+        if (!container) return;
+        if (!values.length) {
+          container.innerHTML = `<button type="button" class="filter-chip is-disabled" disabled>${disabledText}</button>`;
+          return;
+        }
+        const buttons = [];
+        buttons.push(
+          `<button type="button" class="filter-chip${selectedValue ? '' : ' is-active'}" data-filter-value="">全部</button>`
+        );
         values.forEach((value) => {
-          const selected = value === selectedValue ? ' selected' : '';
-          options.push(`<option value="${value}"${selected}>${value}</option>`);
+          buttons.push(
+            `<button type="button" class="filter-chip${value === selectedValue ? ' is-active' : ''}" data-filter-value="${value}">${labelFormatter(value)}</button>`
+          );
         });
-        select.innerHTML = options.join('');
+        container.innerHTML = buttons.join('');
+        container.querySelectorAll('.filter-chip[data-filter-value]').forEach((node) => {
+          node.addEventListener('click', () => onSelect(node.dataset.filterValue || ''));
+        });
       }
 
-      function updateFilterSelects() {
-        const yearSelect = document.getElementById('report-filter-year');
-        const monthSelect = document.getElementById('report-filter-month');
-        const daySelect = document.getElementById('report-filter-day');
-        if (!yearSelect || !monthSelect || !daySelect) return;
-
+      function updateFilterControls() {
         const dates = collectAvailableDates().map(parseDateParts).filter(Boolean);
         const years = Array.from(new Set(dates.map((item) => item.year))).sort();
-        buildOptions(yearSelect, years, '全部', currentFilter.year);
+        renderChipGroup(
+          'report-filter-year-group',
+          years,
+          currentFilter.year,
+          (value) => `${value}年`,
+          (value) => {
+            currentFilter.year = value;
+            currentFilter.month = '';
+            currentFilter.day = '';
+            applyFilter();
+          },
+          '暂无年份'
+        );
 
         const months = currentFilter.year
           ? Array.from(
@@ -565,9 +579,19 @@ def _build_report_bootstrap_script() -> str:
               )
             ).sort()
           : [];
-        monthSelect.disabled = !currentFilter.year;
         if (!currentFilter.year) currentFilter.month = '';
-        buildOptions(monthSelect, months, '全部', currentFilter.month);
+        renderChipGroup(
+          'report-filter-month-group',
+          months,
+          currentFilter.month,
+          (value) => `${Number(value)}月`,
+          (value) => {
+            currentFilter.month = value;
+            currentFilter.day = '';
+            applyFilter();
+          },
+          currentFilter.year ? '该年暂无月份' : '先选择年份'
+        );
 
         const days = currentFilter.year && currentFilter.month
           ? Array.from(
@@ -583,9 +607,18 @@ def _build_report_bootstrap_script() -> str:
               )
             ).sort()
           : [];
-        daySelect.disabled = !(currentFilter.year && currentFilter.month);
         if (!(currentFilter.year && currentFilter.month)) currentFilter.day = '';
-        buildOptions(daySelect, days, '全部', currentFilter.day);
+        renderChipGroup(
+          'report-filter-day-group',
+          days,
+          currentFilter.day,
+          (value) => `${Number(value)}日`,
+          (value) => {
+            currentFilter.day = value;
+            applyFilter();
+          },
+          currentFilter.year && currentFilter.month ? '该月暂无日期' : '先选择年月'
+        );
       }
 
       function filterLineLikePayload(payload) {
@@ -930,6 +963,226 @@ def _build_report_bootstrap_script() -> str:
         };
       }
 
+      function parseMetricNumber(value) {
+        const text = String(value || '').replace(/,/g, '').replace(/%/g, '').trim();
+        if (!text || text === '-' || text === 'N/A') return null;
+        const number = Number(text);
+        return Number.isFinite(number) ? number : null;
+      }
+
+      function formatMetricNumber(value, digits = 2) {
+        if (value == null || !Number.isFinite(value)) return 'N/A';
+        return Number(value).toLocaleString('en-US', {
+          minimumFractionDigits: digits,
+          maximumFractionDigits: digits,
+        });
+      }
+
+      function formatMetricPercent(value, digits = 2) {
+        if (value == null || !Number.isFinite(value)) return 'N/A';
+        return `${Number(value).toFixed(digits)}%`;
+      }
+
+      function getMetricCard(label) {
+        return document.querySelector(`.metric-card[data-metric-label="${label}"]`);
+      }
+
+      function setMetricValue(label, value) {
+        const card = getMetricCard(label);
+        const valueNode = card?.querySelector('[data-metric-value]');
+        if (valueNode) valueNode.textContent = value;
+      }
+
+      function restoreMetricValues() {
+        document.querySelectorAll('.metric-card[data-original-value]').forEach((card) => {
+          const valueNode = card.querySelector('[data-metric-value]');
+          if (valueNode) valueNode.textContent = card.dataset.originalValue || '-';
+        });
+      }
+
+      function getPrimaryReturnsItem() {
+        return registry.find((item) => {
+          if (item.kind !== 'line' || !item.percentAxis) return false;
+          const xAxis = item.payload?.x_axis || [];
+          const first = xAxis[0];
+          return Boolean(parseDateParts(first)) && xAxis.length > 10;
+        });
+      }
+
+      function getPrimaryBuySellItem() {
+        return registry.find((item) => item.kind === 'buy_sell');
+      }
+
+      function computeDrawdownStats(assetValues) {
+        let peak = -Infinity;
+        let maxDrawdownPct = 0;
+        let maxDrawdownAmount = 0;
+        let currentDuration = 0;
+        let maxDuration = 0;
+        assetValues.forEach((value) => {
+          if (!Number.isFinite(value)) return;
+          if (value >= peak) {
+            peak = value;
+            currentDuration = 0;
+            return;
+          }
+          currentDuration += 1;
+          maxDuration = Math.max(maxDuration, currentDuration);
+          if (peak > 0) {
+            const amount = peak - value;
+            const pct = amount / peak * 100;
+            if (pct > maxDrawdownPct) maxDrawdownPct = pct;
+            if (amount > maxDrawdownAmount) maxDrawdownAmount = amount;
+          }
+        });
+        return {
+          maxDrawdownPct,
+          maxDrawdownAmount,
+          maxDuration,
+        };
+      }
+
+      function computeTradeStatsFromLogs() {
+        const visibleLines = Array.from(document.querySelectorAll('.log-line')).filter(
+          (node) => node.style.display !== 'none'
+        );
+        const netProfits = [];
+        visibleLines.forEach((node) => {
+          const text = node.textContent || '';
+          const match = text.match(/净收益=([-+]?\\d+(?:\\.\\d+)?)/);
+          if (match) netProfits.push(Number(match[1]));
+        });
+        const tradesTotal = netProfits.length;
+        const tradesWon = netProfits.filter((value) => value > 0).length;
+        const tradesLost = netProfits.filter((value) => value < 0).length;
+        const netProfit = netProfits.reduce((sum, value) => sum + value, 0);
+        return {
+          tradesTotal,
+          tradesWon,
+          tradesLost,
+          winRatePct: tradesTotal ? (tradesWon / tradesTotal) * 100 : 0,
+          netProfit,
+          avgTradeProfit: tradesTotal ? netProfit / tradesTotal : 0,
+        };
+      }
+
+      function computePositionStats() {
+        const buySellItem = getPrimaryBuySellItem();
+        if (!buySellItem) return null;
+        const originalPayload = buySellItem.payload || {};
+        const filteredPayload = getFilteredPayload(buySellItem);
+        const visibleDates = filteredPayload.x_axis || [];
+        if (!visibleDates.length) return null;
+
+        const buyDates = new Set((filteredPayload.buy_points || []).map((item) => String(item[0])));
+        const sellDates = new Set((filteredPayload.sell_points || []).map((item) => String(item[0])));
+        const firstVisibleDate = visibleDates[0];
+        let hasPosition = false;
+
+        const originalActions = [];
+        (originalPayload.buy_points || []).forEach((item) => {
+          if (Array.isArray(item) && item[0] < firstVisibleDate) originalActions.push([String(item[0]), 'buy']);
+        });
+        (originalPayload.sell_points || []).forEach((item) => {
+          if (Array.isArray(item) && item[0] < firstVisibleDate) originalActions.push([String(item[0]), 'sell']);
+        });
+        originalActions.sort((a, b) => a[0].localeCompare(b[0]));
+        if (originalActions.length) {
+          hasPosition = originalActions[originalActions.length - 1][1] === 'buy';
+        }
+
+        let positionDays = 0;
+        let idleDays = 0;
+        visibleDates.forEach((date) => {
+          if (buyDates.has(date)) hasPosition = true;
+          if (hasPosition) positionDays += 1;
+          else idleDays += 1;
+          if (sellDates.has(date)) hasPosition = false;
+        });
+        const totalDays = positionDays + idleDays;
+        return {
+          positionDays,
+          idleDays,
+          positionRatio: totalDays ? (positionDays / totalDays) * 100 : 0,
+          idleRatio: totalDays ? (idleDays / totalDays) * 100 : 0,
+        };
+      }
+
+      function updateMetricCards() {
+        const hasFilter = Boolean(currentFilter.year || currentFilter.month || currentFilter.day);
+        if (!hasFilter) {
+          restoreMetricValues();
+          return;
+        }
+
+        const returnsItem = getPrimaryReturnsItem();
+        if (!returnsItem) return;
+        const filteredPayload = getFilteredPayload(returnsItem);
+        const strategySeries = filteredPayload.series?.[0]?.data || [];
+        const xAxis = filteredPayload.x_axis || [];
+        if (!strategySeries.length || !xAxis.length) return;
+
+        const baseInitial = parseMetricNumber(getMetricCard('初始资金')?.dataset.originalValue);
+        if (!Number.isFinite(baseInitial) || baseInitial <= 0) return;
+
+        const validPoints = xAxis
+          .map((date, index) => ({ date, value: strategySeries[index] }))
+          .filter((item) => item.value != null && Number.isFinite(Number(item.value)));
+        if (!validPoints.length) return;
+
+        const assetValues = validPoints.map((item) => baseInitial * (1 + Number(item.value)));
+        const initialValue = assetValues[0];
+        const finalValue = assetValues[assetValues.length - 1];
+        const totalReturnPct = initialValue > 0 ? (finalValue / initialValue - 1) * 100 : null;
+        const firstDate = new Date(validPoints[0].date);
+        const lastDate = new Date(validPoints[validPoints.length - 1].date);
+        const daySpan = Math.max((lastDate - firstDate) / (1000 * 60 * 60 * 24), 0);
+        const annualReturnPct =
+          initialValue > 0 && finalValue > 0 && daySpan > 0
+            ? (Math.pow(finalValue / initialValue, 365 / daySpan) - 1) * 100
+            : null;
+
+        const filteredReturns = assetValues
+          .map((value, index) => (index === 0 ? null : value / assetValues[index - 1] - 1))
+          .filter((value) => value != null && Number.isFinite(value));
+        const avgReturn = filteredReturns.length
+          ? filteredReturns.reduce((sum, value) => sum + value, 0) / filteredReturns.length
+          : null;
+        const variance = filteredReturns.length
+          ? filteredReturns.reduce((sum, value) => sum + Math.pow(value - avgReturn, 2), 0) / filteredReturns.length
+          : null;
+        const stdDev = variance != null ? Math.sqrt(variance) : null;
+        const sharpeRatio =
+          avgReturn != null && stdDev != null && stdDev > 0
+            ? (avgReturn / stdDev) * Math.sqrt(252)
+            : null;
+        const drawdownStats = computeDrawdownStats(assetValues);
+        const tradeStats = computeTradeStatsFromLogs();
+        const positionStats = computePositionStats();
+
+        setMetricValue('初始资金', formatMetricNumber(initialValue));
+        setMetricValue('期末资产', formatMetricNumber(finalValue));
+        setMetricValue('总收益率', formatMetricPercent(totalReturnPct));
+        setMetricValue('年化收益率', formatMetricPercent(annualReturnPct));
+        setMetricValue('最大回撤', formatMetricPercent(drawdownStats.maxDrawdownPct));
+        setMetricValue('最大回撤金额', formatMetricNumber(drawdownStats.maxDrawdownAmount));
+        setMetricValue('最大回撤周期', String(drawdownStats.maxDuration));
+        setMetricValue('夏普比率', sharpeRatio == null ? 'N/A' : Number(sharpeRatio).toFixed(2));
+        setMetricValue('总交易次数', String(tradeStats.tradesTotal));
+        setMetricValue('盈利次数', String(tradeStats.tradesWon));
+        setMetricValue('亏损次数', String(tradeStats.tradesLost));
+        setMetricValue('胜率', formatMetricPercent(tradeStats.winRatePct));
+        setMetricValue('净利润', formatMetricNumber(tradeStats.netProfit));
+        setMetricValue('平均每笔净利润', formatMetricNumber(tradeStats.avgTradeProfit));
+
+        if (positionStats) {
+          setMetricValue('资金占用天数', String(positionStats.positionDays));
+          setMetricValue('资金占用天数占比', formatMetricPercent(positionStats.positionRatio));
+          setMetricValue('资金空闲天数', String(positionStats.idleDays));
+          setMetricValue('资金空闲天数占比', formatMetricPercent(positionStats.idleRatio));
+        }
+      }
+
       function getFilteredPayload(item) {
         if (item.kind === 'buy_sell') return filterBuySellPayload(item.payload);
         if (item.kind === 'line' || item.kind === 'bar' || item.kind === 'area') {
@@ -987,34 +1240,16 @@ def _build_report_bootstrap_script() -> str:
       }
 
       function applyFilter() {
-        updateFilterSelects();
+        updateFilterControls();
         registry.forEach(renderChart);
         updateLogVisibility();
+        updateMetricCards();
       }
 
       function bindFilterEvents() {
-        const yearSelect = document.getElementById('report-filter-year');
-        const monthSelect = document.getElementById('report-filter-month');
-        const daySelect = document.getElementById('report-filter-day');
         const resetButton = document.getElementById('report-filter-reset');
         const expandButton = document.getElementById('log-expand-all');
         const collapseButton = document.getElementById('log-collapse-all');
-
-        yearSelect?.addEventListener('change', (event) => {
-          currentFilter.year = event.target.value;
-          currentFilter.month = '';
-          currentFilter.day = '';
-          applyFilter();
-        });
-        monthSelect?.addEventListener('change', (event) => {
-          currentFilter.month = event.target.value;
-          currentFilter.day = '';
-          applyFilter();
-        });
-        daySelect?.addEventListener('change', (event) => {
-          currentFilter.day = event.target.value;
-          applyFilter();
-        });
         resetButton?.addEventListener('click', () => {
           currentFilter.year = '';
           currentFilter.month = '';
@@ -1037,7 +1272,7 @@ def _build_report_bootstrap_script() -> str:
         registerChart(config) {
           registry.push(config);
           renderChart(config);
-          updateFilterSelects();
+          updateFilterControls();
         },
         init() {
           bindFilterEvents();
@@ -1249,28 +1484,58 @@ def html(
     .filter-toolbar-controls {{
       display: flex;
       flex-wrap: wrap;
-      align-items: flex-end;
+      align-items: center;
       gap: 12px;
     }}
-    .filter-field {{
+    .filter-group {{
       display: flex;
       flex-direction: column;
       gap: 6px;
+      min-width: 220px;
+    }}
+    .filter-group-label {{
       color: var(--muted);
       font-size: 12px;
+      font-weight: 600;
     }}
-    .filter-field select {{
-      min-width: 88px;
-      height: 36px;
-      padding: 0 12px;
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      background: #fff;
-      color: var(--text);
+    .filter-chip-row {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      min-height: 38px;
+      align-items: center;
     }}
-    .filter-field select:disabled {{
-      background: #f3f4f6;
-      color: #9ca3af;
+    .filter-chip {{
+      height: 34px;
+      padding: 0 14px;
+      border: 1px solid rgba(148, 163, 184, 0.26);
+      border-radius: 999px;
+      background: linear-gradient(180deg, #ffffff, #f8fbff);
+      color: #475467;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      transition: all 0.18s ease;
+      box-shadow: 0 6px 18px rgba(148, 163, 184, 0.12);
+    }}
+    .filter-chip:hover {{
+      border-color: rgba(84, 112, 198, 0.35);
+      color: #2d3b55;
+      transform: translateY(-1px);
+      box-shadow: 0 10px 20px rgba(84, 112, 198, 0.14);
+    }}
+    .filter-chip.is-active {{
+      border-color: rgba(84, 112, 198, 0.45);
+      background: linear-gradient(180deg, rgba(84, 112, 198, 0.16), rgba(84, 112, 198, 0.08));
+      color: #24324a;
+      box-shadow: 0 12px 24px rgba(84, 112, 198, 0.18);
+    }}
+    .filter-chip.is-disabled {{
+      cursor: not-allowed;
+      color: #98a2b3;
+      background: #f8fafc;
+      border-style: dashed;
+      box-shadow: none;
     }}
     .filter-actions {{
       display: flex;
@@ -1280,14 +1545,19 @@ def html(
     .filter-actions button {{
       height: 36px;
       padding: 0 14px;
-      border: 1px solid var(--border);
-      border-radius: 10px;
-      background: #fff;
-      color: var(--text);
+      border: 1px solid rgba(148, 163, 184, 0.28);
+      border-radius: 999px;
+      background: linear-gradient(180deg, #ffffff, #f7faff);
+      color: #344054;
       cursor: pointer;
+      font-weight: 600;
+      box-shadow: 0 8px 18px rgba(148, 163, 184, 0.12);
+      transition: all 0.18s ease;
     }}
     .filter-actions button:hover {{
-      background: #f8fafc;
+      transform: translateY(-1px);
+      background: linear-gradient(180deg, #ffffff, #eef4ff);
+      box-shadow: 0 10px 22px rgba(84, 112, 198, 0.14);
     }}
     .metrics-grid {{
       display: grid;
@@ -1463,11 +1733,8 @@ def html(
       .filter-toolbar-controls {{
         width: 100%;
       }}
-      .filter-field {{
-        flex: 1 1 90px;
-      }}
-      .filter-field select {{
-        width: 100%;
+      .filter-group {{
+        min-width: 100%;
       }}
       .content-layout {{
         flex-direction: column;

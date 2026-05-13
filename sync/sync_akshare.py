@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import atexit
 import logging
 import os
 import sys
 import time
-from collections import defaultdict, deque
+from collections import deque
 from datetime import date, timedelta
 from pathlib import Path
 
 import akshare as ak
+import baostock as bs
 import pandas as pd
 import requests
 from requests import exceptions as requests_exceptions
@@ -37,8 +39,6 @@ CODE_SYNC_INTERVAL_SECONDS = 0.5
 FAILED_QUEUE_RETRY_ROUNDS = 1
 FAILED_QUEUE_RETRY_COOLDOWN_SECONDS = 8
 TUSHARE_TOKEN = "2755050aba62303e45f6842ee9e67defdf6e3c1b32bb033ca4ba037e"
-TUSHARE_DAILY_ONLY = True
-TUSHARE_DAILY_BATCH_SIZE = 20
 TUSHARE_DAILY_MAX_CALLS_PER_MINUTE = 45
 TUSHARE_DAILY_WINDOW_SECONDS = 60
 
@@ -63,6 +63,7 @@ STORAGE_COLUMNS = [
 
 _TUSHARE_PRO_CLIENT = None
 _TUSHARE_DAILY_CALL_TIMESTAMPS: deque[float] = deque()
+_BAOSTOCK_LOGGED_IN = False
 
 
 def configure_logging() -> None:
@@ -83,6 +84,31 @@ def get_tushare_token() -> str:
     if not token:
         raise RuntimeError("缺少 Tushare Token，无法使用 Tushare 同步数据")
     return token
+
+
+def ensure_baostock_login() -> None:
+    global _BAOSTOCK_LOGGED_IN
+    if _BAOSTOCK_LOGGED_IN:
+        return
+    login_result = bs.login()
+    if getattr(login_result, "error_code", "") != "0":
+        raise RuntimeError(
+            f"Baostock 登录失败: {login_result.error_code} {login_result.error_msg}"
+        )
+    _BAOSTOCK_LOGGED_IN = True
+
+
+def logout_baostock() -> None:
+    global _BAOSTOCK_LOGGED_IN
+    if not _BAOSTOCK_LOGGED_IN:
+        return
+    try:
+        bs.logout()
+    finally:
+        _BAOSTOCK_LOGGED_IN = False
+
+
+atexit.register(logout_baostock)
 
 
 def get_tushare_pro_client():
@@ -132,10 +158,14 @@ def resolve_all_sh_main_codes() -> list[str]:
     此外会额外排除名称中包含“融创”的股票。
     """
     try:
-        stock_df = fetch_sh_main_stock_pool_from_tushare()
+        stock_df = fetch_sh_main_stock_pool_from_baostock()
     except Exception as exc:
-        logger.warning("Tushare 股票池获取失败，回退到 Akshare: %s", exc)
-        stock_df = get_a_share_code_name_df_and_filter()
+        logger.warning("Baostock 股票池获取失败，回退到 Akshare: %s", exc)
+        try:
+            stock_df = get_a_share_code_name_df_and_filter()
+        except Exception as ak_exc:
+            logger.warning("Akshare 股票池获取失败，回退到 Tushare: %s", ak_exc)
+            stock_df = fetch_sh_main_stock_pool_from_tushare()
 
     sh_main_df = stock_df[
         stock_df["code"].astype(str).str.startswith(SH_MAIN_BOARD_PREFIXES)
@@ -148,6 +178,40 @@ def resolve_all_sh_main_codes() -> list[str]:
         )
         sh_main_df = sh_main_df.loc[keep_mask].copy()
     return [f"sh.{code}" for code in sh_main_df["code"].tolist()]
+
+
+def fetch_sh_main_stock_pool_from_baostock() -> pd.DataFrame:
+    ensure_baostock_login()
+    query_day = date.today().isoformat()
+    rs = bs.query_all_stock(day=query_day)
+    if getattr(rs, "error_code", "") != "0":
+        raise RuntimeError(f"Baostock query_all_stock 失败: {rs.error_msg}")
+
+    data_list: list[list[str]] = []
+    while rs.next():
+        data_list.append(rs.get_row_data())
+    if not data_list:
+        return pd.DataFrame(columns=["code", "name"])
+
+    raw_df = pd.DataFrame(data_list, columns=rs.fields)
+    name_column = "code_name" if "code_name" in raw_df.columns else "name"
+    if name_column not in raw_df.columns:
+        raw_df[name_column] = ""
+
+    normalized_df = raw_df.rename(columns={name_column: "name"}).copy()
+    normalized_df["code"] = normalized_df["code"].astype(str)
+    normalized_df = normalized_df[normalized_df["code"].str.startswith("sh.")]
+    normalized_df["code"] = normalized_df["code"].str.split(".").str[-1]
+    normalized_df["name"] = normalized_df["name"].fillna("").astype(str)
+    keep_mask = ~normalized_df.apply(
+        lambda row: stock_is_ignored(str(row["code"]), str(row["name"]), market="sh"),
+        axis=1,
+    )
+    return (
+        normalized_df.loc[keep_mask, ["code", "name"]]
+        .sort_values("code")
+        .reset_index(drop=True)
+    )
 
 
 def fetch_sh_main_stock_pool_from_tushare() -> pd.DataFrame:
@@ -209,14 +273,33 @@ def resolve_sync_end_date() -> str:
 
 
 def resolve_effective_adjust_flag(config_adjust_flag: str) -> str:
-    if not TUSHARE_DAILY_ONLY:
-        return config_adjust_flag
-    if config_adjust_flag not in ("cq", "3", ""):
-        logger.warning(
-            "当前 Tushare 权限仅支持 daily，无法直接拉取 %s，已自动切换为 cq(日线不复权)",
-            config_adjust_flag,
-        )
-    return "cq"
+    return config_adjust_flag
+
+
+def normalize_adjust_flag(adjust_flag: str) -> str:
+    return str(adjust_flag or "").strip().lower()
+
+
+def is_unadjusted_flag(adjust_flag: str) -> bool:
+    return normalize_adjust_flag(adjust_flag) in {"", "3", "bfq", "cq", "raw", "none"}
+
+
+def to_baostock_adjust_flag(adjust_flag: str) -> str:
+    normalized_flag = normalize_adjust_flag(adjust_flag)
+    if normalized_flag == "hfq":
+        return "1"
+    if normalized_flag == "qfq":
+        return "2"
+    if is_unadjusted_flag(normalized_flag):
+        return "3"
+    raise ValueError(f"不支持的 Baostock 复权口径: {adjust_flag}")
+
+
+def to_akshare_adjust_flag(adjust_flag: str) -> str:
+    normalized_flag = normalize_adjust_flag(adjust_flag)
+    if normalized_flag in {"hfq", "qfq"}:
+        return normalized_flag
+    return ""
 
 
 def is_tushare_rate_limit_error(exc: Exception) -> bool:
@@ -309,16 +392,20 @@ def enforce_tushare_daily_rate_limit() -> None:
         time.sleep(wait_seconds)
 
 
-def fetch_stock_history(symbol: str, start_date: str, end_date: str, adjust_flag: str) -> pd.DataFrame:
+def fetch_stock_history(
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    adjust_flag: str,
+) -> pd.DataFrame:
     full_code = to_full_code(symbol)
     ts_code = to_tushare_code(full_code)
     source_errors: list[str] = []
 
     stock_sources = [
         (
-            "tushare",
-            lambda: fetch_stock_history_from_tushare(
-                ts_code=ts_code,
+            "baostock",
+            lambda: fetch_stock_history_from_baostock(
                 full_code=full_code,
                 start_date=start_date,
                 end_date=end_date,
@@ -326,7 +413,7 @@ def fetch_stock_history(symbol: str, start_date: str, end_date: str, adjust_flag
             ),
         ),
         (
-            "eastmoney",
+            "akshare-eastmoney",
             lambda: normalize_stock_history_df(
                 fetch_stock_history_from_eastmoney(
                     symbol=symbol,
@@ -339,7 +426,7 @@ def fetch_stock_history(symbol: str, start_date: str, end_date: str, adjust_flag
             ),
         ),
         (
-            "sina",
+            "akshare-sina",
             lambda: normalize_sina_stock_history_df(
                 fetch_stock_history_from_sina(
                     full_code=full_code,
@@ -352,6 +439,22 @@ def fetch_stock_history(symbol: str, start_date: str, end_date: str, adjust_flag
             ),
         ),
     ]
+
+    if is_unadjusted_flag(adjust_flag):
+        stock_sources.append(
+            (
+                "tushare-daily",
+                lambda: fetch_stock_history_from_tushare(
+                    ts_code=ts_code,
+                    full_code=full_code,
+                    start_date=start_date,
+                    end_date=end_date,
+                    adjust_flag=adjust_flag,
+                ),
+            )
+        )
+    else:
+        logger.info("%s 请求 %s 复权口径，跳过 Tushare daily 兜底", full_code, adjust_flag)
 
     for source_name, fetcher in stock_sources:
         try:
@@ -369,6 +472,45 @@ def fetch_stock_history(symbol: str, start_date: str, end_date: str, adjust_flag
     raise RuntimeError(f"{full_code} 所有股票数据源均失败: {' | '.join(source_errors)}")
 
 
+def fetch_stock_history_from_baostock(
+    full_code: str,
+    start_date: str,
+    end_date: str,
+    adjust_flag: str,
+) -> pd.DataFrame:
+    ensure_baostock_login()
+    query_result = retry_request_call(
+        lambda: bs.query_history_k_data_plus(
+            full_code,
+            (
+                "date,code,open,high,low,close,preclose,volume,amount,"
+                "adjustflag,turn,tradestatus,pctChg,peTTM,pbMRQ,psTTM,"
+                "pcfNcfTTM,isST"
+            ),
+            start_date=start_date,
+            end_date=end_date,
+            frequency="d",
+            adjustflag=to_baostock_adjust_flag(adjust_flag),
+        ),
+        action_name=f"拉取股票 {full_code} Baostock 日线",
+    )
+    if getattr(query_result, "error_code", "") != "0":
+        raise RuntimeError(
+            f"Baostock 拉取股票 {full_code} 失败: "
+            f"{query_result.error_code} {query_result.error_msg}"
+        )
+
+    data_rows: list[list[str]] = []
+    while query_result.next():
+        data_rows.append(query_result.get_row_data())
+    raw_df = pd.DataFrame(data_rows, columns=query_result.fields)
+    return normalize_baostock_history_df(
+        raw_df,
+        full_code=full_code,
+        adjust_flag=adjust_flag,
+    )
+
+
 def fetch_stock_history_from_tushare(
     ts_code: str,
     full_code: str,
@@ -376,6 +518,8 @@ def fetch_stock_history_from_tushare(
     end_date: str,
     adjust_flag: str,
 ) -> pd.DataFrame:
+    if not is_unadjusted_flag(adjust_flag):
+        raise RuntimeError(f"Tushare 仅支持 daily 原始日线，不支持 {adjust_flag} 复权口径")
     if ts is None:
         raise RuntimeError("未安装 tushare")
 
@@ -437,13 +581,13 @@ def fetch_stock_history_from_eastmoney(
         "accept": "application/json, text/javascript, */*; q=0.01",
     }
     market_code = "1" if symbol.startswith("6") else "0"
-    adjust_dict = {"qfq": "1", "hfq": "2", "": "0"}
+    adjust_dict = {"qfq": "1", "hfq": "2", "": "0", "3": "0", "cq": "0"}
     params = {
         "fields1": "f1,f2,f3,f4,f5,f6",
         "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f116",
         "ut": "7eea3edcaed734bea9cbfc24409ed989",
         "klt": "101",
-        "fqt": adjust_dict.get(adjust_flag, "0"),
+        "fqt": adjust_dict.get(normalize_adjust_flag(adjust_flag), "0"),
         "secid": f"{market_code}.{symbol}",
         "beg": start_date.replace("-", ""),
         "end": end_date.replace("-", ""),
@@ -485,20 +629,92 @@ def fetch_stock_history_from_sina(
             symbol=full_code,
             start_date=start_date.replace("-", ""),
             end_date=end_date.replace("-", ""),
-            adjust=adjust_flag,
+            adjust=to_akshare_adjust_flag(adjust_flag),
         ),
         action_name=f"拉取股票 {full_code} 新浪日线",
     )
 
 
-def fetch_index_history(full_code: str, start_date: str, end_date: str, adjust_flag: str) -> pd.DataFrame:
-    symbol = full_code.split(".", 1)[1]
-    raw_df = fetch_index_history_from_eastmoney(
-        symbol=symbol,
-        start_date=start_date,
-        end_date=end_date,
+def fetch_index_history(
+    full_code: str,
+    start_date: str,
+    end_date: str,
+    adjust_flag: str,
+) -> pd.DataFrame:
+    source_errors: list[str] = []
+    index_sources = [
+        (
+            "baostock",
+            lambda: fetch_index_history_from_baostock(
+                full_code=full_code,
+                start_date=start_date,
+                end_date=end_date,
+                adjust_flag=adjust_flag,
+            ),
+        ),
+        (
+            "eastmoney",
+            lambda: normalize_index_history_df(
+                fetch_index_history_from_eastmoney(
+                    symbol=full_code.split(".", 1)[1],
+                    start_date=start_date,
+                    end_date=end_date,
+                ),
+                full_code=full_code,
+                adjust_flag=adjust_flag,
+            ),
+        ),
+    ]
+
+    for source_name, fetcher in index_sources:
+        try:
+            result_df = fetcher()
+            if result_df.empty:
+                logger.warning("%s 使用 %s 未拉到指数数据，尝试下一个源", full_code, source_name)
+                source_errors.append(f"{source_name}: empty")
+                continue
+            logger.info("%s 使用 %s 拉取指数成功", full_code, source_name)
+            return result_df
+        except Exception as exc:
+            logger.warning("%s 使用 %s 拉取指数失败: %s", full_code, source_name, exc)
+            source_errors.append(f"{source_name}: {exc}")
+
+    raise RuntimeError(f"{full_code} 所有指数数据源均失败: {' | '.join(source_errors)}")
+
+
+def fetch_index_history_from_baostock(
+    full_code: str,
+    start_date: str,
+    end_date: str,
+    adjust_flag: str,
+) -> pd.DataFrame:
+    ensure_baostock_login()
+    query_result = retry_request_call(
+        lambda: bs.query_history_k_data_plus(
+            full_code,
+            "date,code,open,high,low,close,preclose,volume,amount,pctChg",
+            start_date=start_date,
+            end_date=end_date,
+            frequency="d",
+            adjustflag=to_baostock_adjust_flag(adjust_flag),
+        ),
+        action_name=f"拉取指数 {full_code} Baostock 日线",
     )
-    return normalize_index_history_df(raw_df, full_code=full_code, adjust_flag=adjust_flag)
+    if getattr(query_result, "error_code", "") != "0":
+        raise RuntimeError(
+            f"Baostock 拉取指数 {full_code} 失败: "
+            f"{query_result.error_code} {query_result.error_msg}"
+        )
+
+    data_rows: list[list[str]] = []
+    while query_result.next():
+        data_rows.append(query_result.get_row_data())
+    raw_df = pd.DataFrame(data_rows, columns=query_result.fields)
+    return normalize_baostock_history_df(
+        raw_df,
+        full_code=full_code,
+        adjust_flag=adjust_flag,
+    )
 
 
 def fetch_index_history_from_eastmoney(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
@@ -579,6 +795,27 @@ def normalize_stock_history_df(raw_df: pd.DataFrame, full_code: str, adjust_flag
     normalized_df["code"] = full_code
     normalized_df["adjustflag"] = adjust_flag
     normalized_df["preclose"] = pd.to_numeric(normalized_df["close"], errors="coerce").shift(1)
+    return finalize_history_df(normalized_df)
+
+
+def normalize_baostock_history_df(
+    raw_df: pd.DataFrame,
+    full_code: str,
+    adjust_flag: str,
+) -> pd.DataFrame:
+    if raw_df is None or raw_df.empty:
+        return pd.DataFrame(columns=STORAGE_COLUMNS)
+
+    normalized_df = raw_df.copy()
+    normalized_df["date"] = pd.to_datetime(
+        normalized_df["date"], errors="coerce"
+    ).dt.strftime("%Y-%m-%d")
+    normalized_df["code"] = full_code
+    normalized_df["adjustflag"] = adjust_flag
+    if "turn" not in normalized_df.columns:
+        normalized_df["turn"] = 0
+    if "pctChg" not in normalized_df.columns:
+        normalized_df["pctChg"] = 0
     return finalize_history_df(normalized_df)
 
 
@@ -730,115 +967,6 @@ def merge_and_save_history(csv_path: Path, existing_df: pd.DataFrame, new_df: pd
     return len(new_df)
 
 
-def build_stock_sync_plan(
-    full_code: str,
-    start_date: str,
-    end_date: str,
-    adjust_flag: str,
-) -> dict[str, object]:
-    csv_path = get_daily_csv_path(full_code, adjust_flag)
-    existing_df = read_existing_history(csv_path)
-    request_start_date = compute_incremental_start_date(existing_df, start_date)
-    return {
-        "full_code": full_code,
-        "ts_code": to_tushare_code(full_code),
-        "csv_path": csv_path,
-        "existing_df": existing_df,
-        "request_start_date": request_start_date,
-        "end_date": end_date,
-    }
-
-
-def chunked(items: list[dict[str, object]], chunk_size: int) -> list[list[dict[str, object]]]:
-    return [items[index : index + chunk_size] for index in range(0, len(items), chunk_size)]
-
-
-def sync_stock_plans_via_tushare_batch(
-    stock_plans: list[dict[str, object]],
-    adjust_flag: str,
-    batch_name: str,
-) -> tuple[int, list[str]]:
-    success = 0
-    failed_codes: list[str] = []
-    grouped_plans: dict[str, list[dict[str, object]]] = defaultdict(list)
-
-    for plan in stock_plans:
-        grouped_plans[str(plan["request_start_date"])].append(plan)
-
-    total_batches = sum(
-        len(chunked(group_plans, TUSHARE_DAILY_BATCH_SIZE))
-        for group_plans in grouped_plans.values()
-    )
-    batch_index = 0
-
-    for request_start_date, group_plans in sorted(grouped_plans.items()):
-        plan_chunks = chunked(group_plans, TUSHARE_DAILY_BATCH_SIZE)
-        for plan_chunk in plan_chunks:
-            batch_index += 1
-            ts_codes = [str(plan["ts_code"]) for plan in plan_chunk]
-            logger.info(
-                "%s Tushare 批量拉取 %s/%s: start=%s size=%s",
-                batch_name,
-                batch_index,
-                total_batches,
-                request_start_date,
-                len(ts_codes),
-            )
-            try:
-                batch_df = fetch_tushare_daily_data(
-                    ts_codes=ts_codes,
-                    start_date=request_start_date.replace("-", ""),
-                    end_date=str(plan_chunk[0]["end_date"]).replace("-", ""),
-                    action_name=f"{batch_name} Tushare 批量日线",
-                )
-            except Exception as exc:
-                logger.warning(
-                    "%s Tushare 批量失败，整批进入单票回退: %s",
-                    batch_name,
-                    exc,
-                )
-                failed_codes.extend(str(plan["full_code"]) for plan in plan_chunk)
-                continue
-
-            if batch_df is None or batch_df.empty:
-                logger.warning("%s Tushare 批量返回空数据，整批进入单票回退", batch_name)
-                failed_codes.extend(str(plan["full_code"]) for plan in plan_chunk)
-                continue
-
-            grouped_batch_df = {
-                ts_code: code_df.copy()
-                for ts_code, code_df in batch_df.groupby("ts_code", sort=False)
-            }
-
-            for plan in plan_chunk:
-                full_code = str(plan["full_code"])
-                code_df = grouped_batch_df.get(str(plan["ts_code"]))
-                if code_df is None or code_df.empty:
-                    logger.warning("%s Tushare 批量未返回 %s，转单票回退", batch_name, full_code)
-                    failed_codes.append(full_code)
-                    continue
-
-                normalized_df = normalize_tushare_stock_history_df(
-                    raw_df=code_df,
-                    full_code=full_code,
-                    adjust_flag=adjust_flag,
-                )
-                if normalized_df.empty:
-                    logger.warning("%s Tushare 批量标准化后 %s 为空，转单票回退", batch_name, full_code)
-                    failed_codes.append(full_code)
-                    continue
-
-                save_count = merge_and_save_history(
-                    csv_path=plan["csv_path"],
-                    existing_df=plan["existing_df"],
-                    new_df=normalized_df,
-                )
-                logger.info("%s Tushare 批量同步完成 %s，新增 %s 条", batch_name, full_code, save_count)
-                success += 1
-
-    return success, failed_codes
-
-
 def sync_one_code(full_code: str, start_date: str, end_date: str, adjust_flag: str) -> str:
     csv_path = get_daily_csv_path(full_code, adjust_flag)
     existing_df = read_existing_history(csv_path)
@@ -905,8 +1033,6 @@ def run_sync_batch(
     skipped = 0
     failed = 0
     failed_codes: list[str] = []
-    fallback_codes: list[str] = []
-    stock_plans: list[dict[str, object]] = []
 
     if not target_codes:
         logger.info("%s 没有待同步代码", batch_name)
@@ -919,35 +1045,9 @@ def run_sync_batch(
         CODE_SYNC_INTERVAL_SECONDS,
     )
 
-    for full_code in target_codes:
-        if full_code == CONFIG["benchmark_code"]:
-            fallback_codes.append(full_code)
-            continue
-
-        stock_plan = build_stock_sync_plan(
-            full_code=full_code,
-            start_date=start_date,
-            end_date=end_date,
-            adjust_flag=adjust_flag,
-        )
-        if str(stock_plan["request_start_date"]) > end_date:
-            logger.info("%s 已是最新，跳过", full_code)
-            skipped += 1
-            continue
-        stock_plans.append(stock_plan)
-
-    if stock_plans:
-        batch_success, batch_failed_codes = sync_stock_plans_via_tushare_batch(
-            stock_plans=stock_plans,
-            adjust_flag=adjust_flag,
-            batch_name=batch_name,
-        )
-        success += batch_success
-        fallback_codes.extend(batch_failed_codes)
-
-    for index, full_code in enumerate(fallback_codes, start=1):
+    for index, full_code in enumerate(target_codes, start=1):
         try:
-            logger.info("%s 单票回退 %s/%s: %s", batch_name, index, len(fallback_codes), full_code)
+            logger.info("%s 同步 %s/%s: %s", batch_name, index, len(target_codes), full_code)
             result = sync_one_code(
                 full_code=full_code,
                 start_date=start_date,
@@ -970,7 +1070,7 @@ def run_sync_batch(
             failed += 1
             failed_codes.append(full_code)
 
-        if index < len(fallback_codes):
+        if index < len(target_codes):
             sleep_between_code_sync()
 
     logger.info(
@@ -992,7 +1092,7 @@ def main() -> None:
     end_date = resolve_sync_end_date()
     target_codes = resolve_target_codes()
 
-    logger.info("使用 Tushare daily 主源同步所需数据")
+    logger.info("使用 Baostock -> Akshare -> Tushare 的优先级同步所需数据")
     logger.info("目标代码: %s", ", ".join(target_codes))
     logger.info("同步区间: %s ~ %s", start_date, end_date)
     logger.info("数据复权口径: %s", adjust_flag)
