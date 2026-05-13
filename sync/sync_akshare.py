@@ -35,7 +35,8 @@ REQUEST_RETRY_SLEEP_SECONDS = 2
 CODE_SYNC_INTERVAL_SECONDS = 0.5
 FAILED_QUEUE_RETRY_ROUNDS = 1
 FAILED_QUEUE_RETRY_COOLDOWN_SECONDS = 8
-TUSHARE_TOKEN_ENV = "TUSHARE_TOKEN"
+TUSHARE_TOKEN = "2755050aba62303e45f6842ee9e67defdf6e3c1b32bb033ca4ba037e"
+TUSHARE_DAILY_ONLY = True
 
 STORAGE_COLUMNS = [
     "date",
@@ -73,11 +74,9 @@ def configure_logging() -> None:
 
 
 def get_tushare_token() -> str:
-    token = os.getenv(TUSHARE_TOKEN_ENV, "").strip()
+    token = TUSHARE_TOKEN.strip()
     if not token:
-        raise RuntimeError(
-            f"缺少 {TUSHARE_TOKEN_ENV} 环境变量，无法使用 Tushare 同步数据"
-        )
+        raise RuntimeError("缺少 Tushare Token，无法使用 Tushare 同步数据")
     return token
 
 
@@ -204,6 +203,17 @@ def resolve_sync_end_date() -> str:
     return CONFIG.get("to_date") or date.today().isoformat()
 
 
+def resolve_effective_adjust_flag(config_adjust_flag: str) -> str:
+    if not TUSHARE_DAILY_ONLY:
+        return config_adjust_flag
+    if config_adjust_flag not in ("cq", "3", ""):
+        logger.warning(
+            "当前 Tushare 权限仅支持 daily，无法直接拉取 %s，已自动切换为 cq(日线不复权)",
+            config_adjust_flag,
+        )
+    return "cq"
+
+
 def is_retryable_request_error(exc: Exception) -> bool:
     message = str(exc).lower()
     keywords = [
@@ -323,36 +333,20 @@ def fetch_stock_history_from_tushare(
     if ts is None:
         raise RuntimeError("未安装 tushare")
 
-    tushare_adjust = adjust_flag if adjust_flag in ("qfq", "hfq") else None
     start_date_compact = start_date.replace("-", "")
     end_date_compact = end_date.replace("-", "")
 
-    bar_df = retry_request_call(
-        lambda: ts.pro_bar(
+    pro = get_tushare_pro_client()
+    raw_df = retry_request_call(
+        lambda: pro.daily(
             ts_code=ts_code,
-            asset="E",
-            adj=tushare_adjust,
             start_date=start_date_compact,
             end_date=end_date_compact,
         ),
         action_name=f"拉取股票 {ts_code} Tushare 日线",
     )
-    if bar_df is None or bar_df.empty:
-        return pd.DataFrame(columns=STORAGE_COLUMNS)
-
-    pro = get_tushare_pro_client()
-    basic_df = retry_request_call(
-        lambda: pro.daily_basic(
-            ts_code=ts_code,
-            start_date=start_date_compact,
-            end_date=end_date_compact,
-            fields="ts_code,trade_date,turnover_rate,pe_ttm,ps_ttm,pb",
-        ),
-        action_name=f"拉取股票 {ts_code} Tushare 基本面",
-    )
     return normalize_tushare_stock_history_df(
-        bar_df=bar_df,
-        basic_df=basic_df,
+        raw_df=raw_df,
         full_code=full_code,
         adjust_flag=adjust_flag,
     )
@@ -432,67 +426,12 @@ def fetch_stock_history_from_sina(
 
 def fetch_index_history(full_code: str, start_date: str, end_date: str, adjust_flag: str) -> pd.DataFrame:
     symbol = full_code.split(".", 1)[1]
-    ts_code = to_tushare_code(full_code)
-    source_errors: list[str] = []
-
-    index_sources = [
-        (
-            "tushare",
-            lambda: fetch_index_history_from_tushare(
-                ts_code=ts_code,
-                full_code=full_code,
-                start_date=start_date,
-                end_date=end_date,
-                adjust_flag=adjust_flag,
-            ),
-        ),
-        (
-            "eastmoney",
-            lambda: normalize_index_history_df(
-                fetch_index_history_from_eastmoney(
-                    symbol=symbol,
-                    start_date=start_date,
-                    end_date=end_date,
-                ),
-                full_code=full_code,
-                adjust_flag=adjust_flag,
-            ),
-        ),
-    ]
-
-    for source_name, fetcher in index_sources:
-        try:
-            result_df = fetcher()
-            if result_df.empty:
-                logger.warning("%s 使用 %s 未拉到数据，尝试下一个源", full_code, source_name)
-                source_errors.append(f"{source_name}: empty")
-                continue
-            logger.info("%s 使用 %s 拉取成功", full_code, source_name)
-            return result_df
-        except Exception as exc:
-            logger.warning("%s 使用 %s 失败: %s", full_code, source_name, exc)
-            source_errors.append(f"{source_name}: {exc}")
-
-    raise RuntimeError(f"{full_code} 所有指数数据源均失败: {' | '.join(source_errors)}")
-
-
-def fetch_index_history_from_tushare(
-    ts_code: str,
-    full_code: str,
-    start_date: str,
-    end_date: str,
-    adjust_flag: str,
-) -> pd.DataFrame:
-    pro = get_tushare_pro_client()
-    raw_df = retry_request_call(
-        lambda: pro.index_daily(
-            ts_code=ts_code,
-            start_date=start_date.replace("-", ""),
-            end_date=end_date.replace("-", ""),
-        ),
-        action_name=f"拉取指数 {ts_code} Tushare 日线",
+    raw_df = fetch_index_history_from_eastmoney(
+        symbol=symbol,
+        start_date=start_date,
+        end_date=end_date,
     )
-    return normalize_tushare_index_history_df(raw_df, full_code=full_code, adjust_flag=adjust_flag)
+    return normalize_index_history_df(raw_df, full_code=full_code, adjust_flag=adjust_flag)
 
 
 def fetch_index_history_from_eastmoney(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
@@ -577,15 +516,14 @@ def normalize_stock_history_df(raw_df: pd.DataFrame, full_code: str, adjust_flag
 
 
 def normalize_tushare_stock_history_df(
-    bar_df: pd.DataFrame,
-    basic_df: pd.DataFrame,
+    raw_df: pd.DataFrame,
     full_code: str,
     adjust_flag: str,
 ) -> pd.DataFrame:
-    if bar_df is None or bar_df.empty:
+    if raw_df is None or raw_df.empty:
         return pd.DataFrame(columns=STORAGE_COLUMNS)
 
-    normalized_df = bar_df.copy()
+    normalized_df = raw_df.copy()
     normalized_df["trade_date"] = pd.to_datetime(
         normalized_df["trade_date"], errors="coerce"
     ).dt.strftime("%Y-%m-%d")
@@ -597,34 +535,12 @@ def normalize_tushare_stock_history_df(
             "pct_chg": "pctChg",
         }
     )
-
-    if basic_df is not None and not basic_df.empty:
-        basic_normalized_df = basic_df.copy()
-        basic_normalized_df["trade_date"] = pd.to_datetime(
-            basic_normalized_df["trade_date"], errors="coerce"
-        ).dt.strftime("%Y-%m-%d")
-        basic_normalized_df = basic_normalized_df.rename(
-            columns={
-                "trade_date": "date",
-                "turnover_rate": "turn",
-                "pe_ttm": "peTTM",
-                "ps_ttm": "psTTM",
-                "pb": "pbMRQ",
-            }
-        )
-        normalized_df = normalized_df.merge(
-            basic_normalized_df[["date", "turn", "peTTM", "psTTM", "pbMRQ"]],
-            on="date",
-            how="left",
-        )
-    else:
-        normalized_df["turn"] = 0
-        normalized_df["peTTM"] = pd.NA
-        normalized_df["psTTM"] = pd.NA
-        normalized_df["pbMRQ"] = pd.NA
-
     normalized_df["code"] = full_code
     normalized_df["adjustflag"] = adjust_flag
+    normalized_df["turn"] = 0
+    normalized_df["peTTM"] = pd.NA
+    normalized_df["psTTM"] = pd.NA
+    normalized_df["pbMRQ"] = pd.NA
     normalized_df["pcfNcfTTM"] = pd.NA
     return finalize_history_df(normalized_df)
 
@@ -657,32 +573,6 @@ def normalize_sina_stock_history_df(
     normalized_df["preclose"] = pd.to_numeric(
         normalized_df["close"], errors="coerce"
     ).shift(1)
-    return finalize_history_df(normalized_df)
-
-
-def normalize_tushare_index_history_df(
-    raw_df: pd.DataFrame,
-    full_code: str,
-    adjust_flag: str,
-) -> pd.DataFrame:
-    if raw_df is None or raw_df.empty:
-        return pd.DataFrame(columns=STORAGE_COLUMNS)
-
-    normalized_df = raw_df.copy()
-    normalized_df["trade_date"] = pd.to_datetime(
-        normalized_df["trade_date"], errors="coerce"
-    ).dt.strftime("%Y-%m-%d")
-    normalized_df = normalized_df.rename(
-        columns={
-            "trade_date": "date",
-            "pre_close": "preclose",
-            "vol": "volume",
-            "pct_chg": "pctChg",
-        }
-    )
-    normalized_df["code"] = full_code
-    normalized_df["adjustflag"] = adjust_flag
-    normalized_df["turn"] = 0
     return finalize_history_df(normalized_df)
 
 
@@ -893,14 +783,15 @@ def run_sync_batch(
 
 def main() -> None:
     configure_logging()
-    adjust_flag = CONFIG["adjust_flag"]
+    adjust_flag = resolve_effective_adjust_flag(CONFIG["adjust_flag"])
     start_date = resolve_sync_start_date()
     end_date = resolve_sync_end_date()
     target_codes = resolve_target_codes()
 
-    logger.info("使用 Akshare 同步启动所需数据")
+    logger.info("使用 Tushare daily 主源同步所需数据")
     logger.info("目标代码: %s", ", ".join(target_codes))
     logger.info("同步区间: %s ~ %s", start_date, end_date)
+    logger.info("数据复权口径: %s", adjust_flag)
 
     total_success, total_skipped, _, failed_codes = run_sync_batch(
         target_codes,

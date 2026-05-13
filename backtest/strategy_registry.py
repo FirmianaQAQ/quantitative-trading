@@ -25,12 +25,12 @@ class StrategySpec:
 
 
 STRATEGY_FAMILY_DISPLAY_NAMES = {
-    "simple_ma_backtest": "普通双均线策略",
-    "pair_trade_backtest": "套利配对交易策略",
+    "simple_ma_backtest": "普通双均线",
+    "pair_trade_backtest": "套利配对交易",
     "rotation_backtest": "多因子轮动策略",
     "cta_event_backtest": "CTA策略",
-    "intraday_t_backtest": "T策略",
-    "asset_allocation_backtest": "大类资产配置策略",
+    "intraday_t_backtest": "做T",
+    "asset_allocation_backtest": "大类资产配置",
 }
 STRATEGY_FAMILY_ORDER = {
     "simple_ma_backtest": 0,

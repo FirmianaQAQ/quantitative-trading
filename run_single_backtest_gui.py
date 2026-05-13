@@ -21,6 +21,7 @@ from utils.project_utils import get_daily_csv_path, load_daily_data
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DEFAULT_STOCK_NAMES = {
+    "sh.600580": "卧龙电驱",
     "sz.000100": "TCL科技",
     "sz.000725": "京东方A",
     "sz.001308": "康冠科技",
@@ -49,6 +50,13 @@ def normalize_code(raw_code: str) -> str:
 
 def get_stock_label(code: str) -> str:
     return DEFAULT_STOCK_NAMES.get(code, code)
+
+
+def get_display_label(spec: StrategySpec, code: str) -> str:
+    selection_label = get_selection_label(spec, code)
+    if selection_label != code:
+        return selection_label
+    return get_stock_label(code)
 
 
 def collect_stock_candidates(spec: StrategySpec) -> list[str]:
@@ -136,7 +144,7 @@ def prompt_stock_menu(spec: StrategySpec) -> str:
         print()
         print("请选择股票：")
         for index, code in enumerate(codes, start=1):
-            print(f"  {index}. {code}  {get_selection_label(spec, code)}")
+            print(f"  {index}. {code}  {get_display_label(spec, code)}")
         print("  r. 系统推荐前5")
         if allow_manual:
             print("  0. 手动输入")
@@ -362,7 +370,7 @@ def choose_recommended_stock(spec: StrategySpec) -> str | None:
                 else "N/A"
             )
             print(
-                f"  {index}. {code}  {get_selection_label(spec, code)}  "
+                f"  {index}. {code}  {get_display_label(spec, code)}  "
                 f"年化={annual_text}  回撤={drawdown_text}  夏普={sharpe_text}"
             )
         print("  b. 返回上一级")
@@ -420,7 +428,7 @@ def main() -> None:
     config = resolve_config(spec, stock_code)
 
     print(f"已选择策略: {spec.display_name} ({spec.strategy_id})")
-    print(f"已选择股票: {config['code']} {get_selection_label(spec, config['code'])}")
+    print(f"已选择股票: {config['code']} {get_display_label(spec, config['code'])}")
 
     validate_required_data_files(spec, config)
     spec.validate_config(config)
