@@ -1,0 +1,9 @@
+venv
+.venv
+data
+playground
+logs
+data/*.db
+.vscode
+*/__pycache__
+.minimax

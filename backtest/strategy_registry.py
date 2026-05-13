@@ -1,0 +1,114 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from functools import lru_cache
+from importlib import import_module
+from pathlib import Path
+from types import ModuleType
+from typing import Any, Callable
+import re
+
+
+@dataclass(frozen=True)
+class StrategySpec:
+    strategy_id: str
+    module_name: str
+    display_name: str
+    config: dict[str, Any]
+    test_cases: list[dict[str, Any]]
+    run_backtest: Callable[[dict[str, Any], Any], dict[str, Any]]
+    validate_config: Callable[[dict[str, Any]], None]
+
+
+def _iter_candidate_strategy_ids() -> list[str]:
+    backtest_dir = Path(__file__).resolve().parent
+    return sorted(
+        path.stem
+        for path in backtest_dir.glob("*_backtest*.py")
+        if path.is_file()
+        and not path.stem.startswith("_")
+        and path.stem != "strategy_registry"
+    )
+
+
+def _build_strategy_spec(module: ModuleType, strategy_id: str) -> StrategySpec | None:
+    required_attrs = ("CONFIG", "TEST_CASES", "run_backtest", "validate_config")
+    if any(not hasattr(module, attr) for attr in required_attrs):
+        return None
+
+    config = dict(getattr(module, "CONFIG"))
+    test_cases = list(getattr(module, "TEST_CASES"))
+    return StrategySpec(
+        strategy_id=strategy_id,
+        module_name=module.__name__,
+        display_name=str(config.get("strategy_name", strategy_id)),
+        config=config,
+        test_cases=test_cases,
+        run_backtest=getattr(module, "run_backtest"),
+        validate_config=getattr(module, "validate_config"),
+    )
+
+
+@lru_cache(maxsize=1)
+def list_strategy_specs() -> tuple[StrategySpec, ...]:
+    specs: list[StrategySpec] = []
+    for strategy_id in _iter_candidate_strategy_ids():
+        module = import_module(f"backtest.{strategy_id}")
+        spec = _build_strategy_spec(module, strategy_id)
+        if spec is not None:
+            specs.append(spec)
+
+    if not specs:
+        raise RuntimeError("未找到可用的 simple_ma_backtest 策略版本")
+    return tuple(specs)
+
+
+def get_strategy_spec(strategy_id: str) -> StrategySpec:
+    for spec in list_strategy_specs():
+        if spec.strategy_id == strategy_id:
+            return spec
+    available = ", ".join(spec.strategy_id for spec in list_strategy_specs())
+    raise ValueError(f"未知策略版本: {strategy_id}，可选值: {available}")
+
+
+def get_default_strategy_spec() -> StrategySpec:
+    return list_strategy_specs()[0]
+
+
+def find_test_case(spec: StrategySpec, code: str) -> dict[str, Any] | None:
+    for item in spec.test_cases:
+        if item.get("code") == code:
+            return item
+    return None
+
+
+def get_selection_label(spec: StrategySpec, code: str) -> str:
+    item = find_test_case(spec, code)
+    if item is not None and item.get("label"):
+        return str(item["label"])
+    return code
+
+
+def get_required_codes(spec: StrategySpec, code: str) -> list[str]:
+    item = find_test_case(spec, code)
+    if item is None:
+        return [code]
+
+    required_codes = item.get("required_codes")
+    if not required_codes:
+        return [code]
+    return [str(item_code) for item_code in required_codes]
+
+
+def supports_manual_code_input(spec: StrategySpec) -> bool:
+    stock_pattern = re.compile(r"^(sh|sz)\.\d{6}$")
+    candidate_codes = [item.get("code") for item in spec.test_cases if item.get("code")]
+    if not candidate_codes:
+        return True
+
+    for code in candidate_codes:
+        if not stock_pattern.match(str(code)):
+            return False
+        if get_required_codes(spec, str(code)) != [str(code)]:
+            return False
+    return True
