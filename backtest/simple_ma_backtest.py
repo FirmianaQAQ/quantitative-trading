@@ -214,6 +214,7 @@ class SimpleMovingAverageStrategy(HStrategy):
         self.buy_trigger_days_seen = 0
         self.buy_trigger_up_days: list[int] = []
         self.last_buy_price: float | None = None
+        self.last_buy_turnover: float | None = None
         self.last_trade_bar: int | None = None
 
         self.sell_trigger_active = False
@@ -263,27 +264,37 @@ class SimpleMovingAverageStrategy(HStrategy):
             executed_at = pd.Timestamp(self.datas[0].datetime.date(0))
             trade_interval_msg = ""
             current_bar = len(self)
+            executed_size = abs(float(order.executed.size))
+            executed_price = float(order.executed.price)
+            turnover = executed_size * executed_price
+            cash_after_trade = self.broker.getcash()
             if self.last_trade_bar is not None:
                 trade_interval_days = current_bar - self.last_trade_bar
                 trade_interval_msg = f" 距离上次买卖间隔={trade_interval_days}个交易日"
 
             if order.isbuy():
-                self.last_buy_price = float(order.executed.price)
-                self.buy_markers.append((executed_at, float(order.executed.price)))
+                self.last_buy_price = executed_price
+                self.last_buy_turnover = turnover
+                self.buy_markers.append((executed_at, executed_price))
                 self.log(
-                    f"成交！ 买入价格={order.executed.price:.2f} "
-                    f"数量={order.executed.size:.0f} "
-                    f"手续费={order.executed.comm:.2f}"
+                    "买入成交"
+                    f" | 价格={executed_price:.2f}"
+                    f" | 数量={executed_size:.0f}"
+                    f" | 成交额={turnover:.2f}"
+                    f" | 手续费={order.executed.comm:.2f}"
+                    f" | 现金余额={cash_after_trade:.2f}"
                     f"{trade_interval_msg}"
                 )
             else:
-                self.last_buy_price = None
                 self.has_completed_sell = True
-                self.sell_markers.append((executed_at, float(order.executed.price)))
+                self.sell_markers.append((executed_at, executed_price))
                 self.log(
-                    f"成交！ 卖出价格={order.executed.price:.2f} "
-                    f"数量={abs(order.executed.size):.0f} "
-                    f"手续费={order.executed.comm:.2f}"
+                    "卖出成交"
+                    f" | 价格={executed_price:.2f}"
+                    f" | 数量={executed_size:.0f}"
+                    f" | 成交额={turnover:.2f}"
+                    f" | 手续费={order.executed.comm:.2f}"
+                    f" | 现金余额={cash_after_trade:.2f}"
                     f"{trade_interval_msg}"
                 )
             self.last_trade_bar = current_bar
@@ -302,13 +313,19 @@ class SimpleMovingAverageStrategy(HStrategy):
     def notify_trade(self, trade: bt.Trade) -> None:
         if not trade.isclosed:
             return
+        profit_pct_text = "-"
+        if self.last_buy_turnover and self.last_buy_turnover > 0:
+            profit_pct_text = f"{(trade.pnlcomm / self.last_buy_turnover) * 100:.2f}%"
         self.log(
-            f"-交易结束- 毛收益={trade.pnl:.2f}"
-            f" 净收益={trade.pnlcomm:.2f}"
-            f" 持续时间={trade.barlen} 天）"
-            f" 利润率={(trade.pnl / trade.price) * 100:.2f}%"
-            f" 现金余额={self.broker.getcash():.2f}"
+            "本轮交易结束"
+            f" | 毛收益={trade.pnl:.2f}"
+            f" | 净收益={trade.pnlcomm:.2f}"
+            f" | 持仓天数={trade.barlen}"
+            f" | 收益率={profit_pct_text}"
+            f" | 现金余额={self.broker.getcash():.2f}"
         )
+        self.last_buy_price = None
+        self.last_buy_turnover = None
 
     def reset_buy_setup(self) -> None:
         self.buy_trigger_active = False

@@ -14,6 +14,7 @@ from backtest.strategy_registry import (
     get_selection_label,
     get_strategy_spec,
     group_strategy_specs,
+    list_family_strategy_specs,
     list_strategy_specs,
     supports_manual_code_input,
 )
@@ -289,6 +290,223 @@ def build_report_path(config: dict) -> Path:
     report_dir = PROJECT_ROOT / config["report_dir"]
     filename = f"{config['report_name']}-{config['code']}.html"
     return report_dir / filename
+
+
+def build_family_dashboard_path(family_id: str, code: str) -> Path:
+    report_dir = PROJECT_ROOT / "logs" / "backtest"
+    filename = f"{family_id}-family-{code}.html"
+    return report_dir / filename
+
+
+def write_family_dashboard_report(
+    *,
+    family_name: str,
+    code: str,
+    stock_label: str,
+    cash: float,
+    active_strategy_id: str,
+    version_reports: list[tuple[StrategySpec, Path]],
+) -> Path:
+    output_path = build_family_dashboard_path(version_reports[0][0].family_id, code)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    buttons_html = []
+    panels_html = []
+    for index, (spec, report_path) in enumerate(version_reports):
+        is_active = spec.strategy_id == active_strategy_id or (
+            active_strategy_id not in {item[0].strategy_id for item in version_reports}
+            and index == 0
+        )
+        button_class = "version-tab is-active" if is_active else "version-tab"
+        panel_style = "" if is_active else " style=\"display:none;\""
+        relative_src = report_path.name
+        buttons_html.append(
+            f"""
+            <button
+              type="button"
+              class="{button_class}"
+              data-target="{spec.strategy_id}"
+            >
+              <span class="version-tab-title">{spec.display_name}</span>
+              <span class="version-tab-desc">{spec.brief_description}</span>
+            </button>
+            """
+        )
+        panels_html.append(
+            f"""
+            <section class="version-panel" data-panel="{spec.strategy_id}"{panel_style}>
+              <iframe
+                class="version-frame"
+                src="{relative_src}"
+                title="{spec.display_name}"
+                loading="lazy"
+              ></iframe>
+            </section>
+            """
+        )
+
+    html_text = f"""<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{family_name} 多版本对比</title>
+  <style>
+    :root {{
+      --bg: #f4f7fb;
+      --card: #ffffff;
+      --text: #243043;
+      --muted: #667085;
+      --line: rgba(148, 163, 184, 0.22);
+      --shadow: 0 14px 40px rgba(15, 23, 42, 0.10);
+      --accent: #5470c6;
+    }}
+    * {{
+      box-sizing: border-box;
+    }}
+    body {{
+      margin: 0;
+      font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(circle at top left, rgba(84, 112, 198, 0.12), transparent 26%),
+        radial-gradient(circle at top right, rgba(145, 204, 117, 0.10), transparent 24%),
+        var(--bg);
+    }}
+    .page {{
+      max-width: 1680px;
+      margin: 0 auto;
+      padding: 24px 20px 32px;
+    }}
+    .hero {{
+      margin-bottom: 18px;
+      padding: 22px 24px;
+      border: 1px solid rgba(229, 231, 235, 0.9);
+      border-radius: 24px;
+      background: rgba(255, 255, 255, 0.92);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
+    }}
+    .hero h1 {{
+      margin: 0;
+      font-size: 30px;
+      line-height: 1.2;
+    }}
+    .hero p {{
+      margin: 10px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.7;
+    }}
+    .toolbar {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 16px;
+    }}
+    .version-tab {{
+      min-width: 180px;
+      padding: 14px 16px;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: linear-gradient(180deg, #ffffff, #f8fbff);
+      box-shadow: 0 8px 24px rgba(148, 163, 184, 0.12);
+      cursor: pointer;
+      text-align: left;
+      transition: all 0.18s ease;
+    }}
+    .version-tab:hover {{
+      transform: translateY(-1px);
+      box-shadow: 0 12px 28px rgba(84, 112, 198, 0.16);
+    }}
+    .version-tab.is-active {{
+      border-color: rgba(84, 112, 198, 0.38);
+      background: linear-gradient(180deg, rgba(84, 112, 198, 0.16), rgba(84, 112, 198, 0.06));
+      box-shadow: 0 14px 30px rgba(84, 112, 198, 0.18);
+    }}
+    .version-tab-title {{
+      display: block;
+      font-size: 16px;
+      font-weight: 700;
+      color: var(--text);
+    }}
+    .version-tab-desc {{
+      display: block;
+      margin-top: 6px;
+      font-size: 12px;
+      color: var(--muted);
+    }}
+    .version-panel {{
+      border: 1px solid rgba(229, 231, 235, 0.9);
+      border-radius: 24px;
+      overflow: hidden;
+      background: var(--card);
+      box-shadow: var(--shadow);
+    }}
+    .version-frame {{
+      display: block;
+      width: 100%;
+      min-height: calc(100vh - 180px);
+      height: 1800px;
+      border: 0;
+      background: #fff;
+    }}
+    @media (max-width: 768px) {{
+      .page {{
+        padding: 16px 12px 24px;
+      }}
+      .hero h1 {{
+        font-size: 24px;
+      }}
+      .toolbar {{
+        flex-direction: column;
+      }}
+      .version-tab {{
+        width: 100%;
+      }}
+      .version-frame {{
+        height: 1400px;
+      }}
+    }}
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <h1>{family_name} 多版本对比</h1>
+      <p>股票：{code} {stock_label} ｜ 初始资金：{cash:,.2f} ｜ 当前页面一次联跑并对比同一策略家族下的多个版本，方便直接切换查看。</p>
+    </header>
+    <div class="toolbar">
+      {''.join(buttons_html)}
+    </div>
+    <main>
+      {''.join(panels_html)}
+    </main>
+  </div>
+  <script>
+    (function () {{
+      const tabs = Array.from(document.querySelectorAll('.version-tab'));
+      const panels = Array.from(document.querySelectorAll('.version-panel'));
+      function activate(target) {{
+        tabs.forEach((tab) => {{
+          tab.classList.toggle('is-active', tab.dataset.target === target);
+        }});
+        panels.forEach((panel) => {{
+          panel.style.display = panel.dataset.panel === target ? '' : 'none';
+        }});
+      }}
+      tabs.forEach((tab) => {{
+        tab.addEventListener('click', function () {{
+          activate(tab.dataset.target);
+        }});
+      }});
+    }})();
+  </script>
+</body>
+</html>
+"""
+    output_path.write_text(html_text, encoding="utf-8")
+    return output_path
 
 
 def try_open_report(report_path: Path) -> None:
@@ -586,6 +804,77 @@ def validate_required_data_files(spec: StrategySpec, config: dict) -> None:
     )
 
 
+def run_single_strategy(
+    spec: StrategySpec,
+    stock_selection: str | tuple[str, str],
+    cash: float,
+    *,
+    preload_df: pd.DataFrame | None = None,
+) -> tuple[dict, Path]:
+    config = resolve_config(spec, stock_selection, cash)
+    print(f"已选择策略: {spec.display_name} ({spec.strategy_id})")
+    print(f"已选择股票: {config['code']} {get_display_label(spec, config['code'])}")
+    print(f"初始资金: {config['cash']:.2f}")
+
+    validate_required_data_files(spec, config)
+    spec.validate_config(config)
+    df = preload_df
+    if df is None and get_required_codes(spec, config["code"]) == [config["code"]]:
+        df = load_daily_data(config["code"], config["adjust_flag"])
+    spec.run_backtest(config, df)
+    return config, build_report_path(config)
+
+
+def run_simple_ma_family(
+    selected_spec: StrategySpec,
+    stock_selection: str | tuple[str, str],
+    cash: float,
+) -> Path:
+    family_specs = list_family_strategy_specs(selected_spec.family_id)
+    if not family_specs:
+        raise RuntimeError("未找到普通双均线家族策略")
+
+    selected_config = resolve_config(selected_spec, stock_selection, cash)
+    selected_code = selected_config["code"]
+    selected_label = get_display_label(selected_spec, selected_code)
+
+    df_cache: dict[tuple[str, str], pd.DataFrame] = {}
+    version_reports: list[tuple[StrategySpec, Path]] = []
+    for index, family_spec in enumerate(family_specs, start=1):
+        print()
+        print(f"===== 联跑版本 {index}/{len(family_specs)}：{family_spec.display_name} =====")
+        preview_config = resolve_config(family_spec, stock_selection, cash)
+        df_key = (preview_config["code"], preview_config["adjust_flag"])
+        preload_df = None
+        if get_required_codes(family_spec, preview_config["code"]) == [preview_config["code"]]:
+            if df_key not in df_cache:
+                validate_required_data_files(family_spec, preview_config)
+                df_cache[df_key] = load_daily_data(
+                    preview_config["code"],
+                    preview_config["adjust_flag"],
+                )
+            preload_df = df_cache[df_key]
+        config, report_path = run_single_strategy(
+            family_spec,
+            stock_selection,
+            cash,
+            preload_df=preload_df,
+        )
+        version_reports.append((family_spec, report_path))
+
+    dashboard_path = write_family_dashboard_report(
+        family_name=selected_spec.family_display_name,
+        code=selected_code,
+        stock_label=selected_label,
+        cash=cash,
+        active_strategy_id=selected_spec.strategy_id,
+        version_reports=version_reports,
+    )
+    print()
+    print(f"多版本对比报告: {dashboard_path}")
+    return dashboard_path
+
+
 def main() -> None:
     cli_strategy_id, cli_stock_code = parse_cli_args()
     while True:
@@ -601,23 +890,11 @@ def main() -> None:
             continue
         break
     cash = prompt_initial_cash()
-    config = resolve_config(spec, stock_code, cash)
-
-    print(f"已选择策略: {spec.display_name} ({spec.strategy_id})")
-    print(f"已选择股票: {config['code']} {get_display_label(spec, config['code'])}")
-    print(f"初始资金: {config['cash']:.2f}")
-
-    validate_required_data_files(spec, config)
-    spec.validate_config(config)
-    df = (
-        load_daily_data(config["code"], config["adjust_flag"])
-        if get_required_codes(spec, config["code"]) == [config["code"]]
-        else None
-    )
-    spec.run_backtest(config, df)
-
-    report_path = build_report_path(config)
-    print(f"GUI 回测报告: {report_path}")
+    if spec.family_id == "simple_ma_backtest":
+        report_path = run_simple_ma_family(spec, stock_code, cash)
+    else:
+        _config, report_path = run_single_strategy(spec, stock_code, cash)
+        print(f"GUI 回测报告: {report_path}")
     try_open_report(report_path)
 
 

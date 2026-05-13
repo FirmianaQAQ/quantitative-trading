@@ -760,8 +760,16 @@ def _build_report_bootstrap_script() -> str:
                   const color = change >= 0 ? '#f00' : '#0f0';
                   htmls.push(`<strong>${date}</strong><br/>开: ${open}<br/>收: <span style="color:${color}; font-weight:bold;">${close}</span><br/>高: ${high}<br/>低: ${low}<br/>幅: <span style="color:${color}; font-weight:bold;">${changeSign}${changePercent}%</span><br/><hr style="margin: 4px 0;">`);
                 } else if (Array.isArray(point.data)) {
-                  const color = point.seriesName === '卖点' ? '#f00' : '#00f';
-                  htmls.push(`<span style="color:${color}">${point.seriesName}: ${point.data[1]}</span><br/>`);
+                  const color = point.seriesName === '卖点' ? '#c62828' : '#0f4cdb';
+                  const pointDate = point.data[0];
+                  const pointPrice = Number(point.data[1]).toFixed(2);
+                  htmls.push(
+                    `<div style="margin:4px 0 0;">`
+                    + `<span style="display:inline-block; min-width:52px; color:${color}; font-weight:700;">${point.seriesName}</span>`
+                    + `<span style="color:#475467;"> 日期=${pointDate}</span>`
+                    + `<span style="color:${color}; font-weight:700;"> 价格=${pointPrice}</span>`
+                    + `</div>`
+                  );
                 } else {
                   htmls.push(`${point.seriesName}: ${point.data}<br/>`);
                 }
@@ -1519,20 +1527,22 @@ def html(
     }}
     .filter-toolbar-controls {{
       display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      gap: 12px;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 10px;
     }}
     .filter-group {{
       display: flex;
-      flex-direction: column;
-      gap: 6px;
-      min-width: 220px;
+      align-items: flex-start;
+      gap: 12px;
+      min-width: 100%;
     }}
     .filter-group-label {{
+      flex: 0 0 24px;
       color: var(--muted);
       font-size: 12px;
       font-weight: 600;
+      line-height: 34px;
     }}
     .filter-chip-row {{
       display: flex;
@@ -1540,6 +1550,7 @@ def html(
       gap: 8px;
       min-height: 38px;
       align-items: center;
+      flex: 1 1 auto;
     }}
     .filter-chip {{
       height: 34px;
@@ -1577,6 +1588,7 @@ def html(
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
+      padding-top: 4px;
     }}
     .filter-actions button {{
       height: 36px;
@@ -1778,6 +1790,11 @@ def html(
       }}
       .filter-group {{
         min-width: 100%;
+        flex-direction: column;
+        gap: 6px;
+      }}
+      .filter-group-label {{
+        line-height: 1.2;
       }}
       .content-layout {{
         flex-direction: column;

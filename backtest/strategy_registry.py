@@ -150,6 +150,12 @@ def group_strategy_specs() -> list[tuple[str, list[StrategySpec]]]:
     return grouped
 
 
+def list_family_strategy_specs(family_id: str) -> tuple[StrategySpec, ...]:
+    return tuple(
+        spec for spec in list_strategy_specs() if spec.family_id == family_id
+    )
+
+
 def find_test_case(spec: StrategySpec, code: str) -> dict[str, Any] | None:
     for item in spec.test_cases:
         if item.get("code") == code:
