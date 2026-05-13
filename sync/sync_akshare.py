@@ -12,6 +12,11 @@ import pandas as pd
 import requests
 from requests import exceptions as requests_exceptions
 
+try:
+    import tushare as ts
+except ImportError:
+    ts = None
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
@@ -19,6 +24,7 @@ if str(PROJECT_ROOT) not in sys.path:
 from backtest.simple_ma_backtest import CONFIG, TEST_CASES
 from utils.ak_share_utils import get_a_share_code_name_df_and_filter
 from utils.project_utils import get_daily_csv_path
+from utils.stock_utils import stock_is_ignored
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +35,7 @@ REQUEST_RETRY_SLEEP_SECONDS = 2
 CODE_SYNC_INTERVAL_SECONDS = 0.5
 FAILED_QUEUE_RETRY_ROUNDS = 1
 FAILED_QUEUE_RETRY_COOLDOWN_SECONDS = 8
+TUSHARE_TOKEN_ENV = "TUSHARE_TOKEN"
 
 STORAGE_COLUMNS = [
     "date",
@@ -49,6 +56,8 @@ STORAGE_COLUMNS = [
     "pbMRQ",
 ]
 
+_TUSHARE_PRO_CLIENT = None
+
 
 def configure_logging() -> None:
     log_dir = PROJECT_ROOT / "logs"
@@ -61,6 +70,32 @@ def configure_logging() -> None:
             logging.FileHandler(log_dir / "sync_akshare.log", encoding="utf-8"),
         ],
     )
+
+
+def get_tushare_token() -> str:
+    token = os.getenv(TUSHARE_TOKEN_ENV, "").strip()
+    if not token:
+        raise RuntimeError(
+            f"缺少 {TUSHARE_TOKEN_ENV} 环境变量，无法使用 Tushare 同步数据"
+        )
+    return token
+
+
+def get_tushare_pro_client():
+    global _TUSHARE_PRO_CLIENT
+    if _TUSHARE_PRO_CLIENT is not None:
+        return _TUSHARE_PRO_CLIENT
+    if ts is None:
+        raise RuntimeError("未安装 tushare，请先执行 pip install -r requirements.txt")
+    token = get_tushare_token()
+    ts.set_token(token)
+    _TUSHARE_PRO_CLIENT = ts.pro_api(token)
+    return _TUSHARE_PRO_CLIENT
+
+
+def to_tushare_code(full_code: str) -> str:
+    market, symbol = full_code.split(".", 1)
+    return f"{symbol}.{market.upper()}"
 
 
 def resolve_target_codes() -> list[str]:
@@ -92,7 +127,12 @@ def resolve_all_sh_main_codes() -> list[str]:
     北交所和 ignore_stock_code 中的特殊个股。
     此外会额外排除名称中包含“融创”的股票。
     """
-    stock_df = get_a_share_code_name_df_and_filter()
+    try:
+        stock_df = fetch_sh_main_stock_pool_from_tushare()
+    except Exception as exc:
+        logger.warning("Tushare 股票池获取失败，回退到 Akshare: %s", exc)
+        stock_df = get_a_share_code_name_df_and_filter()
+
     sh_main_df = stock_df[
         stock_df["code"].astype(str).str.startswith(SH_MAIN_BOARD_PREFIXES)
     ].copy()
@@ -104,6 +144,33 @@ def resolve_all_sh_main_codes() -> list[str]:
         )
         sh_main_df = sh_main_df.loc[keep_mask].copy()
     return [f"sh.{code}" for code in sh_main_df["code"].tolist()]
+
+
+def fetch_sh_main_stock_pool_from_tushare() -> pd.DataFrame:
+    pro = get_tushare_pro_client()
+    raw_df = retry_request_call(
+        lambda: pro.stock_basic(
+            exchange="SSE",
+            list_status="L",
+            fields="ts_code,symbol,name",
+        ),
+        action_name="拉取上证主板股票池",
+    )
+    if raw_df is None or raw_df.empty:
+        return pd.DataFrame(columns=["code", "name"])
+
+    normalized_df = raw_df.rename(columns={"symbol": "code"}).copy()
+    normalized_df["code"] = normalized_df["code"].astype(str).str.zfill(6)
+    normalized_df["name"] = normalized_df["name"].fillna("").astype(str)
+    keep_mask = ~normalized_df.apply(
+        lambda row: stock_is_ignored(str(row["code"]), str(row["name"]), market="sh"),
+        axis=1,
+    )
+    return (
+        normalized_df.loc[keep_mask, ["code", "name"]]
+        .sort_values("code")
+        .reset_index(drop=True)
+    )
 
 
 def should_include_benchmark() -> bool:
@@ -188,9 +255,20 @@ def retry_request_call(func, *, action_name: str):
 
 def fetch_stock_history(symbol: str, start_date: str, end_date: str, adjust_flag: str) -> pd.DataFrame:
     full_code = to_full_code(symbol)
+    ts_code = to_tushare_code(full_code)
     source_errors: list[str] = []
 
     stock_sources = [
+        (
+            "tushare",
+            lambda: fetch_stock_history_from_tushare(
+                ts_code=ts_code,
+                full_code=full_code,
+                start_date=start_date,
+                end_date=end_date,
+                adjust_flag=adjust_flag,
+            ),
+        ),
         (
             "eastmoney",
             lambda: normalize_stock_history_df(
@@ -233,6 +311,51 @@ def fetch_stock_history(symbol: str, start_date: str, end_date: str, adjust_flag
             source_errors.append(f"{source_name}: {exc}")
 
     raise RuntimeError(f"{full_code} 所有股票数据源均失败: {' | '.join(source_errors)}")
+
+
+def fetch_stock_history_from_tushare(
+    ts_code: str,
+    full_code: str,
+    start_date: str,
+    end_date: str,
+    adjust_flag: str,
+) -> pd.DataFrame:
+    if ts is None:
+        raise RuntimeError("未安装 tushare")
+
+    tushare_adjust = adjust_flag if adjust_flag in ("qfq", "hfq") else None
+    start_date_compact = start_date.replace("-", "")
+    end_date_compact = end_date.replace("-", "")
+
+    bar_df = retry_request_call(
+        lambda: ts.pro_bar(
+            ts_code=ts_code,
+            asset="E",
+            adj=tushare_adjust,
+            start_date=start_date_compact,
+            end_date=end_date_compact,
+        ),
+        action_name=f"拉取股票 {ts_code} Tushare 日线",
+    )
+    if bar_df is None or bar_df.empty:
+        return pd.DataFrame(columns=STORAGE_COLUMNS)
+
+    pro = get_tushare_pro_client()
+    basic_df = retry_request_call(
+        lambda: pro.daily_basic(
+            ts_code=ts_code,
+            start_date=start_date_compact,
+            end_date=end_date_compact,
+            fields="ts_code,trade_date,turnover_rate,pe_ttm,ps_ttm,pb",
+        ),
+        action_name=f"拉取股票 {ts_code} Tushare 基本面",
+    )
+    return normalize_tushare_stock_history_df(
+        bar_df=bar_df,
+        basic_df=basic_df,
+        full_code=full_code,
+        adjust_flag=adjust_flag,
+    )
 
 
 def fetch_stock_history_from_eastmoney(
@@ -309,12 +432,67 @@ def fetch_stock_history_from_sina(
 
 def fetch_index_history(full_code: str, start_date: str, end_date: str, adjust_flag: str) -> pd.DataFrame:
     symbol = full_code.split(".", 1)[1]
-    raw_df = fetch_index_history_from_eastmoney(
-        symbol=symbol,
-        start_date=start_date,
-        end_date=end_date,
+    ts_code = to_tushare_code(full_code)
+    source_errors: list[str] = []
+
+    index_sources = [
+        (
+            "tushare",
+            lambda: fetch_index_history_from_tushare(
+                ts_code=ts_code,
+                full_code=full_code,
+                start_date=start_date,
+                end_date=end_date,
+                adjust_flag=adjust_flag,
+            ),
+        ),
+        (
+            "eastmoney",
+            lambda: normalize_index_history_df(
+                fetch_index_history_from_eastmoney(
+                    symbol=symbol,
+                    start_date=start_date,
+                    end_date=end_date,
+                ),
+                full_code=full_code,
+                adjust_flag=adjust_flag,
+            ),
+        ),
+    ]
+
+    for source_name, fetcher in index_sources:
+        try:
+            result_df = fetcher()
+            if result_df.empty:
+                logger.warning("%s 使用 %s 未拉到数据，尝试下一个源", full_code, source_name)
+                source_errors.append(f"{source_name}: empty")
+                continue
+            logger.info("%s 使用 %s 拉取成功", full_code, source_name)
+            return result_df
+        except Exception as exc:
+            logger.warning("%s 使用 %s 失败: %s", full_code, source_name, exc)
+            source_errors.append(f"{source_name}: {exc}")
+
+    raise RuntimeError(f"{full_code} 所有指数数据源均失败: {' | '.join(source_errors)}")
+
+
+def fetch_index_history_from_tushare(
+    ts_code: str,
+    full_code: str,
+    start_date: str,
+    end_date: str,
+    adjust_flag: str,
+) -> pd.DataFrame:
+    pro = get_tushare_pro_client()
+    raw_df = retry_request_call(
+        lambda: pro.index_daily(
+            ts_code=ts_code,
+            start_date=start_date.replace("-", ""),
+            end_date=end_date.replace("-", ""),
+        ),
+        action_name=f"拉取指数 {ts_code} Tushare 日线",
     )
-    return normalize_index_history_df(raw_df, full_code=full_code, adjust_flag=adjust_flag)
+    return normalize_tushare_index_history_df(raw_df, full_code=full_code, adjust_flag=adjust_flag)
 
 
 def fetch_index_history_from_eastmoney(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
@@ -398,6 +576,59 @@ def normalize_stock_history_df(raw_df: pd.DataFrame, full_code: str, adjust_flag
     return finalize_history_df(normalized_df)
 
 
+def normalize_tushare_stock_history_df(
+    bar_df: pd.DataFrame,
+    basic_df: pd.DataFrame,
+    full_code: str,
+    adjust_flag: str,
+) -> pd.DataFrame:
+    if bar_df is None or bar_df.empty:
+        return pd.DataFrame(columns=STORAGE_COLUMNS)
+
+    normalized_df = bar_df.copy()
+    normalized_df["trade_date"] = pd.to_datetime(
+        normalized_df["trade_date"], errors="coerce"
+    ).dt.strftime("%Y-%m-%d")
+    normalized_df = normalized_df.rename(
+        columns={
+            "trade_date": "date",
+            "pre_close": "preclose",
+            "vol": "volume",
+            "pct_chg": "pctChg",
+        }
+    )
+
+    if basic_df is not None and not basic_df.empty:
+        basic_normalized_df = basic_df.copy()
+        basic_normalized_df["trade_date"] = pd.to_datetime(
+            basic_normalized_df["trade_date"], errors="coerce"
+        ).dt.strftime("%Y-%m-%d")
+        basic_normalized_df = basic_normalized_df.rename(
+            columns={
+                "trade_date": "date",
+                "turnover_rate": "turn",
+                "pe_ttm": "peTTM",
+                "ps_ttm": "psTTM",
+                "pb": "pbMRQ",
+            }
+        )
+        normalized_df = normalized_df.merge(
+            basic_normalized_df[["date", "turn", "peTTM", "psTTM", "pbMRQ"]],
+            on="date",
+            how="left",
+        )
+    else:
+        normalized_df["turn"] = 0
+        normalized_df["peTTM"] = pd.NA
+        normalized_df["psTTM"] = pd.NA
+        normalized_df["pbMRQ"] = pd.NA
+
+    normalized_df["code"] = full_code
+    normalized_df["adjustflag"] = adjust_flag
+    normalized_df["pcfNcfTTM"] = pd.NA
+    return finalize_history_df(normalized_df)
+
+
 def normalize_sina_stock_history_df(
     raw_df: pd.DataFrame,
     full_code: str,
@@ -426,6 +657,32 @@ def normalize_sina_stock_history_df(
     normalized_df["preclose"] = pd.to_numeric(
         normalized_df["close"], errors="coerce"
     ).shift(1)
+    return finalize_history_df(normalized_df)
+
+
+def normalize_tushare_index_history_df(
+    raw_df: pd.DataFrame,
+    full_code: str,
+    adjust_flag: str,
+) -> pd.DataFrame:
+    if raw_df is None or raw_df.empty:
+        return pd.DataFrame(columns=STORAGE_COLUMNS)
+
+    normalized_df = raw_df.copy()
+    normalized_df["trade_date"] = pd.to_datetime(
+        normalized_df["trade_date"], errors="coerce"
+    ).dt.strftime("%Y-%m-%d")
+    normalized_df = normalized_df.rename(
+        columns={
+            "trade_date": "date",
+            "pre_close": "preclose",
+            "vol": "volume",
+            "pct_chg": "pctChg",
+        }
+    )
+    normalized_df["code"] = full_code
+    normalized_df["adjustflag"] = adjust_flag
+    normalized_df["turn"] = 0
     return finalize_history_df(normalized_df)
 
 
