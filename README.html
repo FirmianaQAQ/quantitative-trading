@@ -1,0 +1,909 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>量化交易流程可视化</title>
+  <style>
+    :root {
+      --bg: #09111f;
+      --bg-soft: #0f1b31;
+      --card: rgba(10, 18, 33, 0.84);
+      --card-strong: rgba(14, 25, 46, 0.94);
+      --line: rgba(157, 181, 217, 0.2);
+      --text: #edf4ff;
+      --muted: #9db1cf;
+      --blue: #59a8ff;
+      --green: #4fd1a5;
+      --amber: #f6b35d;
+      --red: #ff7f7f;
+      --shadow: 0 24px 70px rgba(0, 0, 0, 0.35);
+      --radius: 24px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html {
+      scroll-behavior: smooth;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      color: var(--text);
+      font-family: "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(89, 168, 255, 0.18), transparent 30%),
+        radial-gradient(circle at top right, rgba(79, 209, 165, 0.14), transparent 28%),
+        radial-gradient(circle at bottom center, rgba(246, 179, 93, 0.12), transparent 24%),
+        linear-gradient(180deg, #06101d 0%, #09111f 48%, #0b1323 100%);
+    }
+
+    body::before {
+      content: "";
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      background-image:
+        linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
+      background-size: 28px 28px;
+      mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.42), transparent 92%);
+    }
+
+    a {
+      color: inherit;
+      text-decoration: none;
+    }
+
+    .page {
+      width: min(1240px, calc(100% - 32px));
+      margin: 0 auto;
+      padding: 32px 0 80px;
+    }
+
+    .hero {
+      position: relative;
+      overflow: hidden;
+      padding: 32px;
+      border: 1px solid rgba(157, 181, 217, 0.18);
+      border-radius: 32px;
+      background:
+        linear-gradient(135deg, rgba(89, 168, 255, 0.14), transparent 40%),
+        linear-gradient(160deg, rgba(79, 209, 165, 0.12), transparent 55%),
+        var(--card-strong);
+      box-shadow: var(--shadow);
+    }
+
+    .hero::after {
+      content: "";
+      position: absolute;
+      right: -60px;
+      top: -60px;
+      width: 220px;
+      height: 220px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(246, 179, 93, 0.34), transparent 68%);
+      filter: blur(10px);
+    }
+
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 14px;
+      border: 1px solid rgba(89, 168, 255, 0.28);
+      border-radius: 999px;
+      background: rgba(89, 168, 255, 0.08);
+      color: #cfe4ff;
+      font-size: 13px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+
+    .hero h1 {
+      margin: 18px 0 12px;
+      font-size: clamp(34px, 6vw, 58px);
+      line-height: 1.02;
+      letter-spacing: -0.03em;
+    }
+
+    .hero p {
+      max-width: 860px;
+      margin: 0;
+      color: var(--muted);
+      font-size: 16px;
+      line-height: 1.8;
+    }
+
+    .chip-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-top: 22px;
+    }
+
+    .chip {
+      padding: 10px 14px;
+      border: 1px solid rgba(157, 181, 217, 0.16);
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.04);
+      color: #d7e5fb;
+      font-size: 13px;
+    }
+
+    .section {
+      margin-top: 28px;
+      padding: 26px;
+      border: 1px solid rgba(157, 181, 217, 0.15);
+      border-radius: var(--radius);
+      background: var(--card);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(10px);
+    }
+
+    .section-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: end;
+      justify-content: space-between;
+      gap: 16px;
+      margin-bottom: 18px;
+    }
+
+    .section h2 {
+      margin: 0;
+      font-size: 26px;
+      line-height: 1.15;
+      letter-spacing: -0.02em;
+    }
+
+    .section p.lead {
+      margin: 8px 0 0;
+      color: var(--muted);
+      line-height: 1.75;
+      max-width: 860px;
+    }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+
+    .legend span {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .legend i {
+      display: inline-block;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+    }
+
+    .overview-grid {
+      display: grid;
+      grid-template-columns: 1.1fr 0.9fr;
+      gap: 20px;
+      align-items: start;
+    }
+
+    .router {
+      display: grid;
+      gap: 18px;
+    }
+
+    .node {
+      position: relative;
+      padding: 20px 20px 18px;
+      border-radius: 22px;
+      border: 1px solid rgba(157, 181, 217, 0.16);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+    }
+
+    .node.entry {
+      padding-bottom: 22px;
+      background:
+        linear-gradient(135deg, rgba(89, 168, 255, 0.12), transparent 55%),
+        rgba(10, 18, 33, 0.88);
+    }
+
+    .node h3,
+    .branch-card h3,
+    .mini-card h3,
+    .detail-card h3 {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.2;
+    }
+
+    .node p,
+    .branch-card p,
+    .mini-card p,
+    .detail-card p {
+      margin: 10px 0 0;
+      color: var(--muted);
+      line-height: 1.7;
+      font-size: 14px;
+    }
+
+    .path-badge {
+      display: inline-block;
+      margin-top: 12px;
+      padding: 7px 10px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.06);
+      color: #d8e7ff;
+      font-size: 12px;
+      letter-spacing: 0.03em;
+    }
+
+    .branch-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .branch-card {
+      position: relative;
+      overflow: hidden;
+      padding: 22px;
+      border-radius: 24px;
+      border: 1px solid rgba(157, 181, 217, 0.18);
+      background: rgba(8, 16, 29, 0.9);
+      transition: transform 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+    }
+
+    .branch-card:hover {
+      transform: translateY(-3px);
+      border-color: rgba(157, 181, 217, 0.34);
+      box-shadow: 0 16px 44px rgba(0, 0, 0, 0.28);
+    }
+
+    .branch-card::before {
+      content: "";
+      position: absolute;
+      inset: 0 auto auto 0;
+      width: 100%;
+      height: 5px;
+      background: var(--accent);
+    }
+
+    .branch-card[data-tone="gui"] { --accent: var(--blue); }
+    .branch-card[data-tone="batch"] { --accent: var(--green); }
+    .branch-card[data-tone="sync"] { --accent: var(--amber); }
+
+    .branch-meta {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      color: #e8f2ff;
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .branch-card ul,
+    .detail-card ul,
+    .mini-card ul {
+      margin: 14px 0 0;
+      padding-left: 18px;
+      color: #d9e7ff;
+      line-height: 1.75;
+      font-size: 14px;
+    }
+
+    .menu-box,
+    .artifact-box {
+      padding: 18px;
+      border-radius: 22px;
+      border: 1px solid rgba(157, 181, 217, 0.16);
+      background: rgba(255, 255, 255, 0.035);
+    }
+
+    pre {
+      margin: 0;
+      overflow-x: auto;
+      color: #e4efff;
+      font-family: "SF Mono", "JetBrains Mono", "Menlo", monospace;
+      font-size: 13px;
+      line-height: 1.7;
+      white-space: pre-wrap;
+    }
+
+    code {
+      font-family: "SF Mono", "JetBrains Mono", "Menlo", monospace;
+    }
+
+    .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+
+    .tab-btn {
+      border: 1px solid rgba(157, 181, 217, 0.18);
+      background: rgba(255, 255, 255, 0.04);
+      color: #dbe8ff;
+      border-radius: 999px;
+      padding: 10px 16px;
+      font-size: 14px;
+      cursor: pointer;
+      transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+    }
+
+    .tab-btn.is-active {
+      background: rgba(89, 168, 255, 0.16);
+      border-color: rgba(89, 168, 255, 0.38);
+      color: #ffffff;
+    }
+
+    .tab-panel {
+      display: none;
+    }
+
+    .tab-panel.is-active {
+      display: block;
+    }
+
+    .detail-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+
+    .detail-card {
+      padding: 22px;
+      border-radius: 24px;
+      border: 1px solid rgba(157, 181, 217, 0.16);
+      background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(255, 255, 255, 0.02));
+    }
+
+    .steps {
+      display: grid;
+      gap: 14px;
+      margin-top: 16px;
+    }
+
+    .step {
+      display: grid;
+      grid-template-columns: 42px 1fr;
+      gap: 14px;
+      align-items: start;
+      padding: 14px;
+      border-radius: 18px;
+      border: 1px solid rgba(157, 181, 217, 0.14);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .step-index {
+      display: grid;
+      place-items: center;
+      width: 42px;
+      height: 42px;
+      border-radius: 14px;
+      font-weight: 700;
+      color: #04101d;
+      background: linear-gradient(135deg, #cbe5ff, #6bb6ff);
+      box-shadow: 0 8px 18px rgba(89, 168, 255, 0.18);
+    }
+
+    .step h4 {
+      margin: 0;
+      font-size: 16px;
+    }
+
+    .step p {
+      margin: 6px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.7;
+    }
+
+    .mini-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 18px;
+    }
+
+    .mini-card {
+      padding: 18px;
+      border-radius: 20px;
+      border: 1px solid rgba(157, 181, 217, 0.14);
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .tone-blue { border-color: rgba(89, 168, 255, 0.28); }
+    .tone-green { border-color: rgba(79, 209, 165, 0.26); }
+    .tone-amber { border-color: rgba(246, 179, 93, 0.28); }
+    .tone-red { border-color: rgba(255, 127, 127, 0.28); }
+
+    .source-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
+    }
+
+    .source-list span {
+      padding: 8px 12px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid rgba(157, 181, 217, 0.14);
+      color: #dce8ff;
+      font-size: 13px;
+    }
+
+    .footer-note {
+      margin-top: 18px;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.7;
+    }
+
+    @media (max-width: 1080px) {
+      .overview-grid,
+      .detail-grid,
+      .mini-grid,
+      .branch-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .hero {
+        padding: 26px;
+      }
+    }
+
+    @media (max-width: 720px) {
+      .page {
+        width: min(100% - 20px, 1240px);
+        padding-top: 20px;
+      }
+
+      .section {
+        padding: 20px;
+      }
+
+      .hero h1 {
+        font-size: 34px;
+      }
+
+      .step {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <span class="eyebrow">Start.sh Flow Map</span>
+      <h1>量化交易项目启动流程全景图</h1>
+      <p>
+        这份页面严格按当前代码实现还原入口链路：从 <code>start.sh</code> 出发，
+        分流到 GUI 回测、终端批量回测、数据同步三条主路径，并补上每条路径的前置校验、
+        菜单行为、数据依赖、输出产物与退出规则。
+      </p>
+      <div class="chip-row">
+        <span class="chip">主入口：<code>start.sh</code></span>
+        <span class="chip">分支数：3 条主业务路径</span>
+        <span class="chip">环境门槛：必须存在 <code>.venv/bin/python</code></span>
+        <span class="chip">主要产物：<code>logs/backtest/*.html</code> 与 <code>data/daily/*.csv</code></span>
+      </div>
+    </header>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <h2>总览路由</h2>
+          <p class="lead">
+            <code>start.sh</code> 是一个带主循环的菜单路由器。它先校验虚拟环境，再根据输入把流程切到 3 条子链路。
+            子流程正常结束会回到主菜单；若子流程主动抛出退出码 <code>86</code>，则整套菜单直接退出。
+          </p>
+        </div>
+        <div class="legend">
+          <span><i style="background: var(--blue);"></i>GUI 回测</span>
+          <span><i style="background: var(--green);"></i>批量回测</span>
+          <span><i style="background: var(--amber);"></i>数据同步</span>
+        </div>
+      </div>
+
+      <div class="overview-grid">
+        <div class="router">
+          <div class="node entry">
+            <h3>入口节点：start.sh</h3>
+            <p>
+              先 <code>cd</code> 到项目根目录，再检查 <code>.venv/bin/python</code>。
+              如果不存在，直接提示先执行 <code>./bootstrap.sh</code> 并退出，不做任何降级。
+            </p>
+            <span class="path-badge">循环菜单 / 快速失败 / 无兼容分支</span>
+          </div>
+
+          <div class="branch-grid">
+            <button class="branch-card" type="button" data-tab-target="gui" data-tone="gui">
+              <span class="branch-meta">1 号分支</span>
+              <h3>GUI 回测</h3>
+              <p>进入单次交互式回测，支持策略选择、股票选择、推荐选股、自动补数据、生成 HTML 报告。</p>
+              <ul>
+                <li>脚本入口：<code>start_backtest_gui.sh</code></li>
+                <li>Python 入口：<code>run_single_backtest_gui.py</code></li>
+                <li>输出重点：<code>logs/backtest/*.html</code></li>
+              </ul>
+            </button>
+
+            <button class="branch-card" type="button" data-tab-target="batch" data-tone="batch">
+              <span class="branch-meta">2 号分支</span>
+              <h3>终端批量回测</h3>
+              <p>进入批量回测流程，选择策略后对多组测试股票逐个回测，不自动补数据，缺数据就失败。</p>
+              <ul>
+                <li>脚本入口：<code>start_backtest.sh</code></li>
+                <li>Python 入口：<code>run_batch_backtest.py</code></li>
+                <li>执行重点：<code>batch_backtest.py</code></li>
+              </ul>
+            </button>
+
+            <button class="branch-card" type="button" data-tab-target="sync" data-tone="sync">
+              <span class="branch-meta">3 号分支</span>
+              <h3>拉取数据</h3>
+              <p>进入数据同步链路，支持指定股票、默认股票集、全部上证主板，以及 5 种数据源选择策略。</p>
+              <ul>
+                <li>脚本入口：<code>sync_data.sh</code></li>
+                <li>Python 入口：<code>sync/sync_akshare.py</code></li>
+                <li>输出重点：<code>data/daily/*_{adjust_flag}.csv</code></li>
+              </ul>
+            </button>
+          </div>
+        </div>
+
+        <div class="menu-box">
+          <h3>主菜单原样语义</h3>
+          <pre>请选择启动方式：
+  1. GUI 回测
+  2. 终端批量回测
+  3. 拉取数据
+  q. 退出</pre>
+          <div class="artifact-box" style="margin-top: 16px;">
+            <h3>退出规则</h3>
+            <ul>
+              <li>输入 <code>q</code>：直接结束主流程。</li>
+              <li>子脚本返回 <code>0</code>：打印“已返回主菜单”，重新进入选择。</li>
+              <li>子脚本返回 <code>86</code>：视为“退出整套菜单”，主脚本直接退出。</li>
+              <li>其他非 0 退出码：原样向上抛出，停止主流程。</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <h2>分支详情</h2>
+          <p class="lead">
+            下面按实际执行顺序展开 3 条业务链路。点击标签或上面的路由卡片即可切换查看。
+          </p>
+        </div>
+      </div>
+
+      <div class="tabs">
+        <button class="tab-btn is-active" type="button" data-tab="overview">差异速览</button>
+        <button class="tab-btn" type="button" data-tab="gui">GUI 回测</button>
+        <button class="tab-btn" type="button" data-tab="batch">终端批量回测</button>
+        <button class="tab-btn" type="button" data-tab="sync">数据同步</button>
+        <button class="tab-btn" type="button" data-tab="rules">关键规则</button>
+      </div>
+
+      <div class="tab-panel is-active" data-panel="overview">
+        <div class="detail-grid">
+          <div class="detail-card tone-blue">
+            <h3>GUI 回测最像“交互驾驶舱”</h3>
+            <ul>
+              <li>支持策略大类、版本、股票、初始资金逐步交互选择。</li>
+              <li>普通双均线家族会自动联跑全部版本，再生成家族对比 HTML。</li>
+              <li>缺少股票日线 CSV 时会尝试自动调用同步脚本补数据。</li>
+              <li>成功后会尝试在 macOS 自动打开报告。</li>
+            </ul>
+          </div>
+
+          <div class="detail-card tone-green">
+            <h3>批量回测强调“批处理”</h3>
+            <ul>
+              <li>先选策略，再输入初始资金。</li>
+              <li>直接校验所需 CSV 是否齐全，缺数据就报错并提示先执行同步。</li>
+              <li>执行时关闭绘图和交易日志，更适合批量跑测试样本。</li>
+              <li>对每个测试股票逐个回测，普通双均线可联跑全部版本。</li>
+            </ul>
+          </div>
+
+          <div class="detail-card tone-amber">
+            <h3>数据同步承担“供血”职责</h3>
+            <ul>
+              <li>支持固定代码、默认股票池、全部上证主板三种同步目标。</li>
+              <li>支持东方财富、Baostock、Akshare、Tushare、自动回退链。</li>
+              <li>同步日志落到 <code>logs/sync_akshare.log</code>。</li>
+              <li>失败队列会冷却 8 秒后再重跑 1 轮，最终失败则退出码 1。</li>
+            </ul>
+          </div>
+
+          <div class="detail-card tone-red">
+            <h3>三条分支的共同约束</h3>
+            <ul>
+              <li>都依赖同一个虚拟环境：<code>.venv/bin/python</code>。</li>
+              <li>子壳脚本都会先创建 <code>data</code> 和 <code>logs</code> 目录。</li>
+              <li>没有做额外兼容兜底，缺环境、缺数据、参数错误都直接失败。</li>
+              <li>主菜单始终是整个项目的统一调度入口。</li>
+            </ul>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-panel" data-panel="gui">
+        <div class="detail-grid">
+          <div class="detail-card">
+            <h3>GUI 回测主链路</h3>
+            <div class="steps">
+              <div class="step">
+                <div class="step-index">1</div>
+                <div>
+                  <h4>壳脚本准备环境</h4>
+                  <p><code>start_backtest_gui.sh</code> 检查虚拟环境，创建 <code>data</code> / <code>logs</code>，随后执行 <code>run_single_backtest_gui.py</code>。</p>
+                </div>
+              </div>
+              <div class="step">
+                <div class="step-index">2</div>
+                <div>
+                  <h4>选择策略</h4>
+                  <p>从策略注册中心读取白名单策略。当前可见大类是 <code>普通双均线</code> 与 <code>统计套利配对交易</code>。其中普通双均线家族会自动联跑全部版本。</p>
+                </div>
+              </div>
+              <div class="step">
+                <div class="step-index">3</div>
+                <div>
+                  <h4>选择股票</h4>
+                  <p>支持测试样本、系统推荐前 5、以及部分策略支持的手动输入。推荐逻辑会基于本地数据先做预评估，再按年化、夏普、回撤排序。</p>
+                </div>
+              </div>
+              <div class="step">
+                <div class="step-index">4</div>
+                <div>
+                  <h4>输入初始资金</h4>
+                  <p>默认 <code>10w</code>，支持直接输入数值或 <code>万/w</code> 形式，非法输入直接报错重填。</p>
+                </div>
+              </div>
+              <div class="step">
+                <div class="step-index">5</div>
+                <div>
+                  <h4>校验数据并自动补数</h4>
+                  <p>若所需 <code>CSV</code> 不存在，会自动调用 <code>sync/sync_akshare.py &lt;code&gt;</code> 尝试补齐。若补数失败，GUI 流程会直接报错退出，不做静默跳过。</p>
+                </div>
+              </div>
+              <div class="step">
+                <div class="step-index">6</div>
+                <div>
+                  <h4>执行回测并生成 HTML</h4>
+                  <p>单策略输出单份报告；普通双均线家族会汇总多版本报告，额外生成一个家族总览面板。最后在 macOS 上尝试自动打开报告文件。</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="detail-card">
+            <h3>GUI 分支的关键产物</h3>
+            <ul>
+              <li>单策略报告：<code>logs/backtest/{report_name}-{code}.html</code></li>
+              <li>家族对比报告：<code>logs/backtest/simple_ma_backtest-family-{code}.html</code></li>
+              <li>基准数据缺失时：报告继续生成，但不展示基准曲线。</li>
+              <li>退出方式：用户在交互里输入 <code>q</code> 时，内部会抛出 <code>86</code>，最终让主菜单一并退出。</li>
+            </ul>
+            <div class="source-list">
+              <span>入口：start_backtest_gui.sh</span>
+              <span>交互：run_single_backtest_gui.py</span>
+              <span>策略注册：strategy_registry.py</span>
+              <span>回测家族：simple_ma / pair_trade</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-panel" data-panel="batch">
+        <div class="detail-grid">
+          <div class="detail-card">
+            <h3>终端批量回测主链路</h3>
+            <div class="steps">
+              <div class="step">
+                <div class="step-index">1</div>
+                <div>
+                  <h4>壳脚本准备环境</h4>
+                  <p><code>start_backtest.sh</code> 同样先检查虚拟环境，再创建 <code>data</code> / <code>logs</code> 并执行 <code>run_batch_backtest.py</code>。</p>
+                </div>
+              </div>
+              <div class="step">
+                <div class="step-index">2</div>
+                <div>
+                  <h4>选择批量策略</h4>
+                  <p>菜单按策略大类分组显示。普通双均线在这里不是单版本选择，而是提供“联跑全部版本”的批处理入口。</p>
+                </div>
+              </div>
+              <div class="step">
+                <div class="step-index">3</div>
+                <div>
+                  <h4>输入初始资金</h4>
+                  <p>默认也是 <code>10w</code>。只负责解析资金，不负责兜底修正业务逻辑。</p>
+                </div>
+              </div>
+              <div class="step">
+                <div class="step-index">4</div>
+                <div>
+                  <h4>严格校验本地数据</h4>
+                  <p>批量回测不会自动同步。若任何测试股票缺少所需日线文件，直接抛出错误并要求先执行 <code>./sync_data.sh</code>。</p>
+                </div>
+              </div>
+              <div class="step">
+                <div class="step-index">5</div>
+                <div>
+                  <h4>进入批量执行器</h4>
+                  <p><code>batch_backtest.py</code> 会遍历策略的 <code>TEST_CASES</code>，逐只股票回测；执行时强制 <code>plot=False</code>、<code>print_log=False</code>，保证是批处理模式。</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="detail-card">
+            <h3>批量分支的业务特征</h3>
+            <ul>
+              <li>适合快速对一组样本股票做统一回测，不负责自动修复前置数据问题。</li>
+              <li>普通双均线会批量联跑家族内所有版本；其他策略按单一策略执行。</li>
+              <li>若策略没有配置 <code>TEST_CASES</code>，会直接报错，不能“空跑”。</li>
+              <li>和 GUI 相比，这条分支更偏“命令式批处理”，更少页面化反馈。</li>
+            </ul>
+            <div class="source-list">
+              <span>入口：start_backtest.sh</span>
+              <span>调度：run_batch_backtest.py</span>
+              <span>执行器：batch_backtest.py</span>
+              <span>依赖：本地日线 CSV 必须齐备</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-panel" data-panel="sync">
+        <div class="detail-grid">
+          <div class="detail-card">
+            <h3>数据同步主链路</h3>
+            <div class="steps">
+              <div class="step">
+                <div class="step-index">1</div>
+                <div>
+                  <h4>壳脚本准备环境</h4>
+                  <p><code>sync_data.sh</code> 检查虚拟环境并创建目录。如果调用时自带参数，会直接透传给 Python 脚本；否则进入交互菜单。</p>
+                </div>
+              </div>
+              <div class="step">
+                <div class="step-index">2</div>
+                <div>
+                  <h4>选择同步目标</h4>
+                  <p>支持固定股票代码、默认设置数据、全部上证主板普通账户可买股票 3 种模式。</p>
+                </div>
+              </div>
+              <div class="step">
+                <div class="step-index">3</div>
+                <div>
+                  <h4>选择数据源</h4>
+                  <p>支持东方财富、Baostock、Akshare、Tushare，以及自动回退链。自动模式优先级是：东方财富直连 → Baostock → Akshare → Tushare。</p>
+                </div>
+              </div>
+              <div class="step">
+                <div class="step-index">4</div>
+                <div>
+                  <h4>解析目标代码与区间</h4>
+                  <p>Python 入口会结合命令行参数、默认股票列表、复权口径和日期范围，最终展开成一批待同步代码。</p>
+                </div>
+              </div>
+              <div class="step">
+                <div class="step-index">5</div>
+                <div>
+                  <h4>执行批量同步</h4>
+                  <p>逐个代码拉取、合并并落盘到 <code>data/daily</code>。若遇到失败队列，会冷却 8 秒后再重跑 1 次。</p>
+                </div>
+              </div>
+              <div class="step">
+                <div class="step-index">6</div>
+                <div>
+                  <h4>记录日志与退出</h4>
+                  <p>日志同时写终端和 <code>logs/sync_akshare.log</code>。最终若仍有失败代码，直接以退出码 <code>1</code> 结束。</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div class="detail-card">
+            <h3>同步分支的输入与输出</h3>
+            <ul>
+              <li>固定代码模式：支持一个或多个股票代码，空格或逗号分隔。</li>
+              <li>默认模式：从默认股票配置和基准配置中推导目标股票集。</li>
+              <li>全量模式：筛选上证主板普通账户可买股票后批量同步。</li>
+              <li>落盘文件：<code>data/daily/{code}_{adjust_flag}.csv</code></li>
+            </ul>
+            <div class="source-list">
+              <span>东方财富直连</span>
+              <span>Baostock</span>
+              <span>Akshare</span>
+              <span>Tushare</span>
+              <span>自动回退链</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-panel" data-panel="rules">
+        <div class="mini-grid">
+          <div class="mini-card tone-red">
+            <h3>环境门槛</h3>
+            <p>所有主分支都硬性依赖 <code>.venv/bin/python</code>。缺失时不尝试系统 Python，不做兼容降级，直接要求先执行 <code>./bootstrap.sh</code>。</p>
+          </div>
+          <div class="mini-card tone-blue">
+            <h3>策略白名单</h3>
+            <p>当前策略注册中心只开放 <code>普通双均线</code> 和 <code>统计套利配对交易</code> 两个大类；其他策略文件存在，但不会出现在主交互菜单里。</p>
+          </div>
+          <div class="mini-card tone-green">
+            <h3>数据依赖差异</h3>
+            <p>GUI 回测会自动补缺失单票数据；终端批量回测不会自动补，只会快速失败并提示先同步。</p>
+          </div>
+          <div class="mini-card tone-amber">
+            <h3>统一退出码</h3>
+            <p><code>86</code> 是“退出整个菜单系统”的内部协议码。主菜单收到它后，会直接结束，而不是继续回到上一层。</p>
+          </div>
+        </div>
+
+        <div class="footer-note">
+          页面依据的核心文件包括：<code>start.sh</code>、<code>start_backtest_gui.sh</code>、
+          <code>run_single_backtest_gui.py</code>、<code>start_backtest.sh</code>、
+          <code>run_batch_backtest.py</code>、<code>batch_backtest.py</code>、
+          <code>sync_data.sh</code>、<code>sync/sync_akshare.py</code>、
+          <code>backtest/strategy_registry.py</code>。
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    (function () {
+      const tabButtons = Array.from(document.querySelectorAll(".tab-btn"));
+      const panels = Array.from(document.querySelectorAll(".tab-panel"));
+      const routeButtons = Array.from(document.querySelectorAll(".branch-card[data-tab-target]"));
+
+      function activateTab(name) {
+        tabButtons.forEach((button) => {
+          button.classList.toggle("is-active", button.dataset.tab === name);
+        });
+        panels.forEach((panel) => {
+          panel.classList.toggle("is-active", panel.dataset.panel === name);
+        });
+      }
+
+      tabButtons.forEach((button) => {
+        button.addEventListener("click", function () {
+          activateTab(button.dataset.tab);
+        });
+      });
+
+      routeButtons.forEach((button) => {
+        button.addEventListener("click", function () {
+          activateTab(button.dataset.tabTarget);
+          document.querySelector(".tabs")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      });
+    })();
+  </script>
+</body>
+</html>
