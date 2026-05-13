@@ -12,6 +12,7 @@ from backtest.strategy_registry import (
     get_required_codes,
     get_selection_label,
     get_strategy_spec,
+    group_strategy_specs,
     list_strategy_specs,
     supports_manual_code_input,
 )
@@ -77,11 +78,16 @@ def collect_stock_candidates(spec: StrategySpec) -> list[str]:
 
 def prompt_strategy_menu() -> str:
     specs = list_strategy_specs()
+    grouped_specs = group_strategy_specs()
     while True:
         print()
         print("请选择策略版本：")
-        for index, spec in enumerate(specs, start=1):
-            print(f"  {index}. {spec.display_name} ({spec.strategy_id})")
+        index = 1
+        for family_name, family_specs in grouped_specs:
+            print(f"  [{family_name}]")
+            for spec in family_specs:
+                print(f"  {index}. {spec.display_name} ({spec.strategy_id})")
+                index += 1
         print("  q. 退出")
 
         choice = input("请输入编号: ").strip()

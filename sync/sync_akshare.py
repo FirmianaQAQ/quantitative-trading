@@ -121,9 +121,9 @@ def fetch_index_history_from_eastmoney(symbol: str, start_date: str, end_date: s
     url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
     headers = {
         "user-agent": (
+            "Chrome/136.0.0.0 Safari/537.36"
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
             "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/136.0.0.0 Safari/537.36"
         )
     }
     secid_candidates = ["1", "0", "2", "47"]

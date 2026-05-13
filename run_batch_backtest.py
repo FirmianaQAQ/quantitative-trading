@@ -9,6 +9,7 @@ from backtest.strategy_registry import (
     get_default_strategy_spec,
     get_required_codes,
     get_strategy_spec,
+    group_strategy_specs,
     list_strategy_specs,
 )
 from utils.project_utils import get_daily_csv_path
@@ -19,11 +20,16 @@ EXIT_MENU_VALUE = "__exit__"
 
 def prompt_strategy_menu() -> str:
     strategy_specs = list_strategy_specs()
+    grouped_specs = group_strategy_specs()
     while True:
         print()
         print("请选择批量回测策略：")
-        for index, spec in enumerate(strategy_specs, start=1):
-            print(f"  {index}. {spec.display_name} ({spec.strategy_id})")
+        index = 1
+        for family_name, family_specs in grouped_specs:
+            print(f"  [{family_name}]")
+            for spec in family_specs:
+                print(f"  {index}. {spec.display_name} ({spec.strategy_id})")
+                index += 1
         print("  q. 退出")
         choice = input("请输入编号: ").strip()
 

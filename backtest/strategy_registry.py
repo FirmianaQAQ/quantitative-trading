@@ -14,10 +14,23 @@ class StrategySpec:
     strategy_id: str
     module_name: str
     display_name: str
+    family_id: str
+    family_display_name: str
+    version_number: int
     config: dict[str, Any]
     test_cases: list[dict[str, Any]]
     run_backtest: Callable[[dict[str, Any], Any], dict[str, Any]]
     validate_config: Callable[[dict[str, Any]], None]
+
+
+STRATEGY_FAMILY_DISPLAY_NAMES = {
+    "simple_ma_backtest": "普通双均线",
+    "pair_trade_backtest": "套利配对交易",
+}
+STRATEGY_FAMILY_ORDER = {
+    "simple_ma_backtest": 0,
+    "pair_trade_backtest": 1,
+}
 
 
 def _iter_candidate_strategy_ids() -> list[str]:
@@ -31,6 +44,13 @@ def _iter_candidate_strategy_ids() -> list[str]:
     )
 
 
+def _parse_strategy_family(strategy_id: str) -> tuple[str, int]:
+    match = re.match(r"^(.*)_v(\d+)$", strategy_id)
+    if match is None:
+        return strategy_id, 0
+    return match.group(1), int(match.group(2))
+
+
 def _build_strategy_spec(module: ModuleType, strategy_id: str) -> StrategySpec | None:
     required_attrs = ("CONFIG", "TEST_CASES", "run_backtest", "validate_config")
     if any(not hasattr(module, attr) for attr in required_attrs):
@@ -38,10 +58,17 @@ def _build_strategy_spec(module: ModuleType, strategy_id: str) -> StrategySpec |
 
     config = dict(getattr(module, "CONFIG"))
     test_cases = list(getattr(module, "TEST_CASES"))
+    family_id, version_number = _parse_strategy_family(strategy_id)
     return StrategySpec(
         strategy_id=strategy_id,
         module_name=module.__name__,
         display_name=str(config.get("strategy_name", strategy_id)),
+        family_id=family_id,
+        family_display_name=STRATEGY_FAMILY_DISPLAY_NAMES.get(
+            family_id,
+            str(config.get("strategy_name", family_id)),
+        ),
+        version_number=version_number,
         config=config,
         test_cases=test_cases,
         run_backtest=getattr(module, "run_backtest"),
@@ -60,6 +87,14 @@ def list_strategy_specs() -> tuple[StrategySpec, ...]:
 
     if not specs:
         raise RuntimeError("未找到可用的回测策略")
+    specs.sort(
+        key=lambda spec: (
+            STRATEGY_FAMILY_ORDER.get(spec.family_id, 999),
+            spec.family_display_name,
+            spec.version_number,
+            spec.strategy_id,
+        )
+    )
     return tuple(specs)
 
 
@@ -77,6 +112,16 @@ def get_default_strategy_spec() -> StrategySpec:
         if spec.strategy_id == "simple_ma_backtest":
             return spec
     return specs[0]
+
+
+def group_strategy_specs() -> list[tuple[str, list[StrategySpec]]]:
+    grouped: list[tuple[str, list[StrategySpec]]] = []
+    for spec in list_strategy_specs():
+        if grouped and grouped[-1][0] == spec.family_display_name:
+            grouped[-1][1].append(spec)
+            continue
+        grouped.append((spec.family_display_name, [spec]))
+    return grouped
 
 
 def find_test_case(spec: StrategySpec, code: str) -> dict[str, Any] | None:
