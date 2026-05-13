@@ -374,7 +374,7 @@ def _build_log_panel(log_lines: list[str] | None) -> str:
                     <span class="log-year-label">{year_label}</span>
                     <span class="log-year-meta">
                       <span class="log-year-count" data-total-count="{len(items)}">{len(items)}</span>
-                      <span class="log-year-toggle">展开 / 收起</span>
+                      <span class="log-year-toggle">{"收起" if index == 0 else "展开"}</span>
                     </span>
                   </summary>
                   <div class="log-year-list">
@@ -1241,7 +1241,16 @@ def _build_report_bootstrap_script() -> str:
             group.open = true;
           }
         });
+        updatePerYearToggleButtons();
         updateLogToggleButton();
+      }
+
+      function updatePerYearToggleButtons() {
+        document.querySelectorAll('.log-year-group').forEach((group) => {
+          const toggleNode = group.querySelector('.log-year-toggle');
+          if (!toggleNode) return;
+          toggleNode.textContent = group.open ? '收起' : '展开';
+        });
       }
 
       function updateLogToggleButton() {
@@ -1284,7 +1293,14 @@ def _build_report_bootstrap_script() -> str:
           visibleGroups.forEach((group) => {
             group.open = !allExpanded;
           });
+          updatePerYearToggleButtons();
           updateLogToggleButton();
+        });
+        document.querySelectorAll('.log-year-group').forEach((group) => {
+          group.addEventListener('toggle', () => {
+            updatePerYearToggleButtons();
+            updateLogToggleButton();
+          });
         });
       }
 
@@ -1711,6 +1727,13 @@ def html(
       font-variant-numeric: tabular-nums;
     }}
     .log-year-toggle {{
+      min-width: 52px;
+      padding: 4px 10px;
+      border: 1px solid rgba(148, 163, 184, 0.24);
+      border-radius: 999px;
+      background: linear-gradient(180deg, #ffffff, #f8fbff);
+      color: #475467;
+      text-align: center;
       white-space: nowrap;
     }}
     .log-year-list {{
