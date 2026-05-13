@@ -24,8 +24,8 @@ class StrategySpec:
 
 
 STRATEGY_FAMILY_DISPLAY_NAMES = {
-    "simple_ma_backtest": "普通双均线",
-    "pair_trade_backtest": "套利配对交易",
+    "simple_ma_backtest": "CTA策略 / 宏观择时",
+    "pair_trade_backtest": "套利策略 / 配对交易",
 }
 STRATEGY_FAMILY_ORDER = {
     "simple_ma_backtest": 0,
