@@ -730,6 +730,35 @@ def fetch_tushare_daily_data(
     return retry_request_call(_request, action_name=action_name)
 
 
+def parse_eastmoney_kline_df(klines: list[str]) -> pd.DataFrame:
+    if not klines:
+        return pd.DataFrame()
+
+    expected_columns = [
+        "日期",
+        "开盘",
+        "收盘",
+        "最高",
+        "最低",
+        "成交量",
+        "成交额",
+        "振幅",
+        "涨跌幅",
+        "涨跌额",
+        "换手率",
+    ]
+    row_values = [item.split(",") for item in klines]
+    column_count = len(row_values[0])
+    if column_count < len(expected_columns):
+        raise RuntimeError(
+            f"东方财富 K 线字段数量不足: 期望至少 {len(expected_columns)} 列，实际 {column_count} 列"
+        )
+    return pd.DataFrame(
+        [row[: len(expected_columns)] for row in row_values],
+        columns=expected_columns,
+    )
+
+
 def fetch_stock_history_from_eastmoney(
     symbol: str,
     start_date: str,
@@ -783,22 +812,7 @@ def fetch_stock_history_from_eastmoney(
         if not data_json.get("data") or not data_json["data"].get("klines"):
             return pd.DataFrame()
 
-    temp_df = pd.DataFrame([item.split(",") for item in data_json["data"]["klines"]])
-    temp_df.columns = [
-        "日期",
-        "开盘",
-        "收盘",
-        "最高",
-        "最低",
-        "成交量",
-        "成交额",
-        "振幅",
-        "涨跌幅",
-        "涨跌额",
-        "换手率",
-        "股票代码",
-    ]
-    return temp_df
+    return parse_eastmoney_kline_df(data_json["data"]["klines"])
 
 
 def fetch_stock_history_from_sina(
@@ -959,23 +973,7 @@ def fetch_index_history_from_eastmoney(symbol: str, start_date: str, end_date: s
                 if not data_json.get("data") or not data_json["data"].get("klines"):
                     continue
 
-            temp_df = pd.DataFrame(
-                [item.split(",") for item in data_json["data"]["klines"]]
-            )
-            temp_df.columns = [
-                "日期",
-                "开盘",
-                "收盘",
-                "最高",
-                "最低",
-                "成交量",
-                "成交额",
-                "振幅",
-                "涨跌幅",
-                "涨跌额",
-                "换手率",
-            ]
-            return temp_df
+            return parse_eastmoney_kline_df(data_json["data"]["klines"])
         except Exception as exc:
             last_error = exc
 
