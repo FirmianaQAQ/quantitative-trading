@@ -89,10 +89,21 @@ CONFIG: dict[str, Any] = {
 
 def get_pair_case(pair_code: str) -> dict[str, Any]:
     case = PAIR_CASE_MAP.get(pair_code)
-    if case is None:
-        available = ", ".join(PAIR_CASE_MAP.keys())
-        raise ValueError(f"未知交易对: {pair_code}，可选值: {available}")
-    return case
+    if case is not None:
+        return case
+
+    if pair_code.startswith("pair_auto|"):
+        parts = pair_code.split("|")
+        if len(parts) == 3:
+            code_a, code_b = parts[1], parts[2]
+            return {
+                "code": pair_code,
+                "label": f"{code_a} / {code_b}（本地高相关）",
+                "required_codes": [code_a, code_b],
+            }
+
+    available = ", ".join(PAIR_CASE_MAP.keys())
+    raise ValueError(f"未知交易对: {pair_code}，可选值: {available}")
 
 
 def _align_pair_data(

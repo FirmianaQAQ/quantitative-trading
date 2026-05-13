@@ -6,6 +6,7 @@ import subprocess
 import sys
 from contextlib import redirect_stdout
 from pathlib import Path
+import pandas as pd
 
 from backtest.strategy_registry import (
     StrategySpec,
@@ -37,6 +38,7 @@ RECOMMEND_MENU_VALUE = "__recommend__"
 FULL_EXIT_CODE = 86
 DEFAULT_CASH = 100000.0
 DEFAULT_ADJUST_ORDER = ("hfq", "qfq", "cq")
+PAIR_AUTO_PREFIX = "pair_auto|"
 
 
 def normalize_code(raw_code: str) -> str:
@@ -382,7 +384,99 @@ def collect_recommendation_adjust_flags(spec: StrategySpec, code: str) -> list[s
     )
 
 
+def collect_local_stock_codes(adjust_flag: str) -> list[str]:
+    if not DAILY_DIR.exists():
+        return []
+
+    codes: set[str] = set()
+    for path in DAILY_DIR.glob(f"*_{adjust_flag}.csv"):
+        stem = path.stem
+        if "_" not in stem:
+            continue
+        code, _flag = stem.rsplit("_", 1)
+        if code.startswith(("sh.", "sz.")):
+            codes.add(code)
+    return sorted(codes)
+
+
+def build_pair_auto_code(code_a: str, code_b: str) -> str:
+    left, right = sorted((code_a, code_b))
+    return f"{PAIR_AUTO_PREFIX}{left}|{right}"
+
+
+def build_pair_recommendation_candidates(spec: StrategySpec) -> list[tuple[str, str]]:
+    ranked_pairs: list[tuple[float, str, str]] = []
+    candidate_flags = [str(spec.config.get("adjust_flag", ""))]
+    candidate_flags.extend(
+        flag for flag in DEFAULT_ADJUST_ORDER if flag not in candidate_flags
+    )
+
+    for adjust_flag in candidate_flags:
+        if not adjust_flag:
+            continue
+        codes = collect_local_stock_codes(adjust_flag)
+        if len(codes) < 2:
+            continue
+
+        price_series: list[pd.Series] = []
+        for code in codes:
+            try:
+                df = load_daily_data(code, adjust_flag)
+            except Exception:
+                continue
+            if df.empty or "date" not in df.columns or "close" not in df.columns:
+                continue
+            series = (
+                df[["date", "close"]]
+                .copy()
+                .assign(date=lambda item: pd.to_datetime(item["date"]))
+                .drop_duplicates(subset=["date"], keep="last")
+                .set_index("date")["close"]
+                .sort_index()
+                .tail(500)
+                .rename(code)
+            )
+            if len(series) < 120:
+                continue
+            price_series.append(series)
+
+        if len(price_series) < 2:
+            continue
+
+        price_df = pd.concat(price_series, axis=1, sort=False)
+        returns_df = price_df.pct_change(fill_method=None)
+        corr_df = returns_df.corr(min_periods=120)
+        columns = list(corr_df.columns)
+        for left_index in range(len(columns)):
+            for right_index in range(left_index + 1, len(columns)):
+                correlation = corr_df.iat[left_index, right_index]
+                if pd.isna(correlation) or float(correlation) < 0.85:
+                    continue
+                ranked_pairs.append(
+                    (
+                        float(correlation),
+                        build_pair_auto_code(columns[left_index], columns[right_index]),
+                        adjust_flag,
+                    )
+                )
+
+    ranked_pairs.sort(key=lambda item: item[0], reverse=True)
+    deduped_candidates: list[tuple[str, str]] = []
+    seen_pair_codes: set[str] = set()
+    for _correlation, pair_code, adjust_flag in ranked_pairs:
+        if pair_code in seen_pair_codes:
+            continue
+        seen_pair_codes.add(pair_code)
+        deduped_candidates.append((pair_code, adjust_flag))
+        if len(deduped_candidates) >= 30:
+            break
+    return deduped_candidates
+
+
 def build_recommendation_candidates(spec: StrategySpec) -> list[tuple[str, str]]:
+    if spec.family_id == "pair_trade_backtest":
+        return build_pair_recommendation_candidates(spec)
+
     available_candidates: list[tuple[str, str]] = []
     for code in collect_stock_candidates(spec):
         for adjust_flag in collect_recommendation_adjust_flags(spec, code):

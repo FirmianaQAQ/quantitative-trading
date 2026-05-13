@@ -36,10 +36,22 @@ STRATEGY_FAMILY_ORDER = {
     "simple_ma_backtest": 0,
     "pair_trade_backtest": 1,
     "rotation_backtest": 2,
-    "asset_allocation_backtest": 5,
     "cta_event_backtest": 3,
     "intraday_t_backtest": 4,
+    "asset_allocation_backtest": 5,
 }
+
+# 白名单开关：
+# 1. STRATEGY_ID_WHITELIST 优先级最高，非空时只显示这里列出的具体策略版本
+# 2. STRATEGY_FAMILY_WHITELIST 为空时表示放开全部大类；非空时只显示列出的策略大类
+# 3. 推荐只维护这两个白名单，不再通过注释 STRATEGY_FAMILY_DISPLAY_NAMES / ORDER 控制显示
+STRATEGY_ID_WHITELIST: frozenset[str] = frozenset()
+STRATEGY_FAMILY_WHITELIST: frozenset[str] = frozenset(
+    {
+        "simple_ma_backtest",
+        "pair_trade_backtest",
+    }
+)
 
 
 def _iter_candidate_strategy_ids() -> list[str]:
@@ -68,6 +80,10 @@ def _build_strategy_spec(module: ModuleType, strategy_id: str) -> StrategySpec |
     config = dict(getattr(module, "CONFIG"))
     test_cases = list(getattr(module, "TEST_CASES"))
     family_id, version_number = _parse_strategy_family(strategy_id)
+    if STRATEGY_ID_WHITELIST and strategy_id not in STRATEGY_ID_WHITELIST:
+        return None
+    if STRATEGY_FAMILY_WHITELIST and family_id not in STRATEGY_FAMILY_WHITELIST:
+        return None
     return StrategySpec(
         strategy_id=strategy_id,
         module_name=module.__name__,
@@ -141,7 +157,23 @@ def find_test_case(spec: StrategySpec, code: str) -> dict[str, Any] | None:
     return None
 
 
+def _parse_dynamic_pair_code(spec: StrategySpec, code: str) -> tuple[str, str] | None:
+    if spec.family_id != "pair_trade_backtest":
+        return None
+    if not code.startswith("pair_auto|"):
+        return None
+
+    parts = code.split("|")
+    if len(parts) != 3:
+        return None
+    return parts[1], parts[2]
+
+
 def get_selection_label(spec: StrategySpec, code: str) -> str:
+    dynamic_pair = _parse_dynamic_pair_code(spec, code)
+    if dynamic_pair is not None:
+        return f"{dynamic_pair[0]} / {dynamic_pair[1]}（本地高相关）"
+
     item = find_test_case(spec, code)
     if item is not None and item.get("label"):
         return str(item["label"])
@@ -149,6 +181,10 @@ def get_selection_label(spec: StrategySpec, code: str) -> str:
 
 
 def get_required_codes(spec: StrategySpec, code: str) -> list[str]:
+    dynamic_pair = _parse_dynamic_pair_code(spec, code)
+    if dynamic_pair is not None:
+        return [dynamic_pair[0], dynamic_pair[1]]
+
     item = find_test_case(spec, code)
     if item is None:
         return [code]
