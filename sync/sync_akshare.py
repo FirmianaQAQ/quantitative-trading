@@ -42,6 +42,7 @@ REQUEST_RETRY_SLEEP_SECONDS = 2
 CODE_SYNC_INTERVAL_SECONDS = 0.5
 FAILED_QUEUE_RETRY_ROUNDS = 1
 FAILED_QUEUE_RETRY_COOLDOWN_SECONDS = 8
+EASTMONEY_COOKIE_BOOTSTRAP_URL = "https://quote.eastmoney.com/concept/sz000014.html"
 TUSHARE_TOKEN = "2755050aba62303e45f6842ee9e67defdf6e3c1b32bb033ca4ba037e"
 TUSHARE_DAILY_MAX_CALLS_PER_MINUTE = 45
 TUSHARE_DAILY_WINDOW_SECONDS = 60
@@ -99,6 +100,68 @@ def get_tushare_token() -> str:
     if not token:
         raise RuntimeError("缺少 Tushare Token，无法使用 Tushare 同步数据")
     return token
+
+
+def get_eastmoney_cookie_path() -> Path:
+    return PROJECT_ROOT / "data" / "cookie.txt"
+
+
+def format_cookie_header(cookie_jar) -> str:
+    cookie_items = []
+    for cookie in cookie_jar:
+        if not getattr(cookie, "name", ""):
+            continue
+        cookie_items.append(f"{cookie.name}={cookie.value}")
+    return "; ".join(cookie_items)
+
+
+def write_eastmoney_cookie(cookie_str: str) -> None:
+    if not cookie_str.strip():
+        return
+    cookie_path = get_eastmoney_cookie_path()
+    cookie_path.parent.mkdir(parents=True, exist_ok=True)
+    cookie_path.write_text(cookie_str.strip(), encoding="utf-8")
+    logger.info("已刷新东方财富 cookie: %s", cookie_path)
+
+
+def load_eastmoney_cookie() -> str:
+    cookie_path = get_eastmoney_cookie_path()
+    if not cookie_path.exists():
+        return ""
+    return cookie_path.read_text(encoding="utf-8").strip()
+
+
+def build_eastmoney_headers(referer_url: str, cookie_str: str = "") -> dict[str, str]:
+    headers = {
+        "user-agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/136.0.0.0 Safari/537.36"
+        ),
+        "referer": referer_url,
+        "accept": "application/json, text/javascript, */*; q=0.01",
+    }
+    if cookie_str.strip():
+        headers["cookie"] = cookie_str.strip()
+    return headers
+
+
+def refresh_eastmoney_cookie() -> tuple[requests.Session, str]:
+    session = requests.Session()
+    response = retry_request_call(
+        lambda: session.get(
+            EASTMONEY_COOKIE_BOOTSTRAP_URL,
+            headers=build_eastmoney_headers(EASTMONEY_COOKIE_BOOTSTRAP_URL),
+            timeout=30,
+        ),
+        action_name="访问东方财富页面获取 cookie",
+    )
+    response.raise_for_status()
+    cookie_str = format_cookie_header(session.cookies)
+    if not cookie_str:
+        raise RuntimeError("访问东方财富页面后未拿到有效 cookie")
+    write_eastmoney_cookie(cookie_str)
+    return session, cookie_str
 
 
 def ensure_baostock_login() -> None:
@@ -644,15 +707,7 @@ def fetch_stock_history_from_eastmoney(
 ) -> pd.DataFrame:
     url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
     market_prefix = "sh" if symbol.startswith("6") else "sz"
-    headers = {
-        "user-agent": (
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/136.0.0.0 Safari/537.36"
-        ),
-        "referer": f"https://quote.eastmoney.com/concept/{market_prefix}{symbol}.html",
-        "accept": "application/json, text/javascript, */*; q=0.01",
-    }
+    referer_url = f"https://quote.eastmoney.com/concept/{market_prefix}{symbol}.html"
     market_code = "1" if symbol.startswith("6") else "0"
     adjust_dict = {"qfq": "1", "hfq": "2", "": "0", "3": "0", "cq": "0"}
     params = {
@@ -665,14 +720,35 @@ def fetch_stock_history_from_eastmoney(
         "beg": start_date.replace("-", ""),
         "end": end_date.replace("-", ""),
     }
-    response = retry_request_call(
-        lambda: requests.get(url, params=params, headers=headers, timeout=30),
-        action_name=f"拉取股票 {symbol} 日线",
-    )
-    response.raise_for_status()
-    data_json = response.json()
-    if not data_json.get("data") or not data_json["data"].get("klines"):
-        return pd.DataFrame()
+
+    def request_with_cookie(cookie_str: str = "", session: requests.Session | None = None):
+        request_func = (session or requests).get
+        response = retry_request_call(
+            lambda: request_func(
+                url,
+                params=params,
+                headers=build_eastmoney_headers(referer_url, cookie_str),
+                timeout=30,
+            ),
+            action_name=f"拉取股票 {symbol} 东方财富日线",
+        )
+        response.raise_for_status()
+        return response
+
+    cookie_str = load_eastmoney_cookie()
+    try:
+        response = request_with_cookie(cookie_str=cookie_str)
+        data_json = response.json()
+        if not data_json.get("data") or not data_json["data"].get("klines"):
+            raise RuntimeError("东方财富接口返回空数据")
+    except Exception as exc:
+        logger.warning("东方财富接口首次请求失败，尝试刷新 cookie 后重试: %s", exc)
+        session, refreshed_cookie = refresh_eastmoney_cookie()
+        response = request_with_cookie(cookie_str=refreshed_cookie, session=session)
+        data_json = response.json()
+        if not data_json.get("data") or not data_json["data"].get("klines"):
+            return pd.DataFrame()
+
     temp_df = pd.DataFrame([item.split(",") for item in data_json["data"]["klines"]])
     temp_df.columns = [
         "日期",
@@ -800,13 +876,7 @@ def fetch_index_history_from_baostock(
 
 def fetch_index_history_from_eastmoney(symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
     url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
-    headers = {
-        "user-agent": (
-            "Chrome/136.0.0.0 Safari/537.36"
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-        )
-    }
+    referer_url = EASTMONEY_COOKIE_BOOTSTRAP_URL
     secid_candidates = ["1", "0", "2", "47"]
     last_error: Exception | None = None
 
@@ -822,14 +892,34 @@ def fetch_index_history_from_eastmoney(symbol: str, start_date: str, end_date: s
             "end": end_date.replace("-", ""),
         }
         try:
-            response = retry_request_call(
-                lambda: requests.get(url, params=params, headers=headers, timeout=30),
-                action_name=f"拉取指数 {symbol} 日线",
-            )
-            response.raise_for_status()
-            data_json = response.json()
-            if not data_json.get("data") or not data_json["data"].get("klines"):
-                continue
+            def request_with_cookie(cookie_str: str = "", session: requests.Session | None = None):
+                request_func = (session or requests).get
+                response = retry_request_call(
+                    lambda: request_func(
+                        url,
+                        params=params,
+                        headers=build_eastmoney_headers(referer_url, cookie_str),
+                        timeout=30,
+                    ),
+                    action_name=f"拉取指数 {symbol} 东方财富日线",
+                )
+                response.raise_for_status()
+                return response
+
+            cookie_str = load_eastmoney_cookie()
+            try:
+                response = request_with_cookie(cookie_str=cookie_str)
+                data_json = response.json()
+                if not data_json.get("data") or not data_json["data"].get("klines"):
+                    raise RuntimeError("东方财富指数接口返回空数据")
+            except Exception as exc:
+                logger.warning("东方财富指数接口首次请求失败，尝试刷新 cookie 后重试: %s", exc)
+                session, refreshed_cookie = refresh_eastmoney_cookie()
+                response = request_with_cookie(cookie_str=refreshed_cookie, session=session)
+                data_json = response.json()
+                if not data_json.get("data") or not data_json["data"].get("klines"):
+                    continue
+
             temp_df = pd.DataFrame(
                 [item.split(",") for item in data_json["data"]["klines"]]
             )
