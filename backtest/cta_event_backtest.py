@@ -26,6 +26,7 @@ from utils.project_utils import load_daily_data
 from utils.backtest_report import html as generate_backtest_html
 from utils.path_utils import ensure_dir
 from utils.h_strategy import HStrategy
+from utils.a_share_costs import estimate_max_buy_size, validate_a_share_cost_config
 
 
 CONFIG: dict[str, Any] = {
@@ -36,6 +37,9 @@ CONFIG: dict[str, Any] = {
     "data_from_date": "2019-01-01",
     "cash": 100000.0,
     "commission": 0.0001,
+    "stamp_duty": 0.0005,
+    "transfer_fee": 0.00001,
+    "min_commission": 5.0,
     "lot_size": 100,
     "position_ratio": 0.95,
     "buy_price_buffer": 1.02,
@@ -90,19 +94,18 @@ class CTAEventDrivenStrategy(HStrategy):
         self.from_date = pd.Timestamp(from_date).to_pydatetime() if from_date else None
 
     def _calculate_buy_size(self) -> int:
-        lot_size = max(int(self.param.get("lot_size", 100)), 1)
-        position_ratio = float(self.param.get("position_ratio", 0.95))
-        available_cash = self.broker.getcash() * position_ratio
         estimated_price = max(
             float(self.data.open[0]),
             float(self.data.close[0]),
             float(self.data.high[0]),
         ) * float(self.param.get("buy_price_buffer", 1.02))
-        if estimated_price <= 0:
-            return 0
-        size = int(available_cash / estimated_price)
-        size = (size // lot_size) * lot_size
-        return max(size, 0)
+        return estimate_max_buy_size(
+            available_cash=self.broker.getcash(),
+            price=estimated_price,
+            lot_size=max(int(self.param.get("lot_size", 100)), 1),
+            cash_usage_ratio=float(self.param.get("position_ratio", 0.95)),
+            config=self.param,
+        )
 
     def _highest_recent_high(self) -> float | None:
         if len(self) <= self.breakout_lookback:
@@ -217,8 +220,7 @@ class CTAEventDrivenStrategy(HStrategy):
 def validate_config(config: dict[str, Any]) -> None:
     if float(config["cash"]) <= 0:
         raise ValueError("cash 必须大于 0")
-    if float(config["commission"]) < 0:
-        raise ValueError("commission 不能小于 0")
+    validate_a_share_cost_config(config)
     if int(config["lot_size"]) <= 0:
         raise ValueError("lot_size 必须大于 0")
     if float(config["position_ratio"]) <= 0 or float(config["position_ratio"]) > 1:

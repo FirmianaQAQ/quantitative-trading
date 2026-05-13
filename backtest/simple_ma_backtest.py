@@ -18,7 +18,10 @@ r"""
    - adjust_flag: 复权类型，例如 hfq、qfq
    - from_date/to_date: 回测时间范围，格式 YYYY-MM-DD
    - cash: 初始资金
-   - commission: 手续费率
+   - commission: 券商佣金率，例如万 1 就是 0.0001
+   - stamp_duty: 卖出印花税率，A 股当前默认 0.0005
+   - transfer_fee: 双边过户费率，A 股当前默认 0.00001
+   - min_commission: 单笔最低佣金，A 股当前默认 5 元
    - buy_cash_ratio: 买入时使用现金的比例，给跳空和手续费留缓冲
    - buy_price_buffer: 按更高的估算成交价计算仓位，避免次日高开导致资金不足
    - lot_size: 每次买入按多少股的整数倍下单，A 股通常为 100
@@ -54,6 +57,12 @@ from utils.backtest_report_builder import (
 from utils.project_utils import load_daily_data
 from utils.h_strategy import HStrategy
 from utils.chip_distribution import ChipDistribution
+from utils.a_share_costs import (
+    AShareStockCommissionInfo,
+    estimate_max_buy_size,
+    get_a_share_cost_config,
+    validate_a_share_cost_config,
+)
 
 CONFIG: dict[str, Any] = {
     # 股票代码，例如 sh.000001 或 sz.000100 sz.000725
@@ -66,9 +75,16 @@ CONFIG: dict[str, Any] = {
     # 数据提前多久预热，如果用了年线，这个时间要比 from_date 提前 250 个交易日。
     # 如果把这个设为空，则会计算完整数据，性能慢一点
     "data_from_date": "2018-01-01",
-    # 初始资金和手续费率
+    # 初始资金和 A 股实盘费用模型
     "cash": 100000.0,
+    # 券商佣金，万 1
     "commission": 0.0001,
+    # 卖出印花税，千 0.5
+    "stamp_duty": 0.0005,
+    # 双边过户费，万 0.1
+    "transfer_fee": 0.00001,
+    # 单笔最低佣金 5 元
+    "min_commission": 5.0,
     # 买入时使用现金的比例，给跳空和手续费留缓冲
     "buy_cash_ratio": 0.95,
     # 按更高的估算成交价计算仓位，避免次日高开导致资金不足
@@ -219,22 +235,18 @@ class SimpleMovingAverageStrategy(HStrategy):
 
     def calculate_buy_size(self) -> int:
         """计算本次买入的数量，考虑可用资金、手续费、跳空风险等因素"""
-        available_cash = self.broker.getcash()
-        commission = self.broker.getcommissioninfo(self.data).p.commission
         estimated_price = max(
             float(self.data.open[0]),
             float(self.data.close[0]),
             float(self.data.high[0]),
         ) * float(self.param.get("buy_price_buffer"))
-        max_cost_per_share = estimated_price * (1 + commission)
-
-        raw_size = int(
-            (available_cash * self.param.get("buy_cash_ratio")) / max_cost_per_share
+        return estimate_max_buy_size(
+            available_cash=self.broker.getcash(),
+            price=estimated_price,
+            lot_size=max(int(self.param.get("lot_size")), 1),
+            cash_usage_ratio=float(self.param.get("buy_cash_ratio")),
+            config=self.param,
         )
-        lot_size = max(int(self.param.get("lot_size")), 1)
-        if lot_size > 1:
-            raw_size = (raw_size // lot_size) * lot_size
-        return max(raw_size, 0)
 
     def notify_order(self, order: bt.Order) -> None:
         # 接收并处理订单（Order）状态变化的通知。
@@ -1048,7 +1060,9 @@ def create_cerebro(config: dict[str, Any]) -> bt.Cerebro:
     # 👉 返回完整 strategy（推荐你用这个）
     cerebro = bt.Cerebro(optreturn=False)
     cerebro.broker.setcash(config["cash"])
-    cerebro.broker.setcommission(commission=config["commission"])
+    cerebro.broker.addcommissioninfo(
+        AShareStockCommissionInfo(**get_a_share_cost_config(config))
+    )
     return cerebro
 
 
@@ -1072,8 +1086,7 @@ def parse_range(expr: str, label: str) -> range:
 def validate_config(config: dict[str, Any]) -> None:
     if config["cash"] <= 0:
         raise ValueError("初始资金 cash 必须大于 0")
-    if config["commission"] < 0:
-        raise ValueError("手续费 commission 不能小于 0")
+    validate_a_share_cost_config(config)
     if config["buy_cash_ratio"] <= 0 or config["buy_cash_ratio"] > 1:
         raise ValueError("buy_cash_ratio 必须大于 0 且小于等于 1")
     if config["buy_price_buffer"] < 1:

@@ -28,6 +28,7 @@ from utils.backtest_report_builder import (
 from utils.h_strategy import HStrategy
 from utils.path_utils import ensure_dir
 from utils.project_utils import load_daily_data
+from utils.a_share_costs import estimate_max_buy_size, validate_a_share_cost_config
 
 
 TEST_CASES = [
@@ -72,6 +73,9 @@ CONFIG: dict[str, Any] = {
     "data_from_date": "2019-01-01",
     "cash": 100000.0,
     "commission": 0.0001,
+    "stamp_duty": 0.0005,
+    "transfer_fee": 0.00001,
+    "min_commission": 5.0,
     "lot_size": 100,
     "investment_ratio": 0.95,
     "rebalance_period": 20,
@@ -223,16 +227,14 @@ class RotationStrategy(HStrategy):
         return scored[0][1]
 
     def _calculate_buy_size(self, data: bt.LineIterator) -> int:
-        lot_size = max(int(self.param.get("lot_size", 100)), 1)
-        investment_ratio = float(self.param.get("investment_ratio", 0.95))
-        available_cash = self.broker.getcash() * investment_ratio
         price = float(data.close[0])
-        if price <= 0:
-            return 0
-
-        size = int(available_cash / price)
-        size = (size // lot_size) * lot_size
-        return max(size, 0)
+        return estimate_max_buy_size(
+            available_cash=self.broker.getcash(),
+            price=price,
+            lot_size=max(int(self.param.get("lot_size", 100)), 1),
+            cash_usage_ratio=float(self.param.get("investment_ratio", 0.95)),
+            config=self.param,
+        )
 
     def _submit_entry(self, data: bt.LineIterator) -> bool:
         size = self._calculate_buy_size(data)
@@ -360,8 +362,7 @@ def validate_config(config: dict[str, Any]) -> None:
     get_rotation_case(config["code"])
     if config["cash"] <= 0:
         raise ValueError("初始资金 cash 必须大于 0")
-    if config["commission"] < 0:
-        raise ValueError("手续费 commission 不能小于 0")
+    validate_a_share_cost_config(config)
     if int(config["lot_size"]) <= 0:
         raise ValueError("lot_size 必须大于 0")
     if float(config["investment_ratio"]) <= 0 or float(config["investment_ratio"]) > 1:

@@ -20,6 +20,7 @@ from utils.project_utils import get_daily_csv_path, load_daily_data
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+DAILY_DIR = PROJECT_ROOT / "data" / "daily"
 DEFAULT_STOCK_NAMES = {
     "sh.600580": "卧龙电驱",
     "sz.000100": "TCL科技",
@@ -35,6 +36,7 @@ MANUAL_MENU_VALUE = "__manual__"
 RECOMMEND_MENU_VALUE = "__recommend__"
 FULL_EXIT_CODE = 86
 DEFAULT_CASH = 100000.0
+DEFAULT_ADJUST_ORDER = ("hfq", "qfq", "cq")
 
 
 def normalize_code(raw_code: str) -> str:
@@ -254,10 +256,17 @@ def choose_strategy_spec(cli_strategy_id: str | None) -> StrategySpec:
     return get_strategy_spec(selected)
 
 
-def resolve_config(spec: StrategySpec, stock_code: str | None, cash: float) -> dict:
+def resolve_config(
+    spec: StrategySpec,
+    stock_selection: str | tuple[str, str] | None,
+    cash: float,
+) -> dict:
     config = dict(spec.config)
-    if stock_code:
-        config["code"] = stock_code
+    if isinstance(stock_selection, tuple):
+        config["code"] = stock_selection[0]
+        config["adjust_flag"] = stock_selection[1]
+    elif stock_selection:
+        config["code"] = stock_selection
     config["cash"] = cash
 
     config["plot"] = True
@@ -320,23 +329,77 @@ def try_open_report(report_path: Path) -> None:
     print(f"自动打开 GUI 失败，请手动打开报告: {report_path}")
 
 
-def build_recommendation_candidates(spec: StrategySpec) -> list[str]:
-    available_codes: list[str] = []
+def collect_available_adjust_flags(code: str) -> list[str]:
+    if not DAILY_DIR.exists():
+        return []
+    adjust_flags: set[str] = set()
+    for path in DAILY_DIR.glob(f"{code}_*.csv"):
+        stem = path.stem
+        if "_" not in stem:
+            continue
+        code_part, adjust_flag = stem.rsplit("_", 1)
+        if code_part == code and adjust_flag:
+            adjust_flags.add(adjust_flag)
+    return sorted(
+        adjust_flags,
+        key=lambda flag: (
+            0
+            if flag == DEFAULT_ADJUST_ORDER[0]
+            else (
+                DEFAULT_ADJUST_ORDER.index(flag)
+                if flag in DEFAULT_ADJUST_ORDER
+                else len(DEFAULT_ADJUST_ORDER)
+            ),
+            flag,
+        ),
+    )
+
+
+def collect_recommendation_adjust_flags(spec: StrategySpec, code: str) -> list[str]:
+    required_codes = get_required_codes(spec, code)
+    if not required_codes:
+        return []
+
+    available_flag_sets = [
+        set(collect_available_adjust_flags(required_code)) for required_code in required_codes
+    ]
+    if not available_flag_sets or any(not item for item in available_flag_sets):
+        return []
+
+    common_flags = set.intersection(*available_flag_sets)
+    preferred_flag = str(spec.config.get("adjust_flag", ""))
+    sort_order = []
+    if preferred_flag:
+        sort_order.append(preferred_flag)
+    sort_order.extend(flag for flag in DEFAULT_ADJUST_ORDER if flag != preferred_flag)
+
+    return sorted(
+        common_flags,
+        key=lambda flag: (
+            sort_order.index(flag) if flag in sort_order else len(sort_order),
+            flag,
+        ),
+    )
+
+
+def build_recommendation_candidates(spec: StrategySpec) -> list[tuple[str, str]]:
+    available_candidates: list[tuple[str, str]] = []
     for code in collect_stock_candidates(spec):
-        required_codes = get_required_codes(spec, code)
-        if all(
-            get_daily_csv_path(required_code, spec.config["adjust_flag"]).exists()
-            for required_code in required_codes
-        ):
-            available_codes.append(code)
-    return available_codes
+        for adjust_flag in collect_recommendation_adjust_flags(spec, code):
+            available_candidates.append((code, adjust_flag))
+    return available_candidates
 
 
-def evaluate_stock_for_recommendation(spec: StrategySpec, code: str) -> dict | None:
+def evaluate_stock_for_recommendation(
+    spec: StrategySpec,
+    code: str,
+    adjust_flag: str,
+) -> dict | None:
     config = dict(spec.config)
     config.update(
         {
             "code": code,
+            "adjust_flag": adjust_flag,
             "plot": False,
             "print_log": False,
             "benchmark_code": "",
@@ -356,20 +419,20 @@ def evaluate_stock_for_recommendation(spec: StrategySpec, code: str) -> dict | N
         return None
 
 
-def choose_recommended_stock(spec: StrategySpec) -> str | None:
-    candidate_codes = build_recommendation_candidates(spec)
-    if not candidate_codes:
+def choose_recommended_stock(spec: StrategySpec) -> tuple[str, str] | None:
+    candidate_items = build_recommendation_candidates(spec)
+    if not candidate_items:
         print("当前没有可用于推荐的本地股票数据，请先同步数据")
         return None
 
     print()
     print(f"系统正在基于 {spec.display_name} 评估本地股票，请稍等...")
-    ranked_results: list[tuple[str, dict]] = []
-    for code in candidate_codes:
-        summary = evaluate_stock_for_recommendation(spec, code)
+    ranked_results: list[tuple[str, str, dict]] = []
+    for code, adjust_flag in candidate_items:
+        summary = evaluate_stock_for_recommendation(spec, code, adjust_flag)
         if summary is None or summary.get("annual_return_pct") is None:
             continue
-        ranked_results.append((code, summary))
+        ranked_results.append((code, adjust_flag, summary))
 
     if not ranked_results:
         print("系统推荐失败，当前没有可用的回测结果")
@@ -377,9 +440,9 @@ def choose_recommended_stock(spec: StrategySpec) -> str | None:
 
     ranked_results.sort(
         key=lambda item: (
-            item[1]["annual_return_pct"],
-            item[1]["sharpe_ratio"] if item[1]["sharpe_ratio"] is not None else float("-inf"),
-            -(item[1]["max_drawdown_pct"] if item[1]["max_drawdown_pct"] is not None else float("inf")),
+            item[2]["annual_return_pct"],
+            item[2]["sharpe_ratio"] if item[2]["sharpe_ratio"] is not None else float("-inf"),
+            -(item[2]["max_drawdown_pct"] if item[2]["max_drawdown_pct"] is not None else float("inf")),
         ),
         reverse=True,
     )
@@ -388,7 +451,7 @@ def choose_recommended_stock(spec: StrategySpec) -> str | None:
     while True:
         print()
         print("系统推荐前5：")
-        for index, (code, summary) in enumerate(top_results, start=1):
+        for index, (code, adjust_flag, summary) in enumerate(top_results, start=1):
             annual_text = f"{summary['annual_return_pct']:.2f}%"
             drawdown_text = (
                 f"{summary['max_drawdown_pct']:.2f}%"
@@ -402,7 +465,7 @@ def choose_recommended_stock(spec: StrategySpec) -> str | None:
             )
             print(
                 f"  {index}. {code}  {get_display_label(spec, code)}  "
-                f"年化={annual_text}  回撤={drawdown_text}  夏普={sharpe_text}"
+                f"[{adjust_flag}]  年化={annual_text}  回撤={drawdown_text}  夏普={sharpe_text}"
             )
         print("  b. 返回上一级")
         print("  q. 退出")
@@ -418,7 +481,8 @@ def choose_recommended_stock(spec: StrategySpec) -> str | None:
             continue
         selected_index = int(choice)
         if 1 <= selected_index <= len(top_results):
-            return top_results[selected_index - 1][0]
+            selected_code, selected_adjust_flag, _summary = top_results[selected_index - 1]
+            return selected_code, selected_adjust_flag
         print("编号超出范围，请重新输入")
 
 

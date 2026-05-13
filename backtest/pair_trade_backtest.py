@@ -1,5 +1,14 @@
 from __future__ import annotations
 
+"""
+统计套利配对交易
+
+核心逻辑：
+1. 从行业属性接近、历史走势相关性较高的股票里选择交易对。
+2. 当两只股票的价格比值明显偏离历史均值时，买入相对便宜的一侧，卖出相对偏贵的一侧。
+3. 当价差回归正常区间，或持仓超时、触发止损时，双边一起平仓。
+"""
+
 import sys
 from pathlib import Path
 from typing import Any
@@ -28,22 +37,23 @@ from utils.backtest_report_builder import (
 from utils.h_strategy import HStrategy
 from utils.path_utils import ensure_dir
 from utils.project_utils import load_daily_data
+from utils.a_share_costs import validate_a_share_cost_config
 
 
 TEST_CASES = [
     {
         "code": "pair_000100_001308",
-        "label": "TCL科技 / 康冠科技",
+        "label": "TCL科技 / 康冠科技（显示面板链）",
         "required_codes": ["sz.000100", "sz.001308"],
     },
     {
         "code": "pair_000100_000725",
-        "label": "TCL科技 / 京东方A",
+        "label": "TCL科技 / 京东方A（显示面板链）",
         "required_codes": ["sz.000100", "sz.000725"],
     },
     {
         "code": "pair_000725_001308",
-        "label": "京东方A / 康冠科技",
+        "label": "京东方A / 康冠科技（显示面板链）",
         "required_codes": ["sz.000725", "sz.001308"],
     },
 ]
@@ -58,6 +68,9 @@ CONFIG: dict[str, Any] = {
     "data_from_date": "2019-01-01",
     "cash": 100000.0,
     "commission": 0.0001,
+    "stamp_duty": 0.0005,
+    "transfer_fee": 0.00001,
+    "min_commission": 5.0,
     "lot_size": 100,
     "gross_exposure_ratio": 0.9,
     "lookback": 50,
@@ -69,8 +82,8 @@ CONFIG: dict[str, Any] = {
     "plot": True,
     "report_dir": "logs/backtest",
     "report_name": "pair_trade_backtest",
-    "strategy_name": "套利配对交易",
-    "strategy_brief": "价差均值回归",
+    "strategy_name": "统计套利配对交易",
+    "strategy_brief": "高相关股票价差回归",
 }
 
 
@@ -255,9 +268,13 @@ class PairTradingStrategy(HStrategy):
         self.buy_markers.append((dt, ratio_value))
         self.entry_in_progress = True
         self.pending_pair_direction = direction
-        action_text = "做多价差" if direction > 0 else "做空价差"
+        action_text = (
+            f"价差偏离过大，买入较便宜的 {self.data_a._name}，卖出较贵的 {self.data_b._name}"
+            if direction > 0
+            else f"价差偏离过大，卖出较贵的 {self.data_a._name}，买入较便宜的 {self.data_b._name}"
+        )
         self.log(
-            f"{action_text} 开仓 zscore={zscore:.2f} "
+            f"{action_text}，开始统计套利开仓 zscore={zscore:.2f} "
             f"{self.data_a._name}数量={size_a} {self.data_b._name}数量={size_b}"
         )
 
@@ -359,7 +376,7 @@ class PairTradingStrategy(HStrategy):
                 pnl_pct = (self.broker.getvalue() - self.pair_entry_value) / self.pair_entry_value
 
             if abs(zscore) <= float(self.param.get("exit_z", 0.35)):
-                self._submit_exit(f"zscore回归 {zscore:.2f}")
+                self._submit_exit(f"价差回归正常区间 zscore={zscore:.2f}")
             elif holding_days >= int(self.param.get("max_holding_days", 30)):
                 self._submit_exit(f"持仓超时 {holding_days}天")
             elif pnl_pct <= -pair_stop_loss_pct:
@@ -383,8 +400,7 @@ def validate_config(config: dict[str, Any]) -> None:
     get_pair_case(config["code"])
     if config["cash"] <= 0:
         raise ValueError("初始资金 cash 必须大于 0")
-    if config["commission"] < 0:
-        raise ValueError("手续费 commission 不能小于 0")
+    validate_a_share_cost_config(config)
     if int(config["lot_size"]) <= 0:
         raise ValueError("lot_size 必须大于 0")
     if float(config["gross_exposure_ratio"]) <= 0 or float(config["gross_exposure_ratio"]) > 1:
@@ -493,7 +509,7 @@ def _build_pair_report_data(
     summary_metrics = format_summary_metrics(
         [
             {"label": "交易对", "value": pair_label},
-            {"label": "策略名称", "value": config.get("strategy_name", "套利配对交易")},
+            {"label": "策略名称", "value": config.get("strategy_name", "统计套利配对交易")},
             {"label": "初始资金", "value": summary["initial_value"], "kind": "number"},
             {"label": "期末资产", "value": summary["final_value"], "kind": "number"},
             {"label": "总收益率", "value": summary["total_return_pct"], "kind": "percent"},

@@ -26,7 +26,7 @@ class StrategySpec:
 
 STRATEGY_FAMILY_DISPLAY_NAMES = {
     "simple_ma_backtest": "普通双均线",
-    "pair_trade_backtest": "套利配对交易",
+    "pair_trade_backtest": "统计套利配对交易",
     "rotation_backtest": "多因子轮动策略",
     "cta_event_backtest": "CTA策略",
     "intraday_t_backtest": "做T",
