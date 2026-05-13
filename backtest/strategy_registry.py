@@ -72,7 +72,11 @@ def get_strategy_spec(strategy_id: str) -> StrategySpec:
 
 
 def get_default_strategy_spec() -> StrategySpec:
-    return list_strategy_specs()[0]
+    specs = list_strategy_specs()
+    for spec in specs:
+        if spec.strategy_id == "simple_ma_backtest":
+            return spec
+    return specs[0]
 
 
 def find_test_case(spec: StrategySpec, code: str) -> dict[str, Any] | None:

@@ -59,6 +59,9 @@ def collect_stock_candidates(spec: StrategySpec) -> list[str]:
         if candidate_code:
             codes.add(candidate_code)
 
+    if not supports_manual_code_input(spec):
+        return sorted(codes)
+
     daily_dir = PROJECT_ROOT / "data" / "daily"
     if daily_dir.exists():
         for path in daily_dir.glob("*.csv"):
