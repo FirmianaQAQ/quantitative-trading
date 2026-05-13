@@ -15,7 +15,6 @@ while true; do
   echo "  1. GUI 回测"
   echo "  2. 终端批量回测"
   echo "  q. 退出"
-  echo "  e. 完全退出"
   printf "请输入编号: "
   if ! read -r choice; then
     echo
@@ -47,7 +46,7 @@ while true; do
         exit "$child_exit_code"
       fi
       ;;
-    q|Q|e|E)
+    q|Q)
       exit 0
       ;;
     *)

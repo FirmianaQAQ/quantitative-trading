@@ -15,7 +15,7 @@ from backtest.strategy_registry import (
 from utils.project_utils import get_daily_csv_path
 
 
-EXIT_MENU_VALUE = "__exit__"
+BACK_MENU_VALUE = "__back__"
 EXIT_ALL_MENU_VALUE = "__exit_all__"
 FULL_EXIT_CODE = 86
 
@@ -32,14 +32,14 @@ def prompt_strategy_menu() -> str:
             for spec in family_specs:
                 print(f"  {index}. {spec.display_name} ({spec.brief_description})")
                 index += 1
+        print("  b. 返回上一级")
         print("  q. 退出")
-        print("  e. 完全退出")
         choice = input("请输入编号: ").strip()
 
         lower_choice = choice.lower()
+        if lower_choice == "b":
+            return BACK_MENU_VALUE
         if lower_choice == "q":
-            return EXIT_MENU_VALUE
-        if lower_choice == "e":
             return EXIT_ALL_MENU_VALUE
         if not choice.isdigit():
             print("输入无效，请输入数字编号")
@@ -56,7 +56,7 @@ def parse_strategy_id() -> str:
         return sys.argv[1].strip()
 
     selected = prompt_strategy_menu()
-    if selected == EXIT_MENU_VALUE:
+    if selected == BACK_MENU_VALUE:
         raise SystemExit(0)
     if selected == EXIT_ALL_MENU_VALUE:
         raise SystemExit(FULL_EXIT_CODE)
