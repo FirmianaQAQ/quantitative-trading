@@ -54,6 +54,10 @@ from utils.backtest_report_builder import (
     summarize_result,
     build_backtest_report_data,
 )
+from utils.default_stocks import (
+    DEFAULT_PRIMARY_STOCK_CODE,
+    build_default_stock_test_cases,
+)
 from utils.project_utils import load_daily_data
 from utils.h_strategy import HStrategy
 from utils.chip_distribution import ChipDistribution
@@ -66,7 +70,7 @@ from utils.a_share_costs import (
 
 CONFIG: dict[str, Any] = {
     # 股票代码，例如 sh.000001 或 sz.000100 sz.000725
-    "code": "sh.600580",
+    "code": DEFAULT_PRIMARY_STOCK_CODE,
     # 复权类型，例如 hfq、qfq
     "adjust_flag": "hfq",
     # 回测时间范围，to_date 设为 None 表示取到数据末尾
@@ -132,34 +136,8 @@ CONFIG_OPTIMIZE = {
 }
 # CONFIG.update(CONFIG_OPTIMIZE)
 
-# 测试用例，记录着对每只股票的指标最低要求
-TEST_CASES = [
-    {
-        # TCL科技
-        "code": "sz.000100",
-        "expect": "",
-    },
-    {
-        # 京东方A
-        "code": "sz.000725",
-        "expect": "",
-    },
-    {
-        # 康冠科技，跟上面两个一样是光学光电子的，走向很像
-        "code": "sz.001308",
-        "expect": "",
-    },
-    {
-        # 比亚迪
-        "code": "sz.002594",
-        "expect": "",
-    },
-    {
-        # 卧龙电驱
-        "code": "sh.600580",
-        "expect": "",
-    },
-]
+# 测试用例跟随全局默认股票列表自动生成，只维护 DEFAULT_STOCK_NAMES 即可。
+TEST_CASES = build_default_stock_test_cases()
 
 
 class State:

@@ -18,10 +18,11 @@ fi
 echo ""
 echo "请选择同步方式："
 echo "1. 输入固定股票代码同步"
-echo "2. 拉取全部上证主板普通账户可买股票"
+echo "2. 拉取默认设置的数据"
+echo "3. 拉取全部上证主板普通账户可买股票"
 echo ""
 
-read "sync_mode?请输入选项 [1/2]: "
+read "sync_mode?请输入选项 [1/2/3]: "
 
 case "$sync_mode" in
   1)
@@ -40,6 +41,9 @@ case "$sync_mode" in
     exec ./.venv/bin/python sync/sync_akshare.py "${code_args[@]}"
     ;;
   2)
+    exec ./.venv/bin/python sync/sync_akshare.py
+    ;;
+  3)
     exec ./.venv/bin/python sync/sync_akshare.py --all-sh-main
     ;;
   *)

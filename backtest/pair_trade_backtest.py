@@ -43,17 +43,17 @@ from utils.a_share_costs import validate_a_share_cost_config
 TEST_CASES = [
     {
         "code": "pair_000100_001308",
-        "label": "TCL科技 / 康冠科技（显示面板链）",
+        "label": "TCL科技 / 康冠科技）",
         "required_codes": ["sz.000100", "sz.001308"],
     },
     {
         "code": "pair_000100_000725",
-        "label": "TCL科技 / 京东方A（显示面板链）",
+        "label": "TCL科技 / 京东方A）",
         "required_codes": ["sz.000100", "sz.000725"],
     },
     {
         "code": "pair_000725_001308",
-        "label": "京东方A / 康冠科技（显示面板链）",
+        "label": "京东方A / 康冠科技）",
         "required_codes": ["sz.000725", "sz.001308"],
     },
 ]

@@ -19,18 +19,11 @@ from backtest.strategy_registry import (
     supports_manual_code_input,
 )
 from utils.project_utils import get_daily_csv_path, load_daily_data
+from utils.default_stocks import DEFAULT_STOCK_NAMES
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 DAILY_DIR = PROJECT_ROOT / "data" / "daily"
-DEFAULT_STOCK_NAMES = {
-    "sh.600580": "卧龙电驱",
-    "sz.000100": "TCL科技",
-    "sz.000725": "京东方A",
-    "sz.001308": "康冠科技",
-    "sz.002594": "比亚迪",
-    "sh.600255": "鑫科材料",
-}
 BACK_MENU_VALUE = "__back__"
 EXIT_ALL_MENU_VALUE = "__exit_all__"
 MANUAL_MENU_VALUE = "__manual__"
@@ -39,6 +32,7 @@ FULL_EXIT_CODE = 86
 DEFAULT_CASH = 100000.0
 DEFAULT_ADJUST_ORDER = ("hfq", "qfq", "cq")
 PAIR_AUTO_PREFIX = "pair_auto|"
+MULTI_VERSION_FAMILY_IDS = {"simple_ma_backtest"}
 
 
 def normalize_code(raw_code: str) -> str:
@@ -96,13 +90,18 @@ def collect_stock_candidates(spec: StrategySpec) -> list[str]:
     return sorted(codes)
 
 
+def is_multi_version_family(family_specs: list[StrategySpec]) -> bool:
+    return bool(family_specs) and family_specs[0].family_id in MULTI_VERSION_FAMILY_IDS
+
+
 def prompt_strategy_menu() -> str:
     grouped_specs = group_strategy_specs()
     while True:
         print()
         print("请选择策略大类：")
-        for index, (family_name, _family_specs) in enumerate(grouped_specs, start=1):
-            print(f"  {index}. {family_name}")
+        for index, (family_name, family_specs) in enumerate(grouped_specs, start=1):
+            family_suffix = "（联跑全部版本）" if is_multi_version_family(family_specs) else ""
+            print(f"  {index}. {family_name}{family_suffix}")
         print("  b. 返回上一级")
         print("  q. 退出")
 
@@ -122,6 +121,10 @@ def prompt_strategy_menu() -> str:
             continue
 
         family_name, family_specs = grouped_specs[selected_index - 1]
+        if is_multi_version_family(family_specs):
+            print()
+            print(f"已选择大类：{family_name}，将自动联跑全部版本")
+            return family_specs[0].family_id
         while True:
             print()
             print(f"已选择大类：{family_name}")

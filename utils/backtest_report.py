@@ -59,6 +59,212 @@ def _split_date_parts(date_text: str | None) -> tuple[str, str, str]:
     return year, month, day
 
 
+def _strip_log_date_prefix(log_line: str) -> str:
+    return re.sub(r"^\d{4}-\d{2}-\d{2}\s*", "", str(log_line)).strip()
+
+
+def _extract_daily_advice_entries(
+    report_data: list[dict[str, Any]],
+    log_lines: list[str] | None,
+) -> list[dict[str, str | bool]]:
+    buy_sell_payload: dict[str, Any] | None = None
+    for item in report_data:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("chart_name", "")).strip() != "买卖点":
+            continue
+        buy_sell_payload = _normalize_kline_payload(item.get("chart_data"))
+        break
+
+    if not buy_sell_payload:
+        return []
+
+    dates = [str(item) for item in buy_sell_payload.get("x_axis", [])]
+    candles = buy_sell_payload.get("candles", []) or []
+    if not dates:
+        return []
+
+    buy_price_map = {
+        str(item[0]): float(item[1])
+        for item in buy_sell_payload.get("buy_points", []) or []
+        if isinstance(item, (list, tuple)) and len(item) >= 2
+    }
+    sell_price_map = {
+        str(item[0]): float(item[1])
+        for item in buy_sell_payload.get("sell_points", []) or []
+        if isinstance(item, (list, tuple)) and len(item) >= 2
+    }
+    close_price_map: dict[str, float] = {}
+    for index, date in enumerate(dates):
+        if index >= len(candles):
+            continue
+        candle = candles[index]
+        if isinstance(candle, (list, tuple)) and len(candle) >= 2:
+            close_price_map[date] = float(candle[1])
+
+    logs_by_date: dict[str, list[str]] = {}
+    for line in log_lines or []:
+        date_text = _extract_log_date(str(line))
+        if not date_text:
+            continue
+        logs_by_date.setdefault(date_text, []).append(_strip_log_date_prefix(str(line)))
+
+    action_specs = [
+        ("sell", "执行卖出", "建议按策略信号执行卖出，优先落袋或止损。"),
+        ("buy", "执行买入", "建议按策略信号执行买入，分配本轮计划仓位。"),
+        ("hold", "继续持有", "当前更适合继续持有，等待更明确的退出信号。"),
+        ("watch_buy", "关注买点", "当前接近买点，先观察确认，不要抢跑。"),
+        ("observe", "空仓观察", "当前没有明确买卖信号，继续观察即可。"),
+    ]
+    action_priority = {
+        "sell": [
+            "卖出成交",
+            "下单卖出",
+            "准备卖出",
+            "触发止损",
+            "考虑卖出",
+            "离最高的跌幅超过",
+            "连续3天下跌",
+            "已经等了10天",
+        ],
+        "buy": ["买入成交", "下单买入", "买点满足"],
+        "hold": [
+            "继续持有观察",
+            "获利已有",
+            "金叉且盈利超过",
+            "可能只是震荡",
+        ],
+        "watch_buy": [
+            "价格触发买入观察窗口",
+            "切到水上",
+            "切到水下",
+        ],
+    }
+
+    def detect_action(
+        day_logs: list[str],
+        has_position: bool,
+        date: str,
+    ) -> tuple[str, str, bool]:
+        for action, keywords in action_priority.items():
+            for text in day_logs:
+                if "power=" in text and len(day_logs) > 1:
+                    continue
+                if any(keyword in text for keyword in keywords):
+                    return action, text, True
+        if date in sell_price_map:
+            return "sell", f"卖点触发，参考执行价 {sell_price_map[date]:.2f}", True
+        if date in buy_price_map:
+            return "buy", f"买点触发，参考执行价 {buy_price_map[date]:.2f}", True
+        if has_position:
+            return "hold", "当前处于持仓阶段，继续跟踪卖出信号。", False
+        return "observe", "当前没有明确买卖信号，保持观察。", False
+
+    entries: list[dict[str, str | bool]] = []
+    has_position = False
+    for date in dates:
+        day_logs = logs_by_date.get(date, [])
+        action, reason, is_explicit_signal = detect_action(day_logs, has_position, date)
+        title_map = {key: label for key, label, _ in action_specs}
+        default_desc_map = {key: desc for key, _label, desc in action_specs}
+        reference_price = close_price_map.get(date)
+        if action == "buy":
+            reference_price = buy_price_map.get(date, reference_price)
+            has_position = True
+        elif action == "sell":
+            reference_price = sell_price_map.get(date, reference_price)
+            has_position = False
+        elif action in {"hold", "watch_buy"} and date in buy_price_map:
+            has_position = True
+        elif action == "observe" and date in sell_price_map:
+            has_position = False
+
+        price_text = (
+            f"{reference_price:.2f}" if reference_price is not None else "-"
+        )
+        entries.append(
+            {
+                "date": date,
+                "action": action,
+                "title": title_map.get(action, "空仓观察"),
+                "price": price_text,
+                "reason": reason or default_desc_map.get(action, ""),
+                "summary": default_desc_map.get(action, ""),
+                "is_signal": action in {"buy", "sell", "watch_buy"},
+            }
+        )
+
+    entries.reverse()
+    return entries
+
+
+def _build_advice_panel(
+    report_data: list[dict[str, Any]],
+    log_lines: list[str] | None,
+) -> str:
+    entries = _extract_daily_advice_entries(report_data, log_lines)
+    if not entries:
+        return ""
+
+    cards_html = []
+    signal_count = sum(1 for entry in entries if entry["is_signal"])
+    buy_count = sum(1 for entry in entries if entry["action"] == "buy")
+    sell_count = sum(1 for entry in entries if entry["action"] == "sell")
+    watch_count = sum(1 for entry in entries if entry["action"] == "watch_buy")
+    for entry in entries:
+        date_text = entry["date"]
+        year, month, day = _split_date_parts(date_text)
+        cards_html.append(
+            f"""
+            <article
+              class="advice-item"
+              data-advice-date="{html_escape(date_text)}"
+              data-advice-year="{html_escape(year)}"
+              data-advice-month="{html_escape(month)}"
+              data-advice-day="{html_escape(day)}"
+              data-advice-action="{html_escape(entry['action'])}"
+              data-advice-signal="{str(bool(entry['is_signal'])).lower()}"
+            >
+              <div class="advice-item-head">
+                <span class="advice-date">{date_text}</span>
+                <span class="advice-badge is-{html_escape(entry['action'])}">{html_escape(entry['title'])}</span>
+              </div>
+              <div class="advice-price">参考价格：{html_escape(entry['price'])}</div>
+              <div class="advice-summary">{html_escape(entry['summary'])}</div>
+              <div class="advice-reason">{html_escape(entry['reason'])}</div>
+            </article>
+            """
+        )
+
+    return f"""
+    <aside class="advice-panel">
+      <div class="advice-panel-header">
+        <h2>每日操作建议</h2>
+        <p>默认优先展示关键买卖信号，也可以切换查看全部每日建议，并随上方时间筛选联动。</p>
+      </div>
+      <div class="advice-toolbar">
+        <div class="advice-stats">
+          <span class="advice-stat-pill">关键日 {signal_count}</span>
+          <span class="advice-stat-pill is-buy">买入 {buy_count}</span>
+          <span class="advice-stat-pill is-sell">卖出 {sell_count}</span>
+          <span class="advice-stat-pill is-watch">关注买点 {watch_count}</span>
+        </div>
+        <div class="advice-mode-group" id="advice-mode-group">
+          <button type="button" class="advice-mode-chip is-active" data-advice-mode="signal">关键日</button>
+          <button type="button" class="advice-mode-chip" data-advice-mode="all">全部</button>
+          <button type="button" class="advice-mode-chip" data-advice-mode="buy">只看买入</button>
+          <button type="button" class="advice-mode-chip" data-advice-mode="sell">只看卖出</button>
+          <button type="button" class="advice-mode-chip" data-advice-mode="hold">持有/观察</button>
+        </div>
+      </div>
+      <div class="advice-list" id="advice-list">
+        {''.join(cards_html)}
+      </div>
+      <div class="advice-empty" id="advice-empty" style="display:none;">当前筛选条件下没有可展示的操作建议。</div>
+    </aside>
+    """
+
+
 def _normalize_series_payload(data: Any, default_name: str) -> dict[str, Any]:
     if isinstance(data, pd.Series):
         series = data.dropna()
@@ -488,6 +694,7 @@ def _build_report_bootstrap_script() -> str:
       const registry = [];
       const charts = new Map();
       const currentFilter = { year: '', month: '', day: '' };
+      let currentAdviceMode = 'signal';
 
       function parseDateParts(value) {
         const text = String(value || '');
@@ -514,6 +721,10 @@ def _build_report_bootstrap_script() -> str:
         const dates = new Set();
         document.querySelectorAll('.log-line[data-log-date]').forEach((node) => {
           const value = node.dataset.logDate;
+          if (value) dates.add(value);
+        });
+        document.querySelectorAll('.advice-item[data-advice-date]').forEach((node) => {
+          const value = node.dataset.adviceDate;
           if (value) dates.add(value);
         });
         registry.forEach((item) => {
@@ -1277,9 +1488,43 @@ def _build_report_bootstrap_script() -> str:
         toggleButton.textContent = allExpanded ? '收起全部年份' : '展开全部年份';
       }
 
+      function matchesAdviceMode(item) {
+        const action = item.dataset.adviceAction || '';
+        const isSignal = item.dataset.adviceSignal === 'true';
+        if (currentAdviceMode === 'all') return true;
+        if (currentAdviceMode === 'signal') return isSignal;
+        if (currentAdviceMode === 'buy') return action === 'buy';
+        if (currentAdviceMode === 'sell') return action === 'sell';
+        if (currentAdviceMode === 'hold') return action === 'hold' || action === 'observe';
+        return true;
+      }
+
+      function updateAdviceModeButtons() {
+        document.querySelectorAll('.advice-mode-chip').forEach((item) => {
+          item.classList.toggle('is-active', item.dataset.adviceMode === currentAdviceMode);
+        });
+      }
+
+      function updateAdviceVisibility() {
+        const adviceItems = Array.from(document.querySelectorAll('.advice-item'));
+        const emptyNode = document.getElementById('advice-empty');
+        let visibleCount = 0;
+        adviceItems.forEach((item) => {
+          const matched =
+            matchesDateFilter(item.dataset.adviceDate || '') && matchesAdviceMode(item);
+          item.style.display = matched ? '' : 'none';
+          if (matched) visibleCount += 1;
+        });
+        updateAdviceModeButtons();
+        if (emptyNode) {
+          emptyNode.style.display = visibleCount > 0 ? 'none' : '';
+        }
+      }
+
       function applyFilter() {
         updateFilterControls();
         registry.forEach(renderChart);
+        updateAdviceVisibility();
         updateLogVisibility();
         updateMetricCards();
       }
@@ -1308,6 +1553,12 @@ def _build_report_bootstrap_script() -> str:
           group.addEventListener('toggle', () => {
             updatePerYearToggleButtons();
             updateLogToggleButton();
+          });
+        });
+        document.querySelectorAll('.advice-mode-chip').forEach((item) => {
+          item.addEventListener('click', () => {
+            currentAdviceMode = item.dataset.adviceMode || 'signal';
+            updateAdviceVisibility();
           });
         });
       }
@@ -1366,6 +1617,7 @@ def html(
     report_items = list(report_data or [])
     metric_cards_html = _build_metric_cards(report_items)
     filter_toolbar_html = _build_filter_toolbar()
+    advice_panel_html = _build_advice_panel(report_items, log_lines)
     chart_sections: list[str] = []
     chart_scripts: list[str] = []
     chart_index = 0
@@ -1505,9 +1757,8 @@ def html(
     }}
     .filter-toolbar {{
       display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: space-between;
+      flex-direction: column;
+      align-items: stretch;
       gap: 16px;
       margin-bottom: 20px;
       padding: 16px 18px;
@@ -1525,11 +1776,15 @@ def html(
       color: var(--muted);
       font-size: 13px;
     }}
+    .filter-toolbar-title {{
+      width: 100%;
+    }}
     .filter-toolbar-controls {{
       display: flex;
       flex-direction: column;
       align-items: stretch;
       gap: 10px;
+      width: 100%;
     }}
     .filter-group {{
       display: flex;
@@ -1672,30 +1927,174 @@ def html(
       flex: 0 0 360px;
       width: 360px;
       max-width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
     }}
+    .advice-panel,
     .log-panel {{
-      position: sticky;
-      top: 20px;
       background: var(--card);
       border: 1px solid rgba(229, 231, 235, 0.9);
       border-radius: 18px;
       box-shadow: var(--shadow);
       overflow: hidden;
     }}
+    .advice-panel-header,
     .log-panel-header {{
       padding: 18px 20px 12px;
       border-bottom: 1px solid var(--border);
       background: linear-gradient(180deg, rgba(84, 112, 198, 0.06), rgba(84, 112, 198, 0));
     }}
+    .advice-panel-header h2,
     .log-panel-header h2 {{
       margin: 0;
       font-size: 18px;
     }}
+    .advice-panel-header p,
     .log-panel-header p {{
       margin: 8px 0 0;
       color: var(--muted);
       font-size: 13px;
       line-height: 1.5;
+    }}
+    .advice-list {{
+      max-height: 420px;
+      overflow: auto;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }}
+    .advice-toolbar {{
+      padding: 12px 14px 10px;
+      border-bottom: 1px solid rgba(229, 231, 235, 0.9);
+      background: rgba(248, 250, 252, 0.78);
+    }}
+    .advice-stats {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 10px;
+    }}
+    .advice-stat-pill {{
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #344054;
+      background: rgba(148, 163, 184, 0.14);
+    }}
+    .advice-stat-pill.is-buy {{
+      color: #0f4cdb;
+      background: rgba(15, 76, 219, 0.10);
+    }}
+    .advice-stat-pill.is-sell {{
+      color: #c62828;
+      background: rgba(198, 40, 40, 0.10);
+    }}
+    .advice-stat-pill.is-watch {{
+      color: #0f766e;
+      background: rgba(15, 118, 110, 0.10);
+    }}
+    .advice-mode-group {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }}
+    .advice-mode-chip {{
+      height: 32px;
+      padding: 0 12px;
+      border: 1px solid rgba(148, 163, 184, 0.26);
+      border-radius: 999px;
+      background: linear-gradient(180deg, #ffffff, #f8fbff);
+      color: #475467;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 700;
+      transition: all 0.18s ease;
+    }}
+    .advice-mode-chip:hover {{
+      border-color: rgba(84, 112, 198, 0.35);
+      color: #24324a;
+    }}
+    .advice-mode-chip.is-active {{
+      border-color: rgba(84, 112, 198, 0.45);
+      background: linear-gradient(180deg, rgba(84, 112, 198, 0.16), rgba(84, 112, 198, 0.08));
+      color: #24324a;
+      box-shadow: 0 10px 22px rgba(84, 112, 198, 0.14);
+    }}
+    .advice-item {{
+      padding: 14px;
+      border: 1px solid rgba(229, 231, 235, 0.9);
+      border-radius: 16px;
+      background: linear-gradient(180deg, #ffffff, #fbfcff);
+    }}
+    .advice-item-head {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 8px;
+    }}
+    .advice-date {{
+      font-size: 13px;
+      font-weight: 700;
+      color: #344054;
+    }}
+    .advice-badge {{
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      white-space: nowrap;
+    }}
+    .advice-badge.is-buy {{
+      color: #0f4cdb;
+      background: rgba(15, 76, 219, 0.10);
+    }}
+    .advice-badge.is-sell {{
+      color: #c62828;
+      background: rgba(198, 40, 40, 0.10);
+    }}
+    .advice-badge.is-hold {{
+      color: #a16207;
+      background: rgba(202, 138, 4, 0.12);
+    }}
+    .advice-badge.is-watch_buy {{
+      color: #0f766e;
+      background: rgba(15, 118, 110, 0.10);
+    }}
+    .advice-badge.is-observe {{
+      color: #475467;
+      background: rgba(148, 163, 184, 0.16);
+    }}
+    .advice-price {{
+      margin-bottom: 6px;
+      font-size: 13px;
+      color: #344054;
+      font-weight: 600;
+    }}
+    .advice-summary {{
+      margin-bottom: 6px;
+      font-size: 13px;
+      color: #1f2937;
+      line-height: 1.6;
+    }}
+    .advice-reason {{
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }}
+    .advice-empty {{
+      padding: 20px;
+      color: var(--muted);
+      font-size: 13px;
+    }}
+    .log-panel {{
+      position: sticky;
+      top: 20px;
     }}
     .log-list {{
       max-height: calc(100vh - 120px);
@@ -1802,6 +2201,12 @@ def html(
       .logs-column {{
         width: 100%;
       }}
+      .advice-list {{
+        max-height: 360px;
+      }}
+      .advice-toolbar {{
+        padding: 12px;
+      }}
       .log-panel {{
         position: static;
       }}
@@ -1827,6 +2232,7 @@ def html(
         {''.join(chart_sections)}
       </main>
       <div class="logs-column">
+        {advice_panel_html}
         {log_panel_html}
       </div>
     </div>
