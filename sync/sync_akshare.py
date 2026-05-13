@@ -3,21 +3,29 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import time
 from datetime import date, timedelta
 from pathlib import Path
 
 import akshare as ak
 import pandas as pd
 import requests
+from requests import exceptions as requests_exceptions
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from backtest.simple_ma_backtest import CONFIG, TEST_CASES
+from utils.ak_share_utils import get_a_share_code_name_df_and_filter
 from utils.project_utils import get_daily_csv_path
 
 logger = logging.getLogger(__name__)
+
+SH_MAIN_BOARD_PREFIXES = ("600", "601", "603", "605")
+EXCLUDED_NAME_KEYWORDS = ("融创",)
+REQUEST_RETRY_TIMES = 3
+REQUEST_RETRY_SLEEP_SECONDS = 2
 
 STORAGE_COLUMNS = [
     "date",
@@ -54,7 +62,10 @@ def configure_logging() -> None:
 
 def resolve_target_codes() -> list[str]:
     if len(sys.argv) > 1:
-        return sorted({normalize_full_code(arg) for arg in sys.argv[1:] if arg.strip()})
+        cli_args = [arg.strip() for arg in sys.argv[1:] if arg.strip()]
+        if len(cli_args) == 1 and cli_args[0] == "--all-sh-main":
+            return resolve_all_sh_main_codes()
+        return sorted({normalize_full_code(arg) for arg in cli_args})
     code_set = {
         CONFIG["code"],
         *(item["code"] for item in TEST_CASES),
@@ -62,6 +73,34 @@ def resolve_target_codes() -> list[str]:
     if should_include_benchmark():
         code_set.add(CONFIG["benchmark_code"])
     return sorted(code_set)
+
+
+def resolve_all_sh_main_codes() -> list[str]:
+    """
+    获取上证主板普通账户可买的股票代码。
+
+    当前口径限定为上证 A 股主板常见前缀：
+    - 600
+    - 601
+    - 603
+    - 605
+
+    已复用全局过滤规则，因此会自动排除 ST、科创板、创业板、
+    北交所和 ignore_stock_code 中的特殊个股。
+    此外会额外排除名称中包含“融创”的股票。
+    """
+    stock_df = get_a_share_code_name_df_and_filter()
+    sh_main_df = stock_df[
+        stock_df["code"].astype(str).str.startswith(SH_MAIN_BOARD_PREFIXES)
+    ].copy()
+    if EXCLUDED_NAME_KEYWORDS:
+        keep_mask = ~sh_main_df["name"].astype(str).apply(
+            lambda stock_name: any(
+                keyword in stock_name for keyword in EXCLUDED_NAME_KEYWORDS
+            )
+        )
+        sh_main_df = sh_main_df.loc[keep_mask].copy()
+    return [f"sh.{code}" for code in sh_main_df["code"].tolist()]
 
 
 def should_include_benchmark() -> bool:
@@ -95,16 +134,174 @@ def resolve_sync_end_date() -> str:
     return CONFIG.get("to_date") or date.today().isoformat()
 
 
+def is_retryable_request_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    keywords = [
+        "remote end closed connection without response",
+        "connection aborted",
+        "temporarily unavailable",
+        "read timed out",
+        "timed out",
+        "connection reset by peer",
+        "bad gateway",
+        "service unavailable",
+        "too many requests",
+    ]
+    if isinstance(
+        exc,
+        (
+            requests_exceptions.ConnectionError,
+            requests_exceptions.Timeout,
+            requests_exceptions.ChunkedEncodingError,
+        ),
+    ):
+        return True
+    return any(keyword in message for keyword in keywords)
+
+
+def retry_request_call(func, *, action_name: str):
+    last_error: Exception | None = None
+    for attempt in range(1, REQUEST_RETRY_TIMES + 1):
+        try:
+            return func()
+        except Exception as exc:
+            last_error = exc
+            if not is_retryable_request_error(exc) or attempt >= REQUEST_RETRY_TIMES:
+                raise
+            wait_seconds = REQUEST_RETRY_SLEEP_SECONDS * attempt
+            logger.warning(
+                "%s 第 %s/%s 次失败: %s，%s 秒后重试",
+                action_name,
+                attempt,
+                REQUEST_RETRY_TIMES,
+                exc,
+                wait_seconds,
+            )
+            time.sleep(wait_seconds)
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError(f"{action_name} 未执行")
+
+
 def fetch_stock_history(symbol: str, start_date: str, end_date: str, adjust_flag: str) -> pd.DataFrame:
-    raw_df = ak.stock_zh_a_hist(
-        symbol=symbol,
-        period="daily",
-        start_date=start_date.replace("-", ""),
-        end_date=end_date.replace("-", ""),
-        adjust=adjust_flag,
-        timeout=30,
+    full_code = to_full_code(symbol)
+    source_errors: list[str] = []
+
+    stock_sources = [
+        (
+            "eastmoney",
+            lambda: normalize_stock_history_df(
+                fetch_stock_history_from_eastmoney(
+                    symbol=symbol,
+                    start_date=start_date,
+                    end_date=end_date,
+                    adjust_flag=adjust_flag,
+                ),
+                full_code=full_code,
+                adjust_flag=adjust_flag,
+            ),
+        ),
+        (
+            "sina",
+            lambda: normalize_sina_stock_history_df(
+                fetch_stock_history_from_sina(
+                    full_code=full_code,
+                    start_date=start_date,
+                    end_date=end_date,
+                    adjust_flag=adjust_flag,
+                ),
+                full_code=full_code,
+                adjust_flag=adjust_flag,
+            ),
+        ),
+    ]
+
+    for source_name, fetcher in stock_sources:
+        try:
+            result_df = fetcher()
+            if result_df.empty:
+                logger.warning("%s 使用 %s 未拉到数据，尝试下一个源", full_code, source_name)
+                source_errors.append(f"{source_name}: empty")
+                continue
+            logger.info("%s 使用 %s 拉取成功", full_code, source_name)
+            return result_df
+        except Exception as exc:
+            logger.warning("%s 使用 %s 失败: %s", full_code, source_name, exc)
+            source_errors.append(f"{source_name}: {exc}")
+
+    raise RuntimeError(f"{full_code} 所有股票数据源均失败: {' | '.join(source_errors)}")
+
+
+def fetch_stock_history_from_eastmoney(
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    adjust_flag: str,
+) -> pd.DataFrame:
+    url = "https://push2his.eastmoney.com/api/qt/stock/kline/get"
+    market_prefix = "sh" if symbol.startswith("6") else "sz"
+    headers = {
+        "user-agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/136.0.0.0 Safari/537.36"
+        ),
+        "referer": f"https://quote.eastmoney.com/concept/{market_prefix}{symbol}.html",
+        "accept": "application/json, text/javascript, */*; q=0.01",
+    }
+    market_code = "1" if symbol.startswith("6") else "0"
+    adjust_dict = {"qfq": "1", "hfq": "2", "": "0"}
+    params = {
+        "fields1": "f1,f2,f3,f4,f5,f6",
+        "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61,f116",
+        "ut": "7eea3edcaed734bea9cbfc24409ed989",
+        "klt": "101",
+        "fqt": adjust_dict.get(adjust_flag, "0"),
+        "secid": f"{market_code}.{symbol}",
+        "beg": start_date.replace("-", ""),
+        "end": end_date.replace("-", ""),
+    }
+    response = retry_request_call(
+        lambda: requests.get(url, params=params, headers=headers, timeout=30),
+        action_name=f"拉取股票 {symbol} 日线",
     )
-    return normalize_stock_history_df(raw_df, full_code=to_full_code(symbol), adjust_flag=adjust_flag)
+    response.raise_for_status()
+    data_json = response.json()
+    if not data_json.get("data") or not data_json["data"].get("klines"):
+        return pd.DataFrame()
+    temp_df = pd.DataFrame([item.split(",") for item in data_json["data"]["klines"]])
+    temp_df.columns = [
+        "日期",
+        "开盘",
+        "收盘",
+        "最高",
+        "最低",
+        "成交量",
+        "成交额",
+        "振幅",
+        "涨跌幅",
+        "涨跌额",
+        "换手率",
+        "股票代码",
+    ]
+    return temp_df
+
+
+def fetch_stock_history_from_sina(
+    full_code: str,
+    start_date: str,
+    end_date: str,
+    adjust_flag: str,
+) -> pd.DataFrame:
+    return retry_request_call(
+        lambda: ak.stock_zh_a_daily(
+            symbol=full_code,
+            start_date=start_date.replace("-", ""),
+            end_date=end_date.replace("-", ""),
+            adjust=adjust_flag,
+        ),
+        action_name=f"拉取股票 {full_code} 新浪日线",
+    )
 
 
 def fetch_index_history(full_code: str, start_date: str, end_date: str, adjust_flag: str) -> pd.DataFrame:
@@ -141,7 +338,10 @@ def fetch_index_history_from_eastmoney(symbol: str, start_date: str, end_date: s
             "end": end_date.replace("-", ""),
         }
         try:
-            response = requests.get(url, params=params, headers=headers, timeout=30)
+            response = retry_request_call(
+                lambda: requests.get(url, params=params, headers=headers, timeout=30),
+                action_name=f"拉取指数 {symbol} 日线",
+            )
             response.raise_for_status()
             data_json = response.json()
             if not data_json.get("data") or not data_json["data"].get("klines"):
@@ -192,6 +392,37 @@ def normalize_stock_history_df(raw_df: pd.DataFrame, full_code: str, adjust_flag
     normalized_df["code"] = full_code
     normalized_df["adjustflag"] = adjust_flag
     normalized_df["preclose"] = pd.to_numeric(normalized_df["close"], errors="coerce").shift(1)
+    return finalize_history_df(normalized_df)
+
+
+def normalize_sina_stock_history_df(
+    raw_df: pd.DataFrame,
+    full_code: str,
+    adjust_flag: str,
+) -> pd.DataFrame:
+    if raw_df.empty:
+        return pd.DataFrame(columns=STORAGE_COLUMNS)
+
+    normalized_df = raw_df.copy()
+    normalized_df["date"] = pd.to_datetime(
+        normalized_df["date"], errors="coerce"
+    ).dt.strftime("%Y-%m-%d")
+    normalized_df["code"] = full_code
+    normalized_df["adjustflag"] = adjust_flag
+    normalized_df["turn"] = pd.to_numeric(
+        normalized_df.get("turnover", 0), errors="coerce"
+    ).fillna(0) * 100
+    normalized_df["pctChg"] = (
+        (
+            pd.to_numeric(normalized_df["close"], errors="coerce")
+            / pd.to_numeric(normalized_df["close"], errors="coerce").shift(1)
+            - 1
+        )
+        * 100
+    )
+    normalized_df["preclose"] = pd.to_numeric(
+        normalized_df["close"], errors="coerce"
+    ).shift(1)
     return finalize_history_df(normalized_df)
 
 
@@ -322,9 +553,10 @@ def is_network_unavailable_error(exc: Exception) -> bool:
         "name resolution",
         "failed to resolve",
         "nodename nor servname provided",
-        "max retries exceeded",
-        "connection aborted",
-        "remote end closed connection",
+        "temporary failure in name resolution",
+        "network is unreachable",
+        "no route to host",
+        "proxyerror",
     ]
     return any(keyword in message for keyword in keywords)
 

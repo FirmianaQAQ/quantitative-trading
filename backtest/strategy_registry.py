@@ -24,12 +24,20 @@ class StrategySpec:
 
 
 STRATEGY_FAMILY_DISPLAY_NAMES = {
-    "simple_ma_backtest": "CTA策略 / 宏观择时",
-    "pair_trade_backtest": "套利策略 / 配对交易",
+    "simple_ma_backtest": "普通双均线",
+    "pair_trade_backtest": "套利配对交易",
+    "rotation_backtest": "多因子轮动策略",
+    "asset_allocation_backtest": "大类资产配置 / 固收+",
+    "cta_event_backtest": "CTA策略 / 宏观择时 / 事件驱动",
+    "intraday_t_backtest": "做T策略",
 }
 STRATEGY_FAMILY_ORDER = {
     "simple_ma_backtest": 0,
     "pair_trade_backtest": 1,
+    "rotation_backtest": 2,
+    "asset_allocation_backtest": 3,
+    "cta_event_backtest": 4,
+    "intraday_t_backtest": 5,
 }
 
 

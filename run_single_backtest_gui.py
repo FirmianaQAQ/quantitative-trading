@@ -77,17 +77,12 @@ def collect_stock_candidates(spec: StrategySpec) -> list[str]:
 
 
 def prompt_strategy_menu() -> str:
-    specs = list_strategy_specs()
     grouped_specs = group_strategy_specs()
     while True:
         print()
-        print("请选择策略版本：")
-        index = 1
-        for family_name, family_specs in grouped_specs:
-            print(f"  [{family_name}]")
-            for spec in family_specs:
-                print(f"  {index}. {spec.display_name} ({spec.strategy_id})")
-                index += 1
+        print("请选择策略大类：")
+        for index, (family_name, _family_specs) in enumerate(grouped_specs, start=1):
+            print(f"  {index}. {family_name}")
         print("  q. 退出")
 
         choice = input("请输入编号: ").strip()
@@ -98,9 +93,34 @@ def prompt_strategy_menu() -> str:
             continue
 
         selected_index = int(choice)
-        if 1 <= selected_index <= len(specs):
-            return specs[selected_index - 1].strategy_id
-        print("编号超出范围，请重新输入")
+        if not 1 <= selected_index <= len(grouped_specs):
+            print("编号超出范围，请重新输入")
+            continue
+
+        family_name, family_specs = grouped_specs[selected_index - 1]
+        while True:
+            print()
+            print(f"已选择大类：{family_name}")
+            print("请选择具体策略版本：")
+            for index, spec in enumerate(family_specs, start=1):
+                print(f"  {index}. {spec.display_name} ({spec.strategy_id})")
+            print("  b. 返回上一级")
+            print("  q. 退出")
+
+            sub_choice = input("请输入编号: ").strip()
+            lower_sub_choice = sub_choice.lower()
+            if lower_sub_choice == "q":
+                return EXIT_MENU_VALUE
+            if lower_sub_choice == "b":
+                break
+            if not sub_choice.isdigit():
+                print("输入无效，请输入数字编号")
+                continue
+
+            sub_index = int(sub_choice)
+            if 1 <= sub_index <= len(family_specs):
+                return family_specs[sub_index - 1].strategy_id
+            print("编号超出范围，请重新输入")
 
 
 def prompt_stock_menu(spec: StrategySpec) -> str:
