@@ -10,10 +10,14 @@ from datetime import date, timedelta
 from pathlib import Path
 
 import akshare as ak
-import baostock as bs
 import pandas as pd
 import requests
 from requests import exceptions as requests_exceptions
+
+try:
+    import baostock as bs
+except ImportError:
+    bs = None
 
 try:
     import tushare as ts
@@ -64,6 +68,17 @@ STORAGE_COLUMNS = [
 _TUSHARE_PRO_CLIENT = None
 _TUSHARE_DAILY_CALL_TIMESTAMPS: deque[float] = deque()
 _BAOSTOCK_LOGGED_IN = False
+_BAOSTOCK_DISABLED = False
+SYNC_SOURCE_AUTO = "auto"
+SYNC_SOURCE_BAOSTOCK = "baostock"
+SYNC_SOURCE_AKSHARE = "akshare"
+SYNC_SOURCE_TUSHARE = "tushare"
+SYNC_SOURCE_CHOICES = {
+    SYNC_SOURCE_AUTO,
+    SYNC_SOURCE_BAOSTOCK,
+    SYNC_SOURCE_AKSHARE,
+    SYNC_SOURCE_TUSHARE,
+}
 
 
 def configure_logging() -> None:
@@ -87,20 +102,27 @@ def get_tushare_token() -> str:
 
 
 def ensure_baostock_login() -> None:
-    global _BAOSTOCK_LOGGED_IN
+    global _BAOSTOCK_LOGGED_IN, _BAOSTOCK_DISABLED
     if _BAOSTOCK_LOGGED_IN:
         return
+    if _BAOSTOCK_DISABLED:
+        raise RuntimeError("Baostock 已被禁用，自动切换到 Akshare")
+    if bs is None:
+        _BAOSTOCK_DISABLED = True
+        raise RuntimeError("未安装 baostock，自动切换到 Akshare")
     login_result = bs.login()
     if getattr(login_result, "error_code", "") != "0":
+        _BAOSTOCK_DISABLED = True
         raise RuntimeError(
-            f"Baostock 登录失败: {login_result.error_code} {login_result.error_msg}"
+            f"Baostock 登录失败，已切换到 Akshare: "
+            f"{login_result.error_code} {login_result.error_msg}"
         )
     _BAOSTOCK_LOGGED_IN = True
 
 
 def logout_baostock() -> None:
     global _BAOSTOCK_LOGGED_IN
-    if not _BAOSTOCK_LOGGED_IN:
+    if not _BAOSTOCK_LOGGED_IN or bs is None:
         return
     try:
         bs.logout()
@@ -128,12 +150,46 @@ def to_tushare_code(full_code: str) -> str:
     return f"{symbol}.{market.upper()}"
 
 
-def resolve_target_codes() -> list[str]:
-    if len(sys.argv) > 1:
-        cli_args = [arg.strip() for arg in sys.argv[1:] if arg.strip()]
-        if len(cli_args) == 1 and cli_args[0] == "--all-sh-main":
-            return resolve_all_sh_main_codes()
-        return sorted({normalize_full_code(arg) for arg in cli_args})
+def parse_cli_options() -> tuple[list[str], bool, str]:
+    raw_args = [arg.strip() for arg in sys.argv[1:] if arg.strip()]
+    source_name = SYNC_SOURCE_AUTO
+    code_args: list[str] = []
+    sync_all_sh_main = False
+
+    index = 0
+    while index < len(raw_args):
+        current = raw_args[index]
+        if current == "--all-sh-main":
+            sync_all_sh_main = True
+            index += 1
+            continue
+        if current.startswith("--source="):
+            source_name = current.split("=", 1)[1].strip().lower()
+            index += 1
+            continue
+        if current == "--source":
+            if index + 1 >= len(raw_args):
+                raise ValueError("--source 缺少取值")
+            source_name = raw_args[index + 1].strip().lower()
+            index += 2
+            continue
+        code_args.append(current)
+        index += 1
+
+    if source_name not in SYNC_SOURCE_CHOICES:
+        choices_text = ", ".join(sorted(SYNC_SOURCE_CHOICES))
+        raise ValueError(f"不支持的数据源: {source_name}，可选值: {choices_text}")
+    if sync_all_sh_main and code_args:
+        raise ValueError("--all-sh-main 不能与股票代码同时传入")
+
+    return code_args, sync_all_sh_main, source_name
+
+
+def resolve_target_codes(code_args: list[str], sync_all_sh_main: bool, source_name: str) -> list[str]:
+    if sync_all_sh_main:
+        return resolve_all_sh_main_codes(source_name)
+    if code_args:
+        return sorted({normalize_full_code(arg) for arg in code_args})
     code_set = {
         CONFIG["code"],
         *(item["code"] for item in TEST_CASES),
@@ -143,7 +199,7 @@ def resolve_target_codes() -> list[str]:
     return sorted(code_set)
 
 
-def resolve_all_sh_main_codes() -> list[str]:
+def resolve_all_sh_main_codes(source_name: str) -> list[str]:
     """
     获取上证主板普通账户可买的股票代码。
 
@@ -157,15 +213,22 @@ def resolve_all_sh_main_codes() -> list[str]:
     北交所和 ignore_stock_code 中的特殊个股。
     此外会额外排除名称中包含“融创”的股票。
     """
-    try:
+    if source_name == SYNC_SOURCE_BAOSTOCK:
         stock_df = fetch_sh_main_stock_pool_from_baostock()
-    except Exception as exc:
-        logger.warning("Baostock 股票池获取失败，回退到 Akshare: %s", exc)
+    elif source_name == SYNC_SOURCE_AKSHARE:
+        stock_df = get_a_share_code_name_df_and_filter()
+    elif source_name == SYNC_SOURCE_TUSHARE:
+        stock_df = fetch_sh_main_stock_pool_from_tushare()
+    else:
         try:
-            stock_df = get_a_share_code_name_df_and_filter()
-        except Exception as ak_exc:
-            logger.warning("Akshare 股票池获取失败，回退到 Tushare: %s", ak_exc)
-            stock_df = fetch_sh_main_stock_pool_from_tushare()
+            stock_df = fetch_sh_main_stock_pool_from_baostock()
+        except Exception as exc:
+            logger.warning("Baostock 股票池获取失败，回退到 Akshare: %s", exc)
+            try:
+                stock_df = get_a_share_code_name_df_and_filter()
+            except Exception as ak_exc:
+                logger.warning("Akshare 股票池获取失败，回退到 Tushare: %s", ak_exc)
+                stock_df = fetch_sh_main_stock_pool_from_tushare()
 
     sh_main_df = stock_df[
         stock_df["code"].astype(str).str.startswith(SH_MAIN_BOARD_PREFIXES)
@@ -397,21 +460,22 @@ def fetch_stock_history(
     start_date: str,
     end_date: str,
     adjust_flag: str,
+    source_name: str = SYNC_SOURCE_AUTO,
 ) -> pd.DataFrame:
     full_code = to_full_code(symbol)
     ts_code = to_tushare_code(full_code)
     source_errors: list[str] = []
 
-    stock_sources = [
-        (
-            "baostock",
-            lambda: fetch_stock_history_from_baostock(
-                full_code=full_code,
-                start_date=start_date,
-                end_date=end_date,
-                adjust_flag=adjust_flag,
-            ),
+    baostock_source = (
+        "baostock",
+        lambda: fetch_stock_history_from_baostock(
+            full_code=full_code,
+            start_date=start_date,
+            end_date=end_date,
+            adjust_flag=adjust_flag,
         ),
+    )
+    akshare_sources = [
         (
             "akshare-eastmoney",
             lambda: normalize_stock_history_df(
@@ -439,22 +503,31 @@ def fetch_stock_history(
             ),
         ),
     ]
+    tushare_source = (
+        "tushare-daily",
+        lambda: fetch_stock_history_from_tushare(
+            ts_code=ts_code,
+            full_code=full_code,
+            start_date=start_date,
+            end_date=end_date,
+            adjust_flag=adjust_flag,
+        ),
+    )
 
-    if is_unadjusted_flag(adjust_flag):
-        stock_sources.append(
-            (
-                "tushare-daily",
-                lambda: fetch_stock_history_from_tushare(
-                    ts_code=ts_code,
-                    full_code=full_code,
-                    start_date=start_date,
-                    end_date=end_date,
-                    adjust_flag=adjust_flag,
-                ),
-            )
-        )
+    if source_name == SYNC_SOURCE_BAOSTOCK:
+        stock_sources = [baostock_source]
+    elif source_name == SYNC_SOURCE_AKSHARE:
+        stock_sources = akshare_sources
+    elif source_name == SYNC_SOURCE_TUSHARE:
+        if not is_unadjusted_flag(adjust_flag):
+            raise RuntimeError(f"Tushare 仅支持不复权日线，不支持 {adjust_flag}")
+        stock_sources = [tushare_source]
     else:
-        logger.info("%s 请求 %s 复权口径，跳过 Tushare daily 兜底", full_code, adjust_flag)
+        stock_sources = [baostock_source, *akshare_sources]
+        if is_unadjusted_flag(adjust_flag):
+            stock_sources.append(tushare_source)
+        else:
+            logger.info("%s 请求 %s 复权口径，跳过 Tushare daily 兜底", full_code, adjust_flag)
 
     for source_name, fetcher in stock_sources:
         try:
@@ -640,31 +713,39 @@ def fetch_index_history(
     start_date: str,
     end_date: str,
     adjust_flag: str,
+    source_name: str = SYNC_SOURCE_AUTO,
 ) -> pd.DataFrame:
     source_errors: list[str] = []
-    index_sources = [
-        (
-            "baostock",
-            lambda: fetch_index_history_from_baostock(
-                full_code=full_code,
+    baostock_source = (
+        "baostock",
+        lambda: fetch_index_history_from_baostock(
+            full_code=full_code,
+            start_date=start_date,
+            end_date=end_date,
+            adjust_flag=adjust_flag,
+        ),
+    )
+    akshare_source = (
+        "eastmoney",
+        lambda: normalize_index_history_df(
+            fetch_index_history_from_eastmoney(
+                symbol=full_code.split(".", 1)[1],
                 start_date=start_date,
                 end_date=end_date,
-                adjust_flag=adjust_flag,
             ),
+            full_code=full_code,
+            adjust_flag=adjust_flag,
         ),
-        (
-            "eastmoney",
-            lambda: normalize_index_history_df(
-                fetch_index_history_from_eastmoney(
-                    symbol=full_code.split(".", 1)[1],
-                    start_date=start_date,
-                    end_date=end_date,
-                ),
-                full_code=full_code,
-                adjust_flag=adjust_flag,
-            ),
-        ),
-    ]
+    )
+
+    if source_name == SYNC_SOURCE_BAOSTOCK:
+        index_sources = [baostock_source]
+    elif source_name == SYNC_SOURCE_AKSHARE:
+        index_sources = [akshare_source]
+    elif source_name == SYNC_SOURCE_TUSHARE:
+        raise RuntimeError("Tushare 暂不支持指数日线同步，请改用 Baostock 或 Akshare")
+    else:
+        index_sources = [baostock_source, akshare_source]
 
     for source_name, fetcher in index_sources:
         try:
@@ -967,7 +1048,13 @@ def merge_and_save_history(csv_path: Path, existing_df: pd.DataFrame, new_df: pd
     return len(new_df)
 
 
-def sync_one_code(full_code: str, start_date: str, end_date: str, adjust_flag: str) -> str:
+def sync_one_code(
+    full_code: str,
+    start_date: str,
+    end_date: str,
+    adjust_flag: str,
+    source_name: str,
+) -> str:
     csv_path = get_daily_csv_path(full_code, adjust_flag)
     existing_df = read_existing_history(csv_path)
     request_start_date = compute_incremental_start_date(existing_df, start_date)
@@ -982,6 +1069,7 @@ def sync_one_code(full_code: str, start_date: str, end_date: str, adjust_flag: s
             start_date=request_start_date,
             end_date=end_date,
             adjust_flag=adjust_flag,
+            source_name=source_name,
         )
     else:
         symbol = full_code.split(".", 1)[1]
@@ -990,6 +1078,7 @@ def sync_one_code(full_code: str, start_date: str, end_date: str, adjust_flag: s
             start_date=request_start_date,
             end_date=end_date,
             adjust_flag=adjust_flag,
+            source_name=source_name,
         )
 
     if new_df.empty:
@@ -1027,6 +1116,7 @@ def run_sync_batch(
     start_date: str,
     end_date: str,
     adjust_flag: str,
+    source_name: str,
     batch_name: str,
 ) -> tuple[int, int, int, list[str]]:
     success = 0
@@ -1053,6 +1143,7 @@ def run_sync_batch(
                 start_date=start_date,
                 end_date=end_date,
                 adjust_flag=adjust_flag,
+                source_name=source_name,
             )
             if result == "success":
                 success += 1
@@ -1087,12 +1178,16 @@ def run_sync_batch(
 
 def main() -> None:
     configure_logging()
+    code_args, sync_all_sh_main, source_name = parse_cli_options()
     adjust_flag = resolve_effective_adjust_flag(CONFIG["adjust_flag"])
     start_date = resolve_sync_start_date()
     end_date = resolve_sync_end_date()
-    target_codes = resolve_target_codes()
+    target_codes = resolve_target_codes(code_args, sync_all_sh_main, source_name)
 
-    logger.info("使用 Baostock -> Akshare -> Tushare 的优先级同步所需数据")
+    if source_name == SYNC_SOURCE_AUTO:
+        logger.info("使用 Baostock -> Akshare -> Tushare 的优先级同步所需数据")
+    else:
+        logger.info("按用户指定的数据源同步: %s", source_name)
     logger.info("目标代码: %s", ", ".join(target_codes))
     logger.info("同步区间: %s ~ %s", start_date, end_date)
     logger.info("数据复权口径: %s", adjust_flag)
@@ -1102,6 +1197,7 @@ def main() -> None:
         start_date=start_date,
         end_date=end_date,
         adjust_flag=adjust_flag,
+        source_name=source_name,
         batch_name="首轮同步",
     )
 
@@ -1120,6 +1216,7 @@ def main() -> None:
             start_date=start_date,
             end_date=end_date,
             adjust_flag=adjust_flag,
+            source_name=source_name,
             batch_name=f"失败队列重跑第{retry_round}轮",
         )
         total_success += retry_success

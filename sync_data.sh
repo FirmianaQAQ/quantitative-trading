@@ -15,6 +15,36 @@ if (( $# > 0 )); then
   exec ./.venv/bin/python sync/sync_akshare.py "$@"
 fi
 
+choose_source_arg() {
+  echo "" >&2
+  echo "请选择拉取方式：" >&2
+  echo "1. Baostock" >&2
+  echo "2. Akshare" >&2
+  echo "3. Tushare" >&2
+  echo "4. 自动（Baostock -> Akshare -> Tushare）" >&2
+  echo "" >&2
+
+  read "source_mode?请输入选项 [1/2/3/4，默认4]: "
+  case "$source_mode" in
+    ""|4)
+      echo "--source=auto"
+      ;;
+    1)
+      echo "--source=baostock"
+      ;;
+    2)
+      echo "--source=akshare"
+      ;;
+    3)
+      echo "--source=tushare"
+      ;;
+    *)
+      echo "无效拉取方式：$source_mode" >&2
+      return 1
+      ;;
+  esac
+}
+
 echo ""
 echo "请选择同步方式："
 echo "1. 输入固定股票代码同步"
@@ -23,6 +53,7 @@ echo "3. 拉取全部上证主板普通账户可买股票"
 echo ""
 
 read "sync_mode?请输入选项 [1/2/3]: "
+source_arg="$(choose_source_arg)" || exit 1
 
 case "$sync_mode" in
   1)
@@ -38,13 +69,13 @@ case "$sync_mode" in
       exit 1
     fi
 
-    exec ./.venv/bin/python sync/sync_akshare.py "${code_args[@]}"
+    exec ./.venv/bin/python sync/sync_akshare.py "$source_arg" "${code_args[@]}"
     ;;
   2)
-    exec ./.venv/bin/python sync/sync_akshare.py
+    exec ./.venv/bin/python sync/sync_akshare.py "$source_arg"
     ;;
   3)
-    exec ./.venv/bin/python sync/sync_akshare.py --all-sh-main
+    exec ./.venv/bin/python sync/sync_akshare.py "$source_arg" --all-sh-main
     ;;
   *)
     echo "无效选项：$sync_mode"
