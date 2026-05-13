@@ -28,7 +28,7 @@ DEFAULT_STOCK_NAMES = {
     "sz.001308": "康冠科技",
     "sz.002594": "比亚迪",
     "sh.000001": "上证指数",
-    "sz.000001": "平安银行/深市代码样例",
+    "sh.600255": "鑫科材料",
 }
 BACK_MENU_VALUE = "__back__"
 EXIT_ALL_MENU_VALUE = "__exit_all__"
