@@ -240,7 +240,7 @@ def _build_advice_panel(
     <aside class="advice-panel">
       <div class="advice-panel-header">
         <h2>每日操作建议</h2>
-        <p>默认优先展示关键买卖信号，也可以切换查看全部每日建议，并随上方时间筛选联动。</p>
+        <p>默认展示全部每日建议，也可以切换查看关键买卖信号，并随上方时间筛选联动。</p>
       </div>
       <div class="advice-toolbar">
         <div class="advice-stats">
@@ -250,8 +250,8 @@ def _build_advice_panel(
           <span class="advice-stat-pill is-watch">关注买点 {watch_count}</span>
         </div>
         <div class="advice-mode-group" id="advice-mode-group">
-          <button type="button" class="advice-mode-chip is-active" data-advice-mode="signal">关键日</button>
-          <button type="button" class="advice-mode-chip" data-advice-mode="all">全部</button>
+          <button type="button" class="advice-mode-chip" data-advice-mode="signal">关键日</button>
+          <button type="button" class="advice-mode-chip is-active" data-advice-mode="all">全部</button>
           <button type="button" class="advice-mode-chip" data-advice-mode="buy">只看买入</button>
           <button type="button" class="advice-mode-chip" data-advice-mode="sell">只看卖出</button>
           <button type="button" class="advice-mode-chip" data-advice-mode="hold">持有/观察</button>
@@ -694,7 +694,7 @@ def _build_report_bootstrap_script() -> str:
       const registry = [];
       const charts = new Map();
       const currentFilter = { year: '', month: '', day: '' };
-      let currentAdviceMode = 'signal';
+      let currentAdviceMode = 'all';
 
       function parseDateParts(value) {
         const text = String(value || '');
@@ -1557,7 +1557,7 @@ def _build_report_bootstrap_script() -> str:
         });
         document.querySelectorAll('.advice-mode-chip').forEach((item) => {
           item.addEventListener('click', () => {
-            currentAdviceMode = item.dataset.adviceMode || 'signal';
+            currentAdviceMode = item.dataset.adviceMode || 'all';
             updateAdviceVisibility();
           });
         });

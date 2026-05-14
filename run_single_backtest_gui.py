@@ -8,6 +8,11 @@ from contextlib import redirect_stdout
 from pathlib import Path
 import pandas as pd
 
+from backtest.pair_trade_backtest import (
+    _align_pair_data,
+    _build_spread_price_frame,
+    evaluate_pair_signal_quality,
+)
 from backtest.strategy_registry import (
     StrategySpec,
     get_required_codes,
@@ -63,6 +68,36 @@ def parse_cash_input(raw_value: str) -> float:
     if value <= 0:
         raise ValueError("初始资金必须大于 0")
     return round(value, 2)
+
+
+def supports_manual_pair_input(spec: StrategySpec) -> bool:
+    return spec.family_id == "pair_trade_backtest"
+
+
+def parse_manual_pair_selection(raw_value: str) -> str:
+    normalized_text = raw_value.strip()
+    if not normalized_text:
+        raise ValueError("配对组合不能为空")
+
+    if normalized_text.startswith(PAIR_AUTO_PREFIX):
+        parts = normalized_text.split("|")
+        if len(parts) != 3:
+            raise ValueError("配对组合格式错误，应为 pair_auto|sz.000725|sz.002594")
+        code_a = normalize_code(parts[1])
+        code_b = normalize_code(parts[2])
+    else:
+        normalized_text = normalized_text.replace("，", ",").replace("/", ",")
+        parts = [item.strip() for item in normalized_text.split(",") if item.strip()]
+        if len(parts) == 1:
+            parts = [item for item in normalized_text.split() if item]
+        if len(parts) != 2:
+            raise ValueError("请输入两只股票代码，格式如 sz.000725,sz.002594")
+        code_a = normalize_code(parts[0])
+        code_b = normalize_code(parts[1])
+
+    if code_a == code_b:
+        raise ValueError("配对组合里的两只股票不能相同")
+    return build_pair_auto_code(code_a, code_b)
 
 
 def get_stock_label(code: str) -> str:
@@ -153,6 +188,7 @@ def prompt_strategy_menu() -> str:
 def prompt_stock_menu(spec: StrategySpec) -> str:
     codes = collect_stock_candidates(spec)
     allow_manual = supports_manual_code_input(spec)
+    allow_manual_pair = supports_manual_pair_input(spec)
     while True:
         print()
         print("请选择股票：")
@@ -161,6 +197,8 @@ def prompt_stock_menu(spec: StrategySpec) -> str:
         print("  r. 系统推荐前5")
         if allow_manual:
             print("  0. 手动输入")
+        elif allow_manual_pair:
+            print("  0. 手动输入两只股票组成配对")
         print("  b. 返回上一级")
         print("  q. 退出")
 
@@ -172,7 +210,7 @@ def prompt_stock_menu(spec: StrategySpec) -> str:
             return EXIT_ALL_MENU_VALUE
         if lower_choice == "r":
             return RECOMMEND_MENU_VALUE
-        if allow_manual and choice == "0":
+        if (allow_manual or allow_manual_pair) and choice == "0":
             return MANUAL_MENU_VALUE
         if not choice.isdigit():
             print("输入无效，请输入数字编号")
@@ -193,14 +231,21 @@ def choose_stock_interactively(spec: StrategySpec) -> str:
             raise SystemExit(FULL_EXIT_CODE)
         if selected == MANUAL_MENU_VALUE:
             while True:
-                raw_code = input("请输入股票代码，例如 sz.000725 或 000725: ").strip()
-                lower_raw_code = raw_code.lower()
-                if lower_raw_code == "b":
+                if supports_manual_pair_input(spec):
+                    raw_value = input(
+                        "请输入两只股票代码，用逗号或空格分隔，例如 sz.000725, sz.002594: "
+                    ).strip()
+                else:
+                    raw_value = input("请输入股票代码，例如 sz.000725 或 000725: ").strip()
+                lower_raw_value = raw_value.lower()
+                if lower_raw_value == "b":
                     break
-                if lower_raw_code == "q":
+                if lower_raw_value == "q":
                     raise SystemExit(FULL_EXIT_CODE)
                 try:
-                    return normalize_code(raw_code)
+                    if supports_manual_pair_input(spec):
+                        return parse_manual_pair_selection(raw_value)
+                    return normalize_code(raw_value)
                 except ValueError as exc:
                     print(str(exc))
         if selected == RECOMMEND_MENU_VALUE:
@@ -230,10 +275,31 @@ def parse_cli_args() -> tuple[str | None, str | None]:
     first_arg = sys.argv[1].strip()
     if first_arg in strategy_ids:
         strategy_id = first_arg
-        stock_code = sys.argv[2].strip() if len(sys.argv) >= 3 else None
+        spec = get_strategy_spec(strategy_id)
+        if supports_manual_pair_input(spec):
+            if len(sys.argv) >= 4:
+                stock_code = parse_manual_pair_selection(
+                    f"{sys.argv[2].strip()},{sys.argv[3].strip()}"
+                )
+            elif len(sys.argv) >= 3:
+                stock_code = parse_manual_pair_selection(sys.argv[2].strip())
+            else:
+                stock_code = None
+        else:
+            stock_code = sys.argv[2].strip() if len(sys.argv) >= 3 else None
         return strategy_id, stock_code
 
     return None, normalize_code(first_arg)
+
+
+def normalize_cli_stock_selection(spec: StrategySpec, cli_stock_code: str | None) -> str | None:
+    if not cli_stock_code:
+        return None
+    if supports_manual_pair_input(spec):
+        return parse_manual_pair_selection(cli_stock_code)
+    if supports_manual_code_input(spec):
+        return normalize_code(cli_stock_code)
+    return cli_stock_code
 
 
 def choose_strategy_spec(cli_strategy_id: str | None) -> StrategySpec:
@@ -657,12 +723,43 @@ def build_pair_recommendation_candidates(spec: StrategySpec) -> list[tuple[str, 
         for left_index in range(len(columns)):
             for right_index in range(left_index + 1, len(columns)):
                 correlation = corr_df.iat[left_index, right_index]
-                if pd.isna(correlation) or float(correlation) < 0.85:
+                if pd.isna(correlation) or float(correlation) < float(
+                    spec.config.get("selection_min_correlation", 0.75)
+                ):
+                    continue
+                left_code = columns[left_index]
+                right_code = columns[right_index]
+                try:
+                    _aligned_a, _aligned_b, merged_df = _align_pair_data(
+                        left_code,
+                        right_code,
+                        adjust_flag,
+                    )
+                    signal_frame = _build_spread_price_frame(
+                        merged_df,
+                        int(spec.config.get("lookback", 60)),
+                    )
+                    quality = evaluate_pair_signal_quality(
+                        signal_frame,
+                        selection_window=int(spec.config.get("selection_window", 500)),
+                        min_correlation=float(
+                            spec.config.get("selection_min_correlation", 0.75)
+                        ),
+                        min_zero_crossings=int(
+                            spec.config.get("selection_min_zero_crossings", 6)
+                        ),
+                        max_half_life=float(
+                            spec.config.get("selection_max_half_life", 60)
+                        ),
+                    )
+                except Exception:
+                    continue
+                if quality is None:
                     continue
                 ranked_pairs.append(
                     (
-                        float(correlation),
-                        build_pair_auto_code(columns[left_index], columns[right_index]),
+                        float(quality["score"]),
+                        build_pair_auto_code(left_code, right_code),
                         adjust_flag,
                     )
                 )
@@ -670,7 +767,7 @@ def build_pair_recommendation_candidates(spec: StrategySpec) -> list[tuple[str, 
     ranked_pairs.sort(key=lambda item: item[0], reverse=True)
     deduped_candidates: list[tuple[str, str]] = []
     seen_pair_codes: set[str] = set()
-    for _correlation, pair_code, adjust_flag in ranked_pairs:
+    for _score, pair_code, adjust_flag in ranked_pairs:
         if pair_code in seen_pair_codes:
             continue
         seen_pair_codes.add(pair_code)
@@ -882,11 +979,7 @@ def main() -> None:
     cli_strategy_id, cli_stock_code = parse_cli_args()
     while True:
         spec = choose_strategy_spec(cli_strategy_id)
-        stock_code = (
-            normalize_code(cli_stock_code)
-            if cli_stock_code and supports_manual_code_input(spec)
-            else cli_stock_code
-        ) or choose_stock_interactively(spec)
+        stock_code = normalize_cli_stock_selection(spec, cli_stock_code) or choose_stock_interactively(spec)
         if stock_code == BACK_MENU_VALUE:
             cli_strategy_id = None
             cli_stock_code = None

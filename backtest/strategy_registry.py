@@ -178,7 +178,7 @@ def _parse_dynamic_pair_code(spec: StrategySpec, code: str) -> tuple[str, str] |
 def get_selection_label(spec: StrategySpec, code: str) -> str:
     dynamic_pair = _parse_dynamic_pair_code(spec, code)
     if dynamic_pair is not None:
-        return f"{dynamic_pair[0]} / {dynamic_pair[1]}（本地高相关）"
+        return f"{dynamic_pair[0]} / {dynamic_pair[1]}（本地均值回归候选）"
 
     item = find_test_case(spec, code)
     if item is not None and item.get("label"):

@@ -7,6 +7,7 @@ DEFAULT_STOCK_NAMES = {
     "sz.001308": "康冠科技",
     "sz.002594": "比亚迪",
     "sh.600255": "鑫科材料",
+    "sh.002340": "格林美",
 }
 
 DEFAULT_STOCK_CODES = tuple(DEFAULT_STOCK_NAMES.keys())

@@ -6,7 +6,7 @@ import os
 import sys
 import time
 from collections import deque
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 
 import akshare as ak
@@ -1162,11 +1162,25 @@ def compute_incremental_start_date(existing_df: pd.DataFrame, default_start_date
     if latest_date.empty:
         return default_start_date
 
-    return (latest_date.max().date() + timedelta(days=1)).isoformat()
+    # 不复权数据也要回刷最后一个交易日，避免盘中/盘后修正永远覆盖不到。
+    return latest_date.max().date().isoformat()
 
 
-def merge_and_save_history(csv_path: Path, existing_df: pd.DataFrame, new_df: pd.DataFrame) -> int:
-    combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+def should_full_refresh_history(adjust_flag: str) -> bool:
+    return not is_unadjusted_flag(adjust_flag)
+
+
+def merge_and_save_history(
+    csv_path: Path,
+    existing_df: pd.DataFrame,
+    new_df: pd.DataFrame,
+    *,
+    full_refresh: bool = False,
+) -> int:
+    if full_refresh:
+        combined_df = new_df.copy()
+    else:
+        combined_df = pd.concat([existing_df, new_df], ignore_index=True)
     combined_df = combined_df.drop_duplicates(subset=["date", "code"], keep="last")
     combined_df = combined_df.sort_values("date").reset_index(drop=True)
     combined_df["preclose"] = pd.to_numeric(combined_df["close"], errors="coerce").shift(1)
@@ -1184,12 +1198,24 @@ def sync_one_code(
 ) -> str:
     csv_path = get_daily_csv_path(full_code, adjust_flag)
     existing_df = read_existing_history(csv_path)
-    request_start_date = compute_incremental_start_date(existing_df, start_date)
+    full_refresh = should_full_refresh_history(adjust_flag)
+    request_start_date = (
+        start_date
+        if full_refresh
+        else compute_incremental_start_date(existing_df, start_date)
+    )
     if request_start_date > end_date:
         logger.info("%s 已是最新，跳过", full_code)
         return "skipped"
 
-    logger.info("开始同步 %s, 区间 %s ~ %s", full_code, request_start_date, end_date)
+    sync_mode = "全量刷新" if full_refresh else "增量回刷"
+    logger.info(
+        "开始同步 %s, 模式=%s, 区间 %s ~ %s",
+        full_code,
+        sync_mode,
+        request_start_date,
+        end_date,
+    )
     if full_code == CONFIG["benchmark_code"]:
         new_df = fetch_index_history(
             full_code=full_code,
@@ -1212,8 +1238,13 @@ def sync_one_code(
         logger.warning("%s 没有拉到数据", full_code)
         return "empty"
 
-    save_count = merge_and_save_history(csv_path, existing_df, new_df)
-    logger.info("%s 同步完成，新增 %s 条", full_code, save_count)
+    write_count = merge_and_save_history(
+        csv_path,
+        existing_df,
+        new_df,
+        full_refresh=full_refresh,
+    )
+    logger.info("%s 同步完成，写入 %s 条", full_code, write_count)
     return "success"
 
 

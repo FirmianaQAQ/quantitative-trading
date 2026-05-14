@@ -10,6 +10,7 @@ from __future__ import annotations
 """
 
 import sys
+import math
 from pathlib import Path
 from typing import Any
 
@@ -74,8 +75,13 @@ CONFIG: dict[str, Any] = {
     "lot_size": 100,
     "gross_exposure_ratio": 0.9,
     "lookback": 50,
-    "entry_z": 1.8,
-    "exit_z": 0.1,
+    "entry_z": 1.6,
+    "exit_z": 0.2,
+    "stop_z": 3.0,
+    "selection_window": 500,
+    "selection_min_correlation": 0.75,
+    "selection_min_zero_crossings": 6,
+    "selection_max_half_life": 60,
     "pair_stop_loss_pct": 0.04,
     "max_holding_days": 20,
     "print_log": True,
@@ -83,7 +89,7 @@ CONFIG: dict[str, Any] = {
     "report_dir": "logs/backtest",
     "report_name": "pair_trade_backtest",
     "strategy_name": "统计套利配对交易",
-    "strategy_brief": "高相关股票价差回归",
+    "strategy_brief": "比值 zscore 穿越回归",
 }
 
 
@@ -98,7 +104,7 @@ def get_pair_case(pair_code: str) -> dict[str, Any]:
             code_a, code_b = parts[1], parts[2]
             return {
                 "code": pair_code,
-                "label": f"{code_a} / {code_b}（本地高相关）",
+                "label": f"{code_a} / {code_b}（本地均值回归候选）",
                 "required_codes": [code_a, code_b],
             }
 
@@ -174,10 +180,18 @@ def _build_spread_price_frame(
     frame["high"] = frame["high_a"] / frame["low_b"]
     frame["low"] = frame["low_a"] / frame["high_b"]
     frame["volume"] = 0.0
-    frame["ratio_ma"] = frame["close"].rolling(window=lookback, min_periods=1).mean()
-    ratio_std = frame["close"].rolling(window=lookback, min_periods=1).std(ddof=0)
-    frame["ratio_upper"] = frame["ratio_ma"] + ratio_std * 2
-    frame["ratio_lower"] = frame["ratio_ma"] - ratio_std * 2
+    frame["rolling_corr"] = frame["close_a"].pct_change(fill_method=None).rolling(
+        window=lookback,
+        min_periods=lookback,
+    ).corr(frame["close_b"].pct_change(fill_method=None))
+    frame["spread_mean"] = frame["close"].rolling(window=lookback, min_periods=lookback).mean()
+    spread_std = frame["close"].rolling(window=lookback, min_periods=lookback).std(ddof=0)
+    frame["spread_std"] = spread_std
+    frame["spread_upper"] = frame["spread_mean"] + spread_std * 2
+    frame["spread_lower"] = frame["spread_mean"] - spread_std * 2
+    frame["spread_zscore"] = (frame["close"] - frame["spread_mean"]).div(
+        spread_std.where(spread_std > 0)
+    )
     return frame[
         [
             "date",
@@ -186,11 +200,73 @@ def _build_spread_price_frame(
             "low",
             "close",
             "volume",
-            "ratio_ma",
-            "ratio_upper",
-            "ratio_lower",
+            "rolling_corr",
+            "spread_mean",
+            "spread_std",
+            "spread_upper",
+            "spread_lower",
+            "spread_zscore",
         ]
     ]
+
+
+def calculate_half_life(spread_series: pd.Series) -> float | None:
+    valid_spread = spread_series.dropna()
+    if len(valid_spread) < 30:
+        return None
+
+    lagged_spread = valid_spread.shift(1)
+    spread_delta = valid_spread - lagged_spread
+    regression_frame = pd.concat(
+        [lagged_spread.rename("lag"), spread_delta.rename("delta")],
+        axis=1,
+    ).dropna()
+    if len(regression_frame) < 30:
+        return None
+
+    centered_lag = regression_frame["lag"] - regression_frame["lag"].mean()
+    denominator = float((centered_lag * centered_lag).sum())
+    if denominator <= 0:
+        return None
+
+    theta = float((centered_lag * regression_frame["delta"]).sum() / denominator)
+    if theta >= 0:
+        return None
+    return float(math.log(2) / (-theta))
+
+
+def evaluate_pair_signal_quality(
+    signal_frame: pd.DataFrame,
+    selection_window: int,
+    min_correlation: float,
+    min_zero_crossings: int,
+    max_half_life: float,
+) -> dict[str, float] | None:
+    recent_frame = signal_frame.tail(selection_window).copy()
+    valid_frame = recent_frame.dropna(subset=["rolling_corr", "spread_zscore", "close"])
+    if len(valid_frame) < 60:
+        return None
+
+    rolling_corr = float(valid_frame["rolling_corr"].median())
+    zero_crossings = int(
+        ((valid_frame["spread_zscore"] * valid_frame["spread_zscore"].shift(1)) < 0).sum()
+    )
+    half_life = calculate_half_life(valid_frame["close"])
+
+    if rolling_corr < min_correlation:
+        return None
+    if zero_crossings < min_zero_crossings:
+        return None
+    if half_life is None or half_life > max_half_life:
+        return None
+
+    score = rolling_corr * zero_crossings / max(half_life, 1.0)
+    return {
+        "score": float(score),
+        "rolling_corr": rolling_corr,
+        "zero_crossings": float(zero_crossings),
+        "half_life": float(half_life),
+    }
 
 
 class PairTradingStrategy(HStrategy):
@@ -209,7 +285,6 @@ class PairTradingStrategy(HStrategy):
         lookback = int(self.param.get("lookback", 60))
         self.ratio_ma = bt.indicators.SimpleMovingAverage(self.ratio, period=lookback)
         self.ratio_std = bt.indicators.StandardDeviation(self.ratio, period=lookback)
-
         from_date = self.param.get("from_date")
         self.from_date = pd.Timestamp(from_date).to_pydatetime() if from_date else None
 
@@ -229,6 +304,7 @@ class PairTradingStrategy(HStrategy):
         self.pair_round_trips_won = 0
         self.pair_round_trips_lost = 0
         self.pair_realized_pnls: list[float] = []
+        self.last_zscore: float | None = None
 
     def _has_pair_position(self) -> bool:
         return any(
@@ -375,6 +451,7 @@ class PairTradingStrategy(HStrategy):
 
         zscore = self._get_zscore()
         if zscore is None:
+            self.last_zscore = zscore
             return
 
         if self._has_pair_position():
@@ -382,23 +459,30 @@ class PairTradingStrategy(HStrategy):
                 len(self) - self.pair_entry_bar if self.pair_entry_bar is not None else 0
             )
             pair_stop_loss_pct = float(self.param.get("pair_stop_loss_pct", 0.06))
+            stop_z = float(self.param.get("stop_z", 3.2))
             pnl_pct = 0.0
             if self.pair_entry_value:
                 pnl_pct = (self.broker.getvalue() - self.pair_entry_value) / self.pair_entry_value
 
             if abs(zscore) <= float(self.param.get("exit_z", 0.35)):
                 self._submit_exit(f"价差回归正常区间 zscore={zscore:.2f}")
+            elif self.current_pair_direction > 0 and zscore <= -stop_z:
+                self._submit_exit(f"zscore 止损 zscore={zscore:.2f}")
+            elif self.current_pair_direction < 0 and zscore >= stop_z:
+                self._submit_exit(f"zscore 止损 zscore={zscore:.2f}")
             elif holding_days >= int(self.param.get("max_holding_days", 30)):
                 self._submit_exit(f"持仓超时 {holding_days}天")
             elif pnl_pct <= -pair_stop_loss_pct:
                 self._submit_exit(f"组合止损 pnl={pnl_pct * 100:.2f}%")
+            self.last_zscore = zscore
             return
 
         entry_z = float(self.param.get("entry_z", 2.0))
-        if zscore <= -entry_z:
+        if self.last_zscore is not None and self.last_zscore > -entry_z and zscore <= -entry_z:
             self._submit_entry(direction=1, zscore=zscore)
-        elif zscore >= entry_z:
+        elif self.last_zscore is not None and self.last_zscore < entry_z and zscore >= entry_z:
             self._submit_entry(direction=-1, zscore=zscore)
+        self.last_zscore = zscore
 
     def stop(self) -> None:
         self.log(
@@ -424,6 +508,16 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("exit_z 不能小于 0")
     if float(config["entry_z"]) <= float(config["exit_z"]):
         raise ValueError("entry_z 必须大于 exit_z")
+    if float(config["stop_z"]) <= float(config["entry_z"]):
+        raise ValueError("stop_z 必须大于 entry_z")
+    if int(config["selection_window"]) < int(config["lookback"]):
+        raise ValueError("selection_window 不能小于 lookback")
+    if float(config["selection_min_correlation"]) < 0 or float(config["selection_min_correlation"]) > 1:
+        raise ValueError("selection_min_correlation 必须在 0 到 1 之间")
+    if int(config["selection_min_zero_crossings"]) <= 0:
+        raise ValueError("selection_min_zero_crossings 必须大于 0")
+    if float(config["selection_max_half_life"]) <= 0:
+        raise ValueError("selection_max_half_life 必须大于 0")
     if float(config["pair_stop_loss_pct"]) <= 0 or float(config["pair_stop_loss_pct"]) >= 1:
         raise ValueError("pair_stop_loss_pct 必须大于 0 且小于 1")
     if int(config["max_holding_days"]) <= 0:
@@ -459,6 +553,7 @@ def _print_summary(summary: dict[str, Any], config: dict[str, Any], pair_label: 
     print(f"  lookback: {config['lookback']}")
     print(f"  entry_z: {config['entry_z']:.2f}")
     print(f"  exit_z: {config['exit_z']:.2f}")
+    print(f"  stop_z: {config['stop_z']:.2f}")
     print(f"  组合止损: {config['pair_stop_loss_pct'] * 100:.2f}%")
     print(f"  最大持仓天数: {config['max_holding_days']}")
     print(f"  初始资金: {summary['initial_value']:.2f}")
@@ -557,16 +652,16 @@ def _build_pair_report_data(
     ).copy()
     indicator_lines = [
         {
-            "name": "RatioMA",
-            "data": filtered_df["ratio_ma"].round(4).tolist(),
+            "name": "SpreadMean",
+            "data": filtered_df["spread_mean"].round(4).tolist(),
         },
         {
             "name": "UpperBand",
-            "data": filtered_df["ratio_upper"].round(4).tolist(),
+            "data": filtered_df["spread_upper"].round(4).tolist(),
         },
         {
             "name": "LowerBand",
-            "data": filtered_df["ratio_lower"].round(4).tolist(),
+            "data": filtered_df["spread_lower"].round(4).tolist(),
         },
     ]
 
