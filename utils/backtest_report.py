@@ -300,63 +300,99 @@ def _build_advice_panel(
     current_position: str = CURRENT_POSITION_AUTO,
 ) -> str:
     normalized_current_position = _normalize_current_position(current_position)
-    entries = _extract_daily_advice_entries(
-        report_data,
-        log_lines,
-        current_position=normalized_current_position,
-    )
-    if not entries:
+    position_modes = [
+        CURRENT_POSITION_AUTO,
+        CURRENT_POSITION_EMPTY,
+        CURRENT_POSITION_HOLD,
+    ]
+    entries_by_position = {
+        mode: _extract_daily_advice_entries(
+            report_data,
+            log_lines,
+            current_position=mode,
+        )
+        for mode in position_modes
+    }
+    if not any(entries_by_position.values()):
         return ""
 
-    cards_html = []
-    signal_count = sum(1 for entry in entries if entry["is_signal"])
-    buy_count = sum(1 for entry in entries if entry["action"] == "buy")
-    sell_count = sum(1 for entry in entries if entry["action"] == "sell")
-    watch_count = sum(1 for entry in entries if entry["action"] == "watch_buy")
-    for entry in entries:
-        date_text = entry["date"]
-        year, month, day = _split_date_parts(date_text)
-        cards_html.append(
-            f"""
-            <article
-              class="advice-item"
-              data-advice-date="{html_escape(date_text)}"
-              data-advice-year="{html_escape(year)}"
-              data-advice-month="{html_escape(month)}"
-              data-advice-day="{html_escape(day)}"
-              data-advice-action="{html_escape(entry['action'])}"
-              data-advice-signal="{str(bool(entry['is_signal'])).lower()}"
-            >
-              <div class="advice-item-head">
-                <span class="advice-date">{date_text}</span>
-                <span class="advice-badge is-{html_escape(entry['action'])}">{html_escape(entry['title'])}</span>
-              </div>
-              <div class="advice-price">参考价格：{html_escape(entry['price'])}</div>
-              <div class="advice-summary">{html_escape(entry['summary'])}</div>
-              <div class="advice-reason">{html_escape(entry['reason'])}</div>
-            </article>
-            """
-        )
-
-    current_position_text = {
+    position_mode_labels = {
         CURRENT_POSITION_AUTO: "按回测信号自动推断",
         CURRENT_POSITION_EMPTY: "当前实际空仓",
         CURRENT_POSITION_HOLD: "当前实际持仓",
-    }[normalized_current_position]
+    }
+    position_mode_tab_labels = {
+        CURRENT_POSITION_AUTO: "自动推断",
+        CURRENT_POSITION_EMPTY: "当前空仓",
+        CURRENT_POSITION_HOLD: "当前持仓",
+    }
+    cards_html = []
+    stats_html = []
+    position_mode_chips_html = []
+
+    for mode in position_modes:
+        entries = entries_by_position[mode]
+        signal_count = sum(1 for entry in entries if entry["is_signal"])
+        buy_count = sum(1 for entry in entries if entry["action"] == "buy")
+        sell_count = sum(1 for entry in entries if entry["action"] == "sell")
+        watch_count = sum(1 for entry in entries if entry["action"] == "watch_buy")
+        stats_style = "" if mode == normalized_current_position else ' style="display:none;"'
+        stats_html.append(
+            f"""
+            <div class="advice-stats" data-position-mode-stats="{html_escape(mode)}"{stats_style}>
+              <span class="advice-stat-pill">关键日 {signal_count}</span>
+              <span class="advice-stat-pill is-buy">买入 {buy_count}</span>
+              <span class="advice-stat-pill is-sell">卖出 {sell_count}</span>
+              <span class="advice-stat-pill is-watch">关注买点 {watch_count}</span>
+            </div>
+            """
+        )
+        position_mode_chips_html.append(
+            f"""
+            <button
+              type="button"
+              class="advice-position-chip{' is-active' if mode == normalized_current_position else ''}"
+              data-advice-position-mode="{html_escape(mode)}"
+            >{html_escape(position_mode_tab_labels[mode])}</button>
+            """
+        )
+        for entry in entries:
+            date_text = entry["date"]
+            year, month, day = _split_date_parts(date_text)
+            cards_html.append(
+                f"""
+                <article
+                  class="advice-item"
+                  data-advice-date="{html_escape(date_text)}"
+                  data-advice-year="{html_escape(year)}"
+                  data-advice-month="{html_escape(month)}"
+                  data-advice-day="{html_escape(day)}"
+                  data-advice-action="{html_escape(entry['action'])}"
+                  data-advice-signal="{str(bool(entry['is_signal'])).lower()}"
+                  data-advice-position-mode="{html_escape(mode)}"
+                >
+                  <div class="advice-item-head">
+                    <span class="advice-date">{date_text}</span>
+                    <span class="advice-badge is-{html_escape(entry['action'])}">{html_escape(entry['title'])}</span>
+                  </div>
+                  <div class="advice-price">参考价格：{html_escape(entry['price'])}</div>
+                  <div class="advice-summary">{html_escape(entry['summary'])}</div>
+                  <div class="advice-reason">{html_escape(entry['reason'])}</div>
+                </article>
+                """
+            )
 
     return f"""
     <aside class="advice-panel">
       <div class="advice-panel-header">
         <h2>每日操作建议</h2>
-        <p>默认展示全部每日建议，也可以切换查看关键买卖信号，并随上方时间筛选联动。当前建议口径：{html_escape(current_position_text)}。</p>
+        <p>同一份报告内同时提供三种实际持仓口径，可切换查看。默认展示：{html_escape(position_mode_labels[normalized_current_position])}。</p>
       </div>
       <div class="advice-toolbar">
-        <div class="advice-stats">
-          <span class="advice-stat-pill">关键日 {signal_count}</span>
-          <span class="advice-stat-pill is-buy">买入 {buy_count}</span>
-          <span class="advice-stat-pill is-sell">卖出 {sell_count}</span>
-          <span class="advice-stat-pill is-watch">关注买点 {watch_count}</span>
+        <div class="advice-position-group" id="advice-position-group">
+          {''.join(position_mode_chips_html)}
         </div>
+        {''.join(stats_html)}
         <div class="advice-mode-group" id="advice-mode-group">
           <button type="button" class="advice-mode-chip" data-advice-mode="signal">关键日</button>
           <button type="button" class="advice-mode-chip is-active" data-advice-mode="all">全部</button>
@@ -803,6 +839,7 @@ def _build_report_bootstrap_script() -> str:
       const charts = new Map();
       const currentFilter = { year: '', month: '', day: '' };
       let currentAdviceMode = 'all';
+      let currentAdvicePositionMode = 'auto';
 
       function parseDateParts(value) {
         const text = String(value || '');
@@ -1599,6 +1636,8 @@ def _build_report_bootstrap_script() -> str:
       function matchesAdviceMode(item) {
         const action = item.dataset.adviceAction || '';
         const isSignal = item.dataset.adviceSignal === 'true';
+        const positionMode = item.dataset.advicePositionMode || 'auto';
+        if (positionMode !== currentAdvicePositionMode) return false;
         if (currentAdviceMode === 'all') return true;
         if (currentAdviceMode === 'signal') return isSignal;
         if (currentAdviceMode === 'buy') return action === 'buy';
@@ -1613,6 +1652,22 @@ def _build_report_bootstrap_script() -> str:
         });
       }
 
+      function updateAdvicePositionButtons() {
+        document.querySelectorAll('.advice-position-chip').forEach((item) => {
+          item.classList.toggle(
+            'is-active',
+            item.dataset.advicePositionMode === currentAdvicePositionMode
+          );
+        });
+      }
+
+      function updateAdviceStatsVisibility() {
+        document.querySelectorAll('[data-position-mode-stats]').forEach((item) => {
+          item.style.display =
+            item.dataset.positionModeStats === currentAdvicePositionMode ? '' : 'none';
+        });
+      }
+
       function updateAdviceVisibility() {
         const adviceItems = Array.from(document.querySelectorAll('.advice-item'));
         const emptyNode = document.getElementById('advice-empty');
@@ -1624,6 +1679,8 @@ def _build_report_bootstrap_script() -> str:
           if (matched) visibleCount += 1;
         });
         updateAdviceModeButtons();
+        updateAdvicePositionButtons();
+        updateAdviceStatsVisibility();
         if (emptyNode) {
           emptyNode.style.display = visibleCount > 0 ? 'none' : '';
         }
@@ -1666,6 +1723,13 @@ def _build_report_bootstrap_script() -> str:
         document.querySelectorAll('.advice-mode-chip').forEach((item) => {
           item.addEventListener('click', () => {
             currentAdviceMode = item.dataset.adviceMode || 'all';
+            updateAdviceVisibility();
+          });
+        });
+        document.querySelectorAll('.advice-position-chip').forEach((item) => {
+          item.addEventListener('click', () => {
+            currentAdvicePositionMode =
+              item.dataset.advicePositionMode || 'auto';
             updateAdviceVisibility();
           });
         });
@@ -2088,6 +2152,34 @@ def html(
       flex-wrap: wrap;
       gap: 8px;
       margin-bottom: 10px;
+    }}
+    .advice-position-group {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 10px;
+    }}
+    .advice-position-chip {{
+      height: 34px;
+      padding: 0 12px;
+      border: 1px solid rgba(148, 163, 184, 0.26);
+      border-radius: 999px;
+      background: linear-gradient(180deg, #ffffff, #f8fbff);
+      color: #475467;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 700;
+      transition: all 0.18s ease;
+    }}
+    .advice-position-chip:hover {{
+      border-color: rgba(84, 112, 198, 0.35);
+      color: #24324a;
+    }}
+    .advice-position-chip.is-active {{
+      border-color: rgba(84, 112, 198, 0.45);
+      background: linear-gradient(180deg, rgba(84, 112, 198, 0.16), rgba(84, 112, 198, 0.08));
+      color: #24324a;
+      box-shadow: 0 10px 22px rgba(84, 112, 198, 0.14);
     }}
     .advice-stat-pill {{
       padding: 4px 10px;

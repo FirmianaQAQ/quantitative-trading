@@ -1,6 +1,9 @@
 import unittest
 
-from utils.backtest_report import _extract_daily_advice_entries
+from utils.backtest_report import (
+    _build_advice_panel,
+    _extract_daily_advice_entries,
+)
 
 
 def build_buy_sell_report(
@@ -57,6 +60,31 @@ class BacktestReportAdviceTests(unittest.TestCase):
         self.assertEqual(entries[0]["date"], "2026-05-14")
         self.assertEqual(entries[0]["action"], "observe")
         self.assertIn("卖出信号无需执行", str(entries[0]["reason"]))
+
+    def test_advice_panel_contains_all_position_tabs(self) -> None:
+        report_data = build_buy_sell_report(
+            dates=["2026-05-13", "2026-05-14"],
+            buy_points=[["2026-05-13", 10.0]],
+            sell_points=[["2026-05-14", 11.0]],
+        )
+
+        html = _build_advice_panel(
+            report_data,
+            log_lines=[],
+            current_position="hold",
+        )
+
+        self.assertIn('data-advice-position-mode="auto"', html)
+        self.assertIn('data-advice-position-mode="empty"', html)
+        self.assertIn('data-advice-position-mode="hold"', html)
+        self.assertIn('data-position-mode-stats="auto"', html)
+        self.assertIn('data-position-mode-stats="empty"', html)
+        self.assertIn('data-position-mode-stats="hold"', html)
+        self.assertIn(
+            'class="advice-position-chip is-active"',
+            html,
+        )
+        self.assertIn("当前实际持仓", html)
 
 
 if __name__ == "__main__":
