@@ -120,6 +120,7 @@ CONFIG: dict[str, Any] = {
     "report_name": "simple_ma_backtest",
     "strategy_name": "普通双均线",
     "strategy_brief": "基础版",
+    "current_position": "auto",
 }
 
 # 如需找到最合适的均线周期，启用这里的参数
@@ -1037,6 +1038,7 @@ def generate_html_report(
         [],
         title,
         log_lines=log_lines,
+        current_position=str(config.get("current_position", "auto")),
     )
     print(f"HTML 回测报告: {html_report_path}")
 
@@ -1102,6 +1104,9 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("sell_trigger_multiplier 必须大于 0")
     if float(config["stop_loss_pct"]) < 0 or float(config["stop_loss_pct"]) >= 1:
         raise ValueError("stop_loss_pct 必须大于等于 0 且小于 1")
+    current_position = str(config.get("current_position", "auto")).strip().lower()
+    if current_position not in {"auto", "empty", "hold"}:
+        raise ValueError("current_position 仅支持 auto、empty、hold")
 
     if config.get("optimize"):
         parse_range(config["opt_fast"], "opt_fast")

@@ -524,6 +524,7 @@ def _generate_html_report(
         [],
         title,
         log_lines=log_lines,
+        current_position=str(config.get("current_position", "auto")),
     )
     print(f"HTML 回测报告: {html_report_path}")
 

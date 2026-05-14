@@ -11,6 +11,14 @@ import pandas as pd
 
 
 ECHARTS_CDN = "https://cdn.jsdelivr.net/npm/echarts@6.0.0/dist/echarts.min.js"
+CURRENT_POSITION_AUTO = "auto"
+CURRENT_POSITION_EMPTY = "empty"
+CURRENT_POSITION_HOLD = "hold"
+CURRENT_POSITION_CHOICES = {
+    CURRENT_POSITION_AUTO,
+    CURRENT_POSITION_EMPTY,
+    CURRENT_POSITION_HOLD,
+}
 
 
 def _is_missing(value: Any) -> bool:
@@ -42,6 +50,25 @@ def _json_dump(value: Any) -> str:
     return json.dumps(_to_serializable(value), ensure_ascii=False)
 
 
+def _normalize_current_position(value: Any) -> str:
+    normalized = str(value or "").strip().lower()
+    alias_map = {
+        "": CURRENT_POSITION_AUTO,
+        "auto": CURRENT_POSITION_AUTO,
+        "empty": CURRENT_POSITION_EMPTY,
+        "flat": CURRENT_POSITION_EMPTY,
+        "none": CURRENT_POSITION_EMPTY,
+        "hold": CURRENT_POSITION_HOLD,
+        "holding": CURRENT_POSITION_HOLD,
+        "position": CURRENT_POSITION_HOLD,
+    }
+    result = alias_map.get(normalized)
+    if result is None:
+        choices_text = ", ".join(sorted(CURRENT_POSITION_CHOICES))
+        raise ValueError(f"current_position 不支持 {value}，可选值: {choices_text}")
+    return result
+
+
 def _extract_log_date(log_line: str) -> str | None:
     match = re.match(r"^(\d{4}-\d{2}-\d{2})\b", str(log_line))
     if match is None:
@@ -66,7 +93,9 @@ def _strip_log_date_prefix(log_line: str) -> str:
 def _extract_daily_advice_entries(
     report_data: list[dict[str, Any]],
     log_lines: list[str] | None,
+    current_position: str = CURRENT_POSITION_AUTO,
 ) -> list[dict[str, str | bool]]:
+    normalized_current_position = _normalize_current_position(current_position)
     buy_sell_payload: dict[str, Any] | None = None
     for item in report_data:
         if not isinstance(item, dict):
@@ -160,23 +189,90 @@ def _extract_daily_advice_entries(
             return "hold", "当前处于持仓阶段，继续跟踪卖出信号。", False
         return "observe", "当前没有明确买卖信号，保持观察。", False
 
+    def rewrite_latest_action(
+        action: str,
+        reason: str,
+    ) -> tuple[str, str, bool]:
+        if normalized_current_position == CURRENT_POSITION_AUTO:
+            return action, reason, action in {"buy", "sell", "watch_buy"}
+
+        if normalized_current_position == CURRENT_POSITION_EMPTY:
+            if action == "sell":
+                return (
+                    "observe",
+                    "当前实际空仓，卖出信号无需执行，继续观察下一次买点。",
+                    False,
+                )
+            if action == "hold":
+                return (
+                    "observe",
+                    "当前实际空仓，不执行持有建议，继续观察即可。",
+                    False,
+                )
+            if action == "observe":
+                return (
+                    "observe",
+                    "当前实际空仓，暂时没有明确买点，继续观察即可。",
+                    False,
+                )
+            return action, reason, action in {"buy", "watch_buy"}
+
+        if action == "sell":
+            return action, reason, True
+        if action == "buy":
+            return (
+                "hold",
+                "当前实际持仓，买入信号可作为加仓参考，默认继续持有观察。",
+                False,
+            )
+        if action == "watch_buy":
+            return (
+                "hold",
+                "当前实际持仓，观察买点不作为新开仓信号，继续持有观察。",
+                False,
+            )
+        if action == "observe":
+            return (
+                "hold",
+                "当前实际持仓，暂无明确卖点，继续持有观察。",
+                False,
+            )
+        return action, reason, False
+
     entries: list[dict[str, str | bool]] = []
     has_position = False
-    for date in dates:
+    for index, date in enumerate(dates):
         day_logs = logs_by_date.get(date, [])
-        action, reason, is_explicit_signal = detect_action(day_logs, has_position, date)
+        is_latest_date = index == len(dates) - 1
+        effective_has_position = has_position
+        if is_latest_date and normalized_current_position != CURRENT_POSITION_AUTO:
+            effective_has_position = normalized_current_position == CURRENT_POSITION_HOLD
+
+        base_action, base_reason, _ = detect_action(
+            day_logs,
+            effective_has_position,
+            date,
+        )
+        action = base_action
+        reason = base_reason
+        is_explicit_signal = action in {"buy", "sell", "watch_buy"}
+        if is_latest_date:
+            action, reason, is_explicit_signal = rewrite_latest_action(
+                base_action,
+                base_reason,
+            )
         title_map = {key: label for key, label, _ in action_specs}
         default_desc_map = {key: desc for key, _label, desc in action_specs}
         reference_price = close_price_map.get(date)
-        if action == "buy":
+        if base_action == "buy":
             reference_price = buy_price_map.get(date, reference_price)
             has_position = True
-        elif action == "sell":
+        elif base_action == "sell":
             reference_price = sell_price_map.get(date, reference_price)
             has_position = False
-        elif action in {"hold", "watch_buy"} and date in buy_price_map:
+        elif base_action in {"hold", "watch_buy"} and date in buy_price_map:
             has_position = True
-        elif action == "observe" and date in sell_price_map:
+        elif base_action == "observe" and date in sell_price_map:
             has_position = False
 
         price_text = (
@@ -201,8 +297,14 @@ def _extract_daily_advice_entries(
 def _build_advice_panel(
     report_data: list[dict[str, Any]],
     log_lines: list[str] | None,
+    current_position: str = CURRENT_POSITION_AUTO,
 ) -> str:
-    entries = _extract_daily_advice_entries(report_data, log_lines)
+    normalized_current_position = _normalize_current_position(current_position)
+    entries = _extract_daily_advice_entries(
+        report_data,
+        log_lines,
+        current_position=normalized_current_position,
+    )
     if not entries:
         return ""
 
@@ -236,11 +338,17 @@ def _build_advice_panel(
             """
         )
 
+    current_position_text = {
+        CURRENT_POSITION_AUTO: "按回测信号自动推断",
+        CURRENT_POSITION_EMPTY: "当前实际空仓",
+        CURRENT_POSITION_HOLD: "当前实际持仓",
+    }[normalized_current_position]
+
     return f"""
     <aside class="advice-panel">
       <div class="advice-panel-header">
         <h2>每日操作建议</h2>
-        <p>默认展示全部每日建议，也可以切换查看关键买卖信号，并随上方时间筛选联动。</p>
+        <p>默认展示全部每日建议，也可以切换查看关键买卖信号，并随上方时间筛选联动。当前建议口径：{html_escape(current_position_text)}。</p>
       </div>
       <div class="advice-toolbar">
         <div class="advice-stats">
@@ -1584,6 +1692,7 @@ def html(
     benchmarks: list,
     title: str = "回测报告",
     log_lines: list[str] | None = None,
+    current_position: str = CURRENT_POSITION_AUTO,
 ) -> None:
     """
     生成一份 HTML 回测报告。
@@ -1617,7 +1726,11 @@ def html(
     report_items = list(report_data or [])
     metric_cards_html = _build_metric_cards(report_items)
     filter_toolbar_html = _build_filter_toolbar()
-    advice_panel_html = _build_advice_panel(report_items, log_lines)
+    advice_panel_html = _build_advice_panel(
+        report_items,
+        log_lines,
+        current_position=current_position,
+    )
     chart_sections: list[str] = []
     chart_scripts: list[str] = []
     chart_index = 0

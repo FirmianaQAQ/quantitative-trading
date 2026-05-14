@@ -304,6 +304,7 @@ def _generate_html_report(report_data: list[dict[str, Any]], config: dict[str, A
         [],
         f"{config.get('strategy_name', 'CTA事件驱动策略')} 回测报告",
         log_lines=log_lines,
+        current_position=str(config.get("current_position", "auto")),
     )
     print(f"HTML 回测报告: {report_path}")
 

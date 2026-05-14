@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import subprocess
 import sys
@@ -36,6 +37,7 @@ RECOMMEND_MENU_VALUE = "__recommend__"
 FULL_EXIT_CODE = 86
 DEFAULT_CASH = 100000.0
 DEFAULT_ADJUST_ORDER = ("hfq", "qfq", "cq")
+DEFAULT_CURRENT_POSITION = "auto"
 PAIR_AUTO_PREFIX = "pair_auto|"
 MULTI_VERSION_FAMILY_IDS = {"simple_ma_backtest"}
 
@@ -267,6 +269,27 @@ def prompt_initial_cash() -> float:
             print(f"输入无效: {exc}")
 
 
+def prompt_current_position() -> str:
+    while True:
+        print()
+        print("请选择当前实际持仓状态：")
+        print("  1. 自动按回测信号推断（默认）")
+        print("  2. 当前空仓")
+        print("  3. 当前持仓")
+        print("  q. 退出")
+
+        raw_value = input("请输入编号，直接回车默认 1: ").strip().lower()
+        if not raw_value or raw_value == "1":
+            return DEFAULT_CURRENT_POSITION
+        if raw_value == "2":
+            return "empty"
+        if raw_value == "3":
+            return "hold"
+        if raw_value == "q":
+            raise SystemExit(FULL_EXIT_CODE)
+        print("输入无效，请重新输入")
+
+
 def parse_cli_args() -> tuple[str | None, str | None]:
     if len(sys.argv) <= 1:
         return None, None
@@ -318,6 +341,7 @@ def resolve_config(
     spec: StrategySpec,
     stock_selection: str | tuple[str, str] | None,
     cash: float,
+    current_position: str = DEFAULT_CURRENT_POSITION,
 ) -> dict:
     config = dict(spec.config)
     if isinstance(stock_selection, tuple):
@@ -329,6 +353,7 @@ def resolve_config(
 
     config["plot"] = True
     config["print_log"] = False
+    config["current_position"] = str(current_position or DEFAULT_CURRENT_POSITION).strip().lower()
 
     benchmark_code = config.get("benchmark_code", "")
     if benchmark_code:
@@ -367,6 +392,10 @@ def build_family_dashboard_path(family_id: str, code: str) -> Path:
     return report_dir / filename
 
 
+def _to_script_safe_json(value: str) -> str:
+    return json.dumps(value, ensure_ascii=False).replace("</", "<\\/")
+
+
 def write_family_dashboard_report(
     *,
     family_name: str,
@@ -379,16 +408,20 @@ def write_family_dashboard_report(
     output_path = build_family_dashboard_path(version_reports[0][0].family_id, code)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
+    embedded_report_html_by_id: dict[str, str] = {}
+    strategy_ids = {item[0].strategy_id for item in version_reports}
     buttons_html = []
     panels_html = []
     for index, (spec, report_path) in enumerate(version_reports):
         is_active = spec.strategy_id == active_strategy_id or (
-            active_strategy_id not in {item[0].strategy_id for item in version_reports}
+            active_strategy_id not in strategy_ids
             and index == 0
         )
         button_class = "version-tab is-active" if is_active else "version-tab"
         panel_style = "" if is_active else " style=\"display:none;\""
-        relative_src = report_path.name
+        embedded_report_html_by_id[spec.strategy_id] = report_path.read_text(
+            encoding="utf-8"
+        )
         buttons_html.append(
             f"""
             <button
@@ -406,13 +439,19 @@ def write_family_dashboard_report(
             <section class="version-panel" data-panel="{spec.strategy_id}"{panel_style}>
               <iframe
                 class="version-frame"
-                src="{relative_src}"
                 title="{spec.display_name}"
                 loading="lazy"
               ></iframe>
             </section>
             """
         )
+
+    embedded_reports_json = "{{{pairs}}}".format(
+        pairs=", ".join(
+            f"{json.dumps(strategy_id, ensure_ascii=False)}: {_to_script_safe_json(report_html)}"
+            for strategy_id, report_html in embedded_report_html_by_id.items()
+        )
+    )
 
     html_text = f"""<!DOCTYPE html>
 <html lang="zh-CN">
@@ -556,12 +595,26 @@ def write_family_dashboard_report(
     (function () {{
       const tabs = Array.from(document.querySelectorAll('.version-tab'));
       const panels = Array.from(document.querySelectorAll('.version-panel'));
+      const embeddedReports = {embedded_reports_json};
+
+      function ensurePanelLoaded(panel) {{
+        if (!panel) return;
+        const iframe = panel.querySelector('.version-frame');
+        if (!iframe || iframe.dataset.loaded === 'true') return;
+        iframe.srcdoc = embeddedReports[panel.dataset.panel] || '<!DOCTYPE html><html lang="zh-CN"><body><p>未找到内嵌报告内容。</p></body></html>';
+        iframe.dataset.loaded = 'true';
+      }}
+
       function activate(target) {{
         tabs.forEach((tab) => {{
           tab.classList.toggle('is-active', tab.dataset.target === target);
         }});
         panels.forEach((panel) => {{
-          panel.style.display = panel.dataset.panel === target ? '' : 'none';
+          const isActive = panel.dataset.panel === target;
+          panel.style.display = isActive ? '' : 'none';
+          if (isActive) {{
+            ensurePanelLoaded(panel);
+          }}
         }});
       }}
       tabs.forEach((tab) => {{
@@ -569,6 +622,10 @@ def write_family_dashboard_report(
           activate(tab.dataset.target);
         }});
       }});
+      const activeTab = tabs.find((tab) => tab.classList.contains('is-active')) || tabs[0];
+      if (activeTab) {{
+        activate(activeTab.dataset.target);
+      }}
     }})();
   </script>
 </body>
@@ -909,9 +966,10 @@ def run_single_strategy(
     stock_selection: str | tuple[str, str],
     cash: float,
     *,
+    current_position: str = DEFAULT_CURRENT_POSITION,
     preload_df: pd.DataFrame | None = None,
 ) -> tuple[dict, Path]:
-    config = resolve_config(spec, stock_selection, cash)
+    config = resolve_config(spec, stock_selection, cash, current_position)
     print(f"已选择策略: {spec.display_name} ({spec.strategy_id})")
     print(f"已选择股票: {config['code']} {get_display_label(spec, config['code'])}")
     print(f"初始资金: {config['cash']:.2f}")
@@ -929,12 +987,18 @@ def run_simple_ma_family(
     selected_spec: StrategySpec,
     stock_selection: str | tuple[str, str],
     cash: float,
+    current_position: str = DEFAULT_CURRENT_POSITION,
 ) -> Path:
     family_specs = list_family_strategy_specs(selected_spec.family_id)
     if not family_specs:
         raise RuntimeError("未找到普通双均线家族策略")
 
-    selected_config = resolve_config(selected_spec, stock_selection, cash)
+    selected_config = resolve_config(
+        selected_spec,
+        stock_selection,
+        cash,
+        current_position,
+    )
     selected_code = selected_config["code"]
     selected_label = get_display_label(selected_spec, selected_code)
 
@@ -943,7 +1007,12 @@ def run_simple_ma_family(
     for index, family_spec in enumerate(family_specs, start=1):
         print()
         print(f"===== 联跑版本 {index}/{len(family_specs)}：{family_spec.display_name} =====")
-        preview_config = resolve_config(family_spec, stock_selection, cash)
+        preview_config = resolve_config(
+            family_spec,
+            stock_selection,
+            cash,
+            current_position,
+        )
         df_key = (preview_config["code"], preview_config["adjust_flag"])
         preload_df = None
         if get_required_codes(family_spec, preview_config["code"]) == [preview_config["code"]]:
@@ -958,6 +1027,7 @@ def run_simple_ma_family(
             family_spec,
             stock_selection,
             cash,
+            current_position=current_position,
             preload_df=preload_df,
         )
         version_reports.append((family_spec, report_path))
@@ -986,10 +1056,21 @@ def main() -> None:
             continue
         break
     cash = prompt_initial_cash()
+    current_position = prompt_current_position()
     if spec.family_id == "simple_ma_backtest":
-        report_path = run_simple_ma_family(spec, stock_code, cash)
+        report_path = run_simple_ma_family(
+            spec,
+            stock_code,
+            cash,
+            current_position,
+        )
     else:
-        _config, report_path = run_single_strategy(spec, stock_code, cash)
+        _config, report_path = run_single_strategy(
+            spec,
+            stock_code,
+            cash,
+            current_position=current_position,
+        )
         print(f"GUI 回测报告: {report_path}")
     try_open_report(report_path)
 
