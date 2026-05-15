@@ -270,68 +270,80 @@ def _write_html_report(
   <title>{_escape_html(title)}</title>
   <style>
     :root {{
-      --bg: #f5f7fb;
+      --bg: #f6f9fc;
+      --surface: #fbfdff;
       --card: #ffffff;
-      --text: #172033;
-      --muted: #667085;
-      --primary: #1d4ed8;
-      --primary-soft: rgba(29, 78, 216, 0.12);
-      --border: #e5e7eb;
-      --shadow: 0 16px 40px rgba(15, 23, 42, 0.10);
-      --success: #047857;
-      --danger: #b42318;
+      --heading: #061b31;
+      --text: #425466;
+      --muted: #6b7c93;
+      --primary: #533afd;
+      --primary-soft: rgba(83, 58, 253, 0.10);
+      --border: #e6ebf1;
+      --shadow: rgba(50, 50, 93, 0.25) 0px 30px 45px -30px, rgba(0, 0, 0, 0.1) 0px 18px 36px -18px;
+      --success: #108c3d;
+      --danger: #c23d63;
     }}
     * {{ box-sizing: border-box; }}
     body {{
       margin: 0;
-      font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+      font-family: "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
       background:
-        radial-gradient(circle at top left, rgba(29, 78, 216, 0.10), transparent 26%),
-        radial-gradient(circle at top right, rgba(22, 163, 74, 0.08), transparent 24%),
+        radial-gradient(circle at top left, rgba(83, 58, 253, 0.08), transparent 24%),
+        radial-gradient(circle at top right, rgba(249, 107, 238, 0.08), transparent 20%),
+        linear-gradient(180deg, #f7faff 0%, #f6f9fc 42%, #f2f6fb 100%),
         var(--bg);
       color: var(--text);
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
     }}
     .container {{
       max-width: 1100px;
       margin: 0 auto;
-      padding: 32px 20px 48px;
+      padding: 32px 20px 56px;
     }}
     .hero {{
-      padding: 28px 30px;
-      border-radius: 24px;
-      background: linear-gradient(135deg, #163b85, #245cc7 54%, #3b82f6);
-      color: #fff;
+      padding: 28px 30px 24px;
+      border-radius: 8px;
+      border: 1px solid var(--border);
+      background:
+        radial-gradient(circle at right top, rgba(249, 107, 238, 0.12), transparent 26%),
+        linear-gradient(180deg, rgba(83, 58, 253, 0.06), rgba(83, 58, 253, 0.01) 38%, #ffffff 100%);
+      color: var(--heading);
       box-shadow: var(--shadow);
-      margin-bottom: 20px;
+      margin-bottom: 24px;
     }}
     .hero h1 {{
       margin: 0;
-      font-size: 30px;
-      line-height: 1.2;
+      font-size: 36px;
+      font-weight: 500;
+      line-height: 1.08;
+      letter-spacing: -0.04em;
     }}
     .hero-meta {{
       display: flex;
       flex-wrap: wrap;
       gap: 10px;
-      margin-top: 14px;
+      margin-top: 18px;
     }}
     .hero-pill {{
-      padding: 8px 12px;
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.16);
+      padding: 6px 10px;
+      border-radius: 4px;
+      border: 1px solid rgba(83, 58, 253, 0.14);
+      background: rgba(255, 255, 255, 0.9);
+      color: var(--heading);
       font-size: 13px;
-      font-weight: 600;
+      font-weight: 500;
     }}
     .grid {{
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
-      gap: 16px;
-      margin-bottom: 20px;
+      gap: 14px;
+      margin-bottom: 24px;
     }}
     .card {{
       background: var(--card);
-      border: 1px solid rgba(229, 231, 235, 0.9);
-      border-radius: 20px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
       box-shadow: var(--shadow);
       padding: 20px;
     }}
@@ -342,15 +354,20 @@ def _write_html_report(
     }}
     .metric-value {{
       font-size: 28px;
-      font-weight: 800;
+      font-weight: 500;
       color: var(--primary);
+      letter-spacing: -0.03em;
+      font-variant-numeric: tabular-nums;
     }}
     .section-title {{
       margin: 0 0 12px;
-      font-size: 18px;
+      color: var(--heading);
+      font-size: 22px;
+      font-weight: 500;
+      letter-spacing: -0.02em;
     }}
     .section-body {{
-      color: #344054;
+      color: var(--text);
       line-height: 1.75;
       white-space: pre-wrap;
     }}
@@ -374,7 +391,7 @@ def _write_html_report(
     pre {{
       margin: 12px 0 0;
       padding: 14px;
-      border-radius: 14px;
+      border-radius: 8px;
       background: #0f172a;
       color: #e2e8f0;
       overflow-x: auto;
@@ -382,9 +399,9 @@ def _write_html_report(
       line-height: 1.6;
     }}
     @media (max-width: 768px) {{
-      .container {{ padding: 20px 12px 32px; }}
+      .container {{ padding: 20px 12px 36px; }}
       .hero {{ padding: 22px 20px; }}
-      .hero h1 {{ font-size: 24px; }}
+      .hero h1 {{ font-size: 28px; }}
       .metric-value {{ font-size: 24px; }}
     }}
   </style>
@@ -464,9 +481,11 @@ def _handle_analysis_failure(
   <style>
     body {{
       margin: 0;
-      font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
-      background: #f8fafc;
-      color: #1f2937;
+      font-family: "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(234, 34, 97, 0.06), transparent 24%),
+        linear-gradient(180deg, #fdf7fa 0%, #f8fafc 100%);
+      color: #425466;
     }}
     .container {{
       max-width: 900px;
@@ -475,29 +494,30 @@ def _handle_analysis_failure(
     }}
     .card {{
       background: #fff;
-      border: 1px solid #e5e7eb;
-      border-radius: 18px;
-      box-shadow: 0 16px 40px rgba(15, 23, 42, 0.08);
+      border: 1px solid #e6ebf1;
+      border-radius: 8px;
+      box-shadow: rgba(50, 50, 93, 0.25) 0px 30px 45px -30px, rgba(0, 0, 0, 0.1) 0px 18px 36px -18px;
       padding: 24px;
     }}
     .badge {{
       display: inline-block;
       padding: 6px 10px;
-      border-radius: 999px;
-      background: rgba(180, 35, 24, 0.10);
-      color: #b42318;
-      font-weight: 700;
+      border-radius: 4px;
+      border: 1px solid rgba(234, 34, 97, 0.16);
+      background: rgba(234, 34, 97, 0.08);
+      color: #c23d63;
+      font-weight: 600;
       font-size: 12px;
       margin-bottom: 12px;
     }}
-    h1 {{ margin: 0 0 12px; font-size: 28px; }}
-    p {{ line-height: 1.8; color: #475467; }}
+    h1 {{ margin: 0 0 12px; font-size: 30px; color: #061b31; font-weight: 500; letter-spacing: -0.03em; }}
+    p {{ line-height: 1.8; color: #6b7c93; }}
     .meta {{
       margin-top: 18px;
       padding: 14px;
-      border-radius: 14px;
-      background: #fff5f5;
-      color: #912018;
+      border-radius: 8px;
+      background: #fff7fb;
+      color: #9f2456;
       white-space: pre-wrap;
       word-break: break-word;
     }}

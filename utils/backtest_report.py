@@ -747,6 +747,28 @@ def _normalize_heatmap_payload(data: Any) -> dict[str, Any]:
     return default_payload
 
 
+def _resolve_metric_card_tone(label: str) -> str:
+    normalized = str(label).strip()
+    if normalized in {"股票代码", "策略名称"}:
+        return "identity"
+    if normalized in {
+        "总收益率",
+        "年化收益率",
+        "期末资产",
+        "夏普比率",
+        "胜率",
+        "净利润",
+        "平均每笔净利润",
+        "盈利次数",
+    }:
+        return "positive"
+    if normalized in {"最大回撤", "最大回撤金额", "最大回撤周期", "亏损次数"}:
+        return "risk"
+    if normalized in {"总交易次数", "资金占用天数", "资金占用天数占比"}:
+        return "focus"
+    return "default"
+
+
 def _build_metric_cards(report_data: list[dict[str, Any]]) -> str:
     metrics = []
     for item in report_data:
@@ -773,9 +795,10 @@ def _build_metric_cards(report_data: list[dict[str, Any]]) -> str:
     cards = []
     for key, value in metrics:
         display = "-" if _is_missing(value) else str(value)
+        tone = _resolve_metric_card_tone(key)
         cards.append(
             f"""
-            <div class="metric-card" data-metric-label="{html_escape(key)}" data-original-value="{html_escape(display)}">
+            <div class="metric-card is-{tone}" data-metric-label="{html_escape(key)}" data-original-value="{html_escape(display)}">
               <div class="metric-label">{key}</div>
               <div class="metric-value" data-metric-value>{display}</div>
             </div>
@@ -929,54 +952,61 @@ def _build_embedded_ai_section(
 def _build_embedded_ai_style_block() -> str:
     return """
     .embedded-ai-section {
-      margin-top: 20px;
+      margin-top: 24px;
       background: var(--card);
-      border: 1px solid rgba(229, 231, 235, 0.9);
-      border-radius: 18px;
-      box-shadow: var(--shadow);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: var(--shadow-elevated);
       overflow: hidden;
     }
     .embedded-ai-header {
       display: flex;
       align-items: flex-start;
       justify-content: space-between;
-      gap: 12px;
-      padding: 18px 20px 14px;
-      border-bottom: 1px solid rgba(229, 231, 235, 0.9);
-      background: linear-gradient(180deg, rgba(37, 99, 235, 0.06), rgba(37, 99, 235, 0));
+      gap: 16px;
+      padding: 22px 24px 18px;
+      border-bottom: 1px solid var(--border);
+      background:
+        radial-gradient(circle at top right, rgba(249, 107, 238, 0.14), transparent 34%),
+        linear-gradient(180deg, rgba(83, 58, 253, 0.08), rgba(83, 58, 253, 0.01));
     }
     .embedded-ai-header h2 {
       margin: 0;
-      font-size: 18px;
+      color: var(--heading);
+      font-size: 24px;
+      font-weight: 500;
+      letter-spacing: -0.02em;
     }
     .embedded-ai-header p {
       margin: 8px 0 0;
       color: var(--muted);
-      font-size: 13px;
-      line-height: 1.6;
+      font-size: 14px;
+      line-height: 1.7;
     }
     .embedded-ai-link {
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      min-width: 112px;
-      height: 34px;
-      padding: 0 14px;
-      border-radius: 999px;
-      border: 1px solid rgba(37, 99, 235, 0.18);
-      background: linear-gradient(180deg, #ffffff, #f3f8ff);
-      color: #1d4ed8;
+      min-width: 132px;
+      height: 38px;
+      padding: 0 16px;
+      border-radius: 6px;
+      border: 1px solid rgba(83, 58, 253, 0.18);
+      background: linear-gradient(180deg, #ffffff, #f9f9ff);
+      color: var(--primary);
       text-decoration: none;
       font-size: 13px;
-      font-weight: 700;
+      font-weight: 600;
       white-space: nowrap;
+      box-shadow: 0 12px 24px -20px rgba(50, 50, 93, 0.45);
     }
     .embedded-ai-link:hover {
-      background: linear-gradient(180deg, #ffffff, #eaf2ff);
+      border-color: rgba(83, 58, 253, 0.28);
+      background: linear-gradient(180deg, #ffffff, #f2f1ff);
     }
     .embedded-ai-frame-wrap {
       padding: 0;
-      background: #eef4ff;
+      background: linear-gradient(180deg, #f6f9fc, #eef3fb);
     }
     .embedded-ai-iframe {
       display: block;
@@ -988,6 +1018,7 @@ def _build_embedded_ai_style_block() -> str:
     @media (max-width: 768px) {
       .embedded-ai-header {
         flex-direction: column;
+        padding: 18px 18px 16px;
       }
       .embedded-ai-link {
         min-width: 100%;
@@ -1198,6 +1229,40 @@ def _build_report_bootstrap_script() -> str:
       let currentAdviceMode = 'all';
       let currentAdvicePositionMode = 'auto';
       let currentAdviceSource = 'strategy';
+      const THEME = {
+        text: '#425466',
+        heading: '#061b31',
+        muted: '#6b7c93',
+        primary: '#533afd',
+        primarySoft: 'rgba(83, 58, 253, 0.10)',
+        buy: '#15be53',
+        sell: '#ea2261',
+        volume: '#8aa2c6',
+        grid: '#e6ebf1',
+        surface: '#f6f9fc',
+        series: ['#533afd', '#2874ad', '#15be53', '#ea2261', '#8b7bff', '#9b6829'],
+      };
+
+      function baseAxisStyle(axisLabelFormatter) {
+        return {
+          axisLine: { lineStyle: { color: THEME.grid } },
+          axisTick: { show: false },
+          axisLabel: axisLabelFormatter
+            ? { color: THEME.muted, formatter: axisLabelFormatter }
+            : { color: THEME.muted },
+          splitLine: { lineStyle: { color: THEME.grid, opacity: 0.9 } },
+        };
+      }
+
+      function baseTooltip() {
+        return {
+          backgroundColor: 'rgba(255, 255, 255, 0.98)',
+          borderColor: THEME.grid,
+          borderWidth: 1,
+          textStyle: { color: THEME.heading },
+          extraCssText: 'box-shadow: rgba(50, 50, 93, 0.25) 0px 24px 40px -28px, rgba(0, 0, 0, 0.08) 0px 12px 24px -18px; border-radius: 8px;',
+        };
+      }
 
       function parseDateParts(value) {
         const text = String(value || '');
@@ -1452,8 +1517,10 @@ def _build_report_bootstrap_script() -> str:
 
         return {
           animation: false,
+          color: THEME.series,
           legend: { top: 0, data: legendLabels },
           tooltip: {
+            ...baseTooltip(),
             trigger: 'axis',
             axisPointer: { type: 'cross' },
             formatter(params) {
@@ -1471,10 +1538,10 @@ def _build_report_bootstrap_script() -> str:
                   const change = prevClose == null ? 0 : close - prevClose;
                   const changePercent = prevClose ? (change / prevClose * 100).toFixed(2) : '0.00';
                   const changeSign = change >= 0 ? '+' : '';
-                  const color = change >= 0 ? '#f00' : '#0f0';
+                  const color = change >= 0 ? THEME.sell : THEME.buy;
                   htmls.push(`<strong>${date}</strong><br/>开: ${open}<br/>收: <span style="color:${color}; font-weight:bold;">${close}</span><br/>高: ${high}<br/>低: ${low}<br/>幅: <span style="color:${color}; font-weight:bold;">${changeSign}${changePercent}%</span><br/><hr style="margin: 4px 0;">`);
                 } else if (Array.isArray(point.data)) {
-                  const color = point.seriesName === '卖点' ? '#c62828' : '#0f4cdb';
+                  const color = point.seriesName === '卖点' ? THEME.sell : THEME.primary;
                   const pointDate = point.data[0];
                   const pointPrice = Number(point.data[1]).toFixed(2);
                   htmls.push(
@@ -1497,32 +1564,56 @@ def _build_report_bootstrap_script() -> str:
           ],
           xAxis: [
             {
+              ...baseAxisStyle(),
               type: 'category',
               data: xAxis,
               boundaryGap: true,
-              axisLine: { onZero: false },
+              axisLine: { onZero: false, lineStyle: { color: THEME.grid } },
               min: 'dataMin',
               max: 'dataMax',
             },
             {
+              ...baseAxisStyle(),
               type: 'category',
               gridIndex: 1,
               data: xAxis,
               boundaryGap: true,
-              axisLine: { onZero: false },
-              axisTick: { show: false },
+              axisLine: { onZero: false, lineStyle: { color: THEME.grid } },
               axisLabel: { show: false },
               min: 'dataMin',
               max: 'dataMax',
             },
           ],
           yAxis: [
-            { scale: true, splitArea: { show: true } },
-            { scale: true, gridIndex: 1, splitNumber: 2 },
+            {
+              ...baseAxisStyle(),
+              scale: true,
+              splitArea: { show: true, areaStyle: { color: ['rgba(246, 249, 252, 0.65)', '#ffffff'] } },
+            },
+            {
+              ...baseAxisStyle(),
+              scale: true,
+              gridIndex: 1,
+              splitNumber: 2,
+            },
           ],
           dataZoom: [
             { type: 'inside', xAxisIndex: [0, 1], start: 0, end: 100 },
-            { show: true, xAxisIndex: [0, 1], type: 'slider', bottom: 10, start: 0, end: 100 },
+            {
+              show: true,
+              xAxisIndex: [0, 1],
+              type: 'slider',
+              bottom: 10,
+              start: 0,
+              end: 100,
+              borderColor: THEME.grid,
+              backgroundColor: '#f6f9fc',
+              fillerColor: 'rgba(83, 58, 253, 0.12)',
+              dataBackground: {
+                lineStyle: { color: '#b9c5d4' },
+                areaStyle: { color: 'rgba(83, 58, 253, 0.08)' },
+              },
+            },
           ],
           series: [
             {
@@ -1531,10 +1622,10 @@ def _build_report_bootstrap_script() -> str:
               data: candleData,
               z: 2,
               itemStyle: {
-                color: 'rgba(209, 74, 97, 0.45)',
-                color0: 'rgba(58, 162, 114, 0.45)',
-                borderColor: 'rgba(209, 74, 97, 0.65)',
-                borderColor0: 'rgba(58, 162, 114, 0.65)',
+                color: 'rgba(209, 74, 97, 0.58)',
+                color0: 'rgba(21, 190, 83, 0.52)',
+                borderColor: '#d14a61',
+                borderColor0: '#15be53',
               },
             },
             {
@@ -1544,7 +1635,7 @@ def _build_report_bootstrap_script() -> str:
               symbolSize: 12,
               z: 10,
               zlevel: 1,
-              itemStyle: { color: '#0f4cdb' },
+              itemStyle: { color: THEME.primary },
               tooltip: { valueFormatter: (value) => (value == null ? '-' : Number(value).toFixed(2)) },
             },
             {
@@ -1554,7 +1645,7 @@ def _build_report_bootstrap_script() -> str:
               symbolSize: 12,
               z: 10,
               zlevel: 1,
-              itemStyle: { color: '#c62828' },
+              itemStyle: { color: THEME.sell },
               tooltip: { valueFormatter: (value) => (value == null ? '-' : Number(value).toFixed(2)) },
             },
             {
@@ -1564,7 +1655,7 @@ def _build_report_bootstrap_script() -> str:
               yAxisIndex: 1,
               data: volumes,
               z: 1,
-              itemStyle: { color: '#91cc75' },
+              itemStyle: { color: THEME.volume },
             },
             ...indicatorLines.map((item) => ({
               name: item.name || 'Indicator',
@@ -1574,7 +1665,7 @@ def _build_report_bootstrap_script() -> str:
               smooth: false,
               yAxisIndex: 0,
               z: 3,
-              lineStyle: { width: 1.5 },
+              lineStyle: { width: 1.6 },
             })),
           ],
         };
@@ -1590,29 +1681,45 @@ def _build_report_bootstrap_script() -> str:
 
         return {
           animation: false,
+          color: THEME.series,
           tooltip: {
+            ...baseTooltip(),
             trigger: 'axis',
             axisPointer: { type: kind === 'bar' ? 'shadow' : 'cross' },
             valueFormatter: tooltipValueFormatter,
           },
-          legend: { top: 0 },
+          legend: { top: 0, textStyle: { color: THEME.text } },
           grid: { left: '8%', right: '4%', top: 48, bottom: 48 },
           xAxis: {
+            ...baseAxisStyle(),
             type: 'category',
             data: payload.x_axis || [],
             boundaryGap: kind === 'bar',
           },
           yAxis: {
+            ...baseAxisStyle(axisLabelFormatter),
             type: 'value',
             name: yAxisName,
             scale: true,
-            axisLabel: { formatter: axisLabelFormatter },
+            nameTextStyle: { color: THEME.muted },
           },
           dataZoom: kind === 'bar'
             ? []
             : [
                 { type: 'inside', start: 0, end: 100 },
-                { type: 'slider', start: 0, end: 100, bottom: 10 },
+                {
+                  type: 'slider',
+                  start: 0,
+                  end: 100,
+                  bottom: 10,
+                  borderColor: THEME.grid,
+                  backgroundColor: '#f6f9fc',
+                  fillerColor: 'rgba(83, 58, 253, 0.12)',
+                  dataBackground: {
+                    lineStyle: { color: '#b9c5d4' },
+                    areaStyle: { color: 'rgba(83, 58, 253, 0.08)' },
+                  },
+                },
               ],
           series: (payload.series || []).map((item) => ({
             name: item.name || 'Series',
@@ -1622,8 +1729,9 @@ def _build_report_bootstrap_script() -> str:
             showSymbol: kind === 'bar' ? undefined : false,
             smooth: false,
             connectNulls: false,
-            areaStyle: kind === 'area' ? {} : undefined,
-            lineStyle: kind === 'bar' ? undefined : { width: kind === 'area' ? 1.5 : 2 },
+            areaStyle: kind === 'area' ? { color: 'rgba(83, 58, 253, 0.12)' } : undefined,
+            lineStyle: kind === 'bar' ? undefined : { width: kind === 'area' ? 1.6 : 2.2 },
+            itemStyle: kind === 'bar' ? { borderRadius: [4, 4, 0, 0] } : undefined,
           })),
         };
       }
@@ -1633,7 +1741,9 @@ def _build_report_bootstrap_script() -> str:
         const visualMax = percentAxis ? 20 : 1;
         return {
           animation: false,
+          color: THEME.series,
           tooltip: {
+            ...baseTooltip(),
             position: 'top',
             formatter: (params) => {
               const value = params.data?.[2];
@@ -1645,11 +1755,17 @@ def _build_report_bootstrap_script() -> str:
           xAxis: {
             type: 'category',
             data: payload.x_axis || [],
+            axisLine: { lineStyle: { color: THEME.grid } },
+            axisTick: { show: false },
+            axisLabel: { color: THEME.muted },
             splitArea: { show: true },
           },
           yAxis: {
             type: 'category',
             data: payload.y_axis || [],
+            axisLine: { lineStyle: { color: THEME.grid } },
+            axisTick: { show: false },
+            axisLabel: { color: THEME.muted },
             splitArea: { show: true },
           },
           visualMap: {
@@ -1659,7 +1775,8 @@ def _build_report_bootstrap_script() -> str:
             orient: 'vertical',
             right: 8,
             top: 'middle',
-            inRange: { color: ['#1d4ed8', '#f8fafc', '#b91c1c'] },
+            textStyle: { color: THEME.muted },
+            inRange: { color: ['#15be53', '#f8fafc', '#ea2261'] },
           },
           series: [
             {
@@ -2200,6 +2317,7 @@ def html(
     benchmark_series = _normalize_benchmark_series(benchmarks)
     log_panel_html = _build_log_panel(log_lines)
     bootstrap_script = _build_report_bootstrap_script()
+    generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     for item in report_items:
         if not isinstance(item, dict):
@@ -2285,6 +2403,22 @@ def html(
             """
         )
 
+    report_badges = [
+        "自动生成回测报告",
+        f"图表 {chart_index} 个",
+        "含交易日志" if log_lines else "无交易日志",
+    ]
+    if advice_panel_html:
+        report_badges.append("含买卖建议")
+    if embedded_ai_report_html:
+        report_badges.append("已内嵌 AI 分析")
+    elif ai_report_link:
+        report_badges.append("可跳转 AI 分析")
+    report_badges_html = "".join(
+        f'<span class="page-header-badge">{html_escape(text)}</span>'
+        for text in report_badges
+    )
+
     html_text = f"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -2294,94 +2428,175 @@ def html(
   <script src="{ECHARTS_CDN}"></script>
   <style>
     :root {{
-      --bg: #f5f7fb;
+      --bg: #f6f9fc;
+      --surface: #fbfdff;
       --card: #ffffff;
-      --text: #1f2937;
-      --muted: #667085;
-      --border: #e5e7eb;
-      --shadow: 0 10px 30px rgba(15, 23, 42, 0.08);
+      --heading: #061b31;
+      --text: #425466;
+      --muted: #6b7c93;
+      --primary: #533afd;
+      --primary-hover: #4434d4;
+      --primary-soft: rgba(83, 58, 253, 0.1);
+      --success: #15be53;
+      --danger: #d14a61;
+      --warning: #9b6829;
+      --border: #e6ebf1;
+      --border-strong: #d4dee9;
+      --shadow: rgba(23, 23, 23, 0.08) 0px 15px 35px 0px;
+      --shadow-elevated: rgba(50, 50, 93, 0.25) 0px 30px 45px -30px, rgba(0, 0, 0, 0.1) 0px 18px 36px -18px;
     }}
     * {{
       box-sizing: border-box;
     }}
     body {{
       margin: 0;
-      font-family: "Microsoft YaHei", "PingFang SC", sans-serif;
+      font-family: "SF Pro Display", "PingFang SC", "Microsoft YaHei", sans-serif;
       background:
-        radial-gradient(circle at top left, rgba(84, 112, 198, 0.08), transparent 28%),
-        radial-gradient(circle at top right, rgba(145, 204, 117, 0.08), transparent 24%),
+        radial-gradient(circle at top left, rgba(83, 58, 253, 0.08), transparent 26%),
+        radial-gradient(circle at top right, rgba(249, 107, 238, 0.08), transparent 20%),
+        linear-gradient(180deg, #f7faff 0%, #f6f9fc 42%, #f2f6fb 100%),
         var(--bg);
       color: var(--text);
+      -webkit-font-smoothing: antialiased;
+      text-rendering: optimizeLegibility;
     }}
     .container {{
-      max-width: 1440px;
+      max-width: 1360px;
       margin: 0 auto;
-      padding: 32px 20px 48px;
+      padding: 32px 20px 56px;
     }}
     .page-header {{
-      margin-bottom: 20px;
+      margin-bottom: 24px;
+      padding: 28px 30px 24px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background:
+        radial-gradient(circle at right top, rgba(249, 107, 238, 0.12), transparent 26%),
+        linear-gradient(180deg, rgba(83, 58, 253, 0.06), rgba(83, 58, 253, 0.01) 38%, #ffffff 100%);
+      box-shadow: var(--shadow-elevated);
+    }}
+    .page-header-kicker {{
+      margin: 0 0 10px;
+      color: var(--primary);
+      font-size: 12px;
+      font-weight: 600;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
     }}
     .page-header h1 {{
       margin: 0;
-      font-size: 30px;
-      line-height: 1.2;
+      color: var(--heading);
+      font-size: 38px;
+      font-weight: 500;
+      line-height: 1.08;
+      letter-spacing: -0.04em;
     }}
     .page-header-title {{
       display: flex;
       align-items: center;
       flex-wrap: wrap;
-      gap: 12px;
+      gap: 14px;
     }}
-    .page-header-ai-link {{
+    .page-header-ai-link,
+    .embedded-ai-link {{
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      min-width: 42px;
-      height: 34px;
-      padding: 0 14px;
-      border-radius: 999px;
-      background: linear-gradient(135deg, #163b85, #2563eb);
-      color: #fff;
+      height: 38px;
+      padding: 0 16px;
+      border-radius: 6px;
+      border: 1px solid rgba(83, 58, 253, 0.18);
+      background: linear-gradient(180deg, #ffffff, #f9f9ff);
+      color: var(--primary);
       text-decoration: none;
       font-size: 13px;
-      font-weight: 800;
-      letter-spacing: 0.04em;
-      box-shadow: 0 10px 24px rgba(37, 99, 235, 0.22);
-      transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
+      font-weight: 600;
+      white-space: nowrap;
+      box-shadow: 0 12px 24px -20px rgba(50, 50, 93, 0.45);
+      transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease, background 0.18s ease;
     }}
-    .page-header-ai-link:hover {{
+    .page-header-ai-link {{
+      min-width: 54px;
+    }}
+    .embedded-ai-link {{
+      min-width: 132px;
+    }}
+    .page-header-ai-link:hover,
+    .embedded-ai-link:hover {{
       transform: translateY(-1px);
-      box-shadow: 0 14px 28px rgba(37, 99, 235, 0.28);
-      opacity: 0.96;
+      border-color: rgba(83, 58, 253, 0.28);
+      background: linear-gradient(180deg, #ffffff, #f2f1ff);
+      box-shadow: 0 18px 28px -22px rgba(50, 50, 93, 0.58);
     }}
     .page-header p {{
-      margin: 10px 0 0;
+      margin: 12px 0 0;
       color: var(--muted);
-      font-size: 14px;
+      font-size: 15px;
+      line-height: 1.7;
+      max-width: 860px;
+    }}
+    .page-header-badges {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 18px;
+    }}
+    .page-header-badge {{
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 0 10px;
+      border: 1px solid rgba(83, 58, 253, 0.14);
+      border-radius: 4px;
+      background: rgba(255, 255, 255, 0.86);
+      color: var(--heading);
+      font-size: 12px;
+      font-weight: 500;
+      white-space: nowrap;
+      box-shadow: 0 10px 20px -22px rgba(50, 50, 93, 0.45);
+    }}
+    .filter-toolbar,
+    .metric-card,
+    .chart-card,
+    .empty-card,
+    .advice-panel,
+    .log-panel,
+    .embedded-ai-section {{
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
     }}
     .filter-toolbar {{
       display: flex;
       flex-direction: column;
       align-items: stretch;
       gap: 16px;
-      margin-bottom: 20px;
-      padding: 16px 18px;
-      background: var(--card);
-      border: 1px solid rgba(229, 231, 235, 0.9);
-      border-radius: 18px;
+      margin-bottom: 24px;
+      padding: 20px 22px;
       box-shadow: var(--shadow);
-    }}
-    .filter-toolbar-title h2 {{
-      margin: 0;
-      font-size: 18px;
-    }}
-    .filter-toolbar-title p {{
-      margin: 6px 0 0;
-      color: var(--muted);
-      font-size: 13px;
     }}
     .filter-toolbar-title {{
       width: 100%;
+    }}
+    .filter-toolbar-title h2,
+    .advice-panel-header h2,
+    .log-panel-header h2 {{
+      margin: 0;
+      color: var(--heading);
+      font-size: 22px;
+      font-weight: 500;
+      letter-spacing: -0.02em;
+    }}
+    .filter-toolbar-title p,
+    .advice-panel-header p,
+    .log-panel-header p,
+    .chart-subtitle,
+    .embedded-ai-header p,
+    .empty-card p {{
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 14px;
+      line-height: 1.7;
     }}
     .filter-toolbar-controls {{
       display: flex;
@@ -2401,45 +2616,60 @@ def html(
       color: var(--muted);
       font-size: 12px;
       font-weight: 600;
-      line-height: 34px;
+      line-height: 38px;
     }}
     .filter-chip-row {{
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
-      min-height: 38px;
+      min-height: 40px;
       align-items: center;
       flex: 1 1 auto;
     }}
-    .filter-chip {{
-      height: 34px;
+    .filter-chip,
+    .filter-actions button,
+    .advice-position-chip,
+    .advice-source-chip,
+    .advice-mode-chip,
+    .log-year-toggle {{
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: linear-gradient(180deg, #ffffff, #fbfcff);
+      color: var(--text);
+      box-shadow: 0 10px 20px -24px rgba(50, 50, 93, 0.45);
+      transition: all 0.18s ease;
+    }}
+    .filter-chip,
+    .filter-actions button {{
+      height: 38px;
       padding: 0 14px;
-      border: 1px solid rgba(148, 163, 184, 0.26);
-      border-radius: 999px;
-      background: linear-gradient(180deg, #ffffff, #f8fbff);
-      color: #475467;
       cursor: pointer;
       font-size: 13px;
-      font-weight: 600;
-      transition: all 0.18s ease;
-      box-shadow: 0 6px 18px rgba(148, 163, 184, 0.12);
+      font-weight: 500;
     }}
-    .filter-chip:hover {{
-      border-color: rgba(84, 112, 198, 0.35);
-      color: #2d3b55;
+    .filter-chip:hover,
+    .filter-actions button:hover,
+    .advice-position-chip:hover,
+    .advice-source-chip:hover,
+    .advice-mode-chip:hover {{
+      border-color: rgba(83, 58, 253, 0.28);
+      color: var(--heading);
       transform: translateY(-1px);
-      box-shadow: 0 10px 20px rgba(84, 112, 198, 0.14);
+      box-shadow: 0 16px 26px -24px rgba(50, 50, 93, 0.5);
     }}
-    .filter-chip.is-active {{
-      border-color: rgba(84, 112, 198, 0.45);
-      background: linear-gradient(180deg, rgba(84, 112, 198, 0.16), rgba(84, 112, 198, 0.08));
-      color: #24324a;
-      box-shadow: 0 12px 24px rgba(84, 112, 198, 0.18);
+    .filter-chip.is-active,
+    .advice-position-chip.is-active,
+    .advice-source-chip.is-active,
+    .advice-mode-chip.is-active {{
+      border-color: rgba(83, 58, 253, 0.34);
+      background: linear-gradient(180deg, rgba(83, 58, 253, 0.12), rgba(83, 58, 253, 0.04));
+      color: var(--heading);
+      box-shadow: 0 18px 30px -26px rgba(50, 50, 93, 0.58);
     }}
     .filter-chip.is-disabled {{
       cursor: not-allowed;
       color: #98a2b3;
-      background: #f8fafc;
+      background: var(--surface);
       border-style: dashed;
       box-shadow: none;
     }}
@@ -2449,131 +2679,75 @@ def html(
       gap: 8px;
       padding-top: 4px;
     }}
-    .filter-actions button {{
-      height: 36px;
-      padding: 0 14px;
-      border: 1px solid rgba(148, 163, 184, 0.28);
-      border-radius: 999px;
-      background: linear-gradient(180deg, #ffffff, #f7faff);
-      color: #344054;
-      cursor: pointer;
-      font-weight: 600;
-      box-shadow: 0 8px 18px rgba(148, 163, 184, 0.12);
-      transition: all 0.18s ease;
-    }}
-    .filter-actions button:hover {{
-      transform: translateY(-1px);
-      background: linear-gradient(180deg, #ffffff, #eef4ff);
-      box-shadow: 0 10px 22px rgba(84, 112, 198, 0.14);
-    }}
     .metrics-grid {{
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      gap: 16px;
-      margin-bottom: 20px;
-    }}
-    .metric-card,
-    .chart-card,
-    .empty-card {{
-      background: var(--card);
-      border: 1px solid rgba(229, 231, 235, 0.9);
-      border-radius: 18px;
-      box-shadow: var(--shadow);
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 14px;
+      margin-bottom: 24px;
     }}
     .metric-card {{
-      padding: 18px 20px;
+      position: relative;
+      padding: 18px 18px 20px;
+      overflow: hidden;
+      box-shadow: var(--shadow);
+    }}
+    .metric-card::before {{
+      content: "";
+      position: absolute;
+      inset: 0 auto auto 0;
+      width: 100%;
+      height: 3px;
+      background: var(--border-strong);
+    }}
+    .metric-card.is-positive::before {{
+      background: linear-gradient(90deg, #15be53, #84cc16);
+    }}
+    .metric-card.is-risk::before {{
+      background: linear-gradient(90deg, #ea2261, #f96bee);
+    }}
+    .metric-card.is-focus::before {{
+      background: linear-gradient(90deg, #533afd, #8b7bff);
+    }}
+    .metric-card.is-identity::before {{
+      background: linear-gradient(90deg, #061b31, #2874ad);
     }}
     .metric-label {{
+      margin-bottom: 10px;
       color: var(--muted);
       font-size: 13px;
-      margin-bottom: 10px;
+      letter-spacing: 0.01em;
     }}
     .metric-value {{
-      font-size: 24px;
-      font-weight: 700;
-      line-height: 1.2;
+      color: var(--heading);
+      font-size: 28px;
+      font-weight: 500;
+      line-height: 1.12;
+      letter-spacing: -0.03em;
       word-break: break-word;
+      font-variant-numeric: tabular-nums;
     }}
     .chart-card {{
       margin-bottom: 20px;
-      padding: 18px 18px 10px;
-    }}
-    .embedded-ai-section {{
-      margin-top: 20px;
-      background: var(--card);
-      border: 1px solid rgba(229, 231, 235, 0.9);
-      border-radius: 18px;
+      padding: 20px 20px 12px;
       box-shadow: var(--shadow);
-      overflow: hidden;
-    }}
-    .embedded-ai-header {{
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 18px 20px 14px;
-      border-bottom: 1px solid rgba(229, 231, 235, 0.9);
-      background: linear-gradient(180deg, rgba(37, 99, 235, 0.06), rgba(37, 99, 235, 0));
-    }}
-    .embedded-ai-header h2 {{
-      margin: 0;
-      font-size: 18px;
-    }}
-    .embedded-ai-header p {{
-      margin: 8px 0 0;
-      color: var(--muted);
-      font-size: 13px;
-      line-height: 1.6;
-    }}
-    .embedded-ai-link {{
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      min-width: 112px;
-      height: 34px;
-      padding: 0 14px;
-      border-radius: 999px;
-      border: 1px solid rgba(37, 99, 235, 0.18);
-      background: linear-gradient(180deg, #ffffff, #f3f8ff);
-      color: #1d4ed8;
-      text-decoration: none;
-      font-size: 13px;
-      font-weight: 700;
-      white-space: nowrap;
-    }}
-    .embedded-ai-link:hover {{
-      background: linear-gradient(180deg, #ffffff, #eaf2ff);
-    }}
-    .embedded-ai-frame-wrap {{
-      padding: 0;
-      background: #eef4ff;
-    }}
-    .embedded-ai-iframe {{
-      display: block;
-      width: 100%;
-      min-height: 920px;
-      border: 0;
-      background: #fff;
     }}
     .chart-header {{
-      margin-bottom: 8px;
+      margin-bottom: 14px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--border);
     }}
-    .chart-header h2 {{
+    .chart-header h2,
+    .embedded-ai-header h2,
+    .empty-card h2 {{
       margin: 0;
-      font-size: 18px;
-    }}
-    .chart-subtitle {{
-      margin: 8px 0 0;
-      color: var(--muted);
-      font-size: 13px;
+      color: var(--heading);
+      font-size: 24px;
+      font-weight: 500;
+      letter-spacing: -0.02em;
     }}
     .chart {{
       width: 100%;
       height: 560px;
-    }}
-    .empty-card {{
-      padding: 32px 24px;
-      text-align: center;
     }}
     .content-layout {{
       display: flex;
@@ -2594,156 +2768,103 @@ def html(
     }}
     .advice-panel,
     .log-panel {{
-      background: var(--card);
-      border: 1px solid rgba(229, 231, 235, 0.9);
-      border-radius: 18px;
       box-shadow: var(--shadow);
       overflow: hidden;
     }}
     .advice-panel-header,
     .log-panel-header {{
-      padding: 18px 20px 12px;
+      padding: 20px 22px 16px;
       border-bottom: 1px solid var(--border);
-      background: linear-gradient(180deg, rgba(84, 112, 198, 0.06), rgba(84, 112, 198, 0));
-    }}
-    .advice-panel-header h2,
-    .log-panel-header h2 {{
-      margin: 0;
-      font-size: 18px;
-    }}
-    .advice-panel-header p,
-    .log-panel-header p {{
-      margin: 8px 0 0;
-      color: var(--muted);
-      font-size: 13px;
-      line-height: 1.5;
-    }}
-    .advice-list {{
-      max-height: 420px;
-      overflow: auto;
-      padding: 12px;
-      display: flex;
-      flex-direction: column;
-      gap: 10px;
+      background:
+        radial-gradient(circle at top right, rgba(249, 107, 238, 0.12), transparent 34%),
+        linear-gradient(180deg, rgba(83, 58, 253, 0.06), rgba(83, 58, 253, 0));
     }}
     .advice-toolbar {{
-      padding: 12px 14px 10px;
-      border-bottom: 1px solid rgba(229, 231, 235, 0.9);
-      background: rgba(248, 250, 252, 0.78);
+      padding: 14px 16px 12px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(180deg, rgba(246, 249, 252, 0.96), rgba(250, 252, 255, 0.92));
     }}
-    .advice-stats {{
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-bottom: 10px;
-    }}
-    .advice-position-group {{
-      display: flex;
-      flex-wrap: wrap;
-      gap: 8px;
-      margin-bottom: 10px;
-    }}
+    .advice-stats,
+    .advice-position-group,
     .advice-source-group {{
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
       margin-bottom: 10px;
     }}
-    .advice-position-chip {{
-      height: 34px;
-      padding: 0 12px;
-      border: 1px solid rgba(148, 163, 184, 0.26);
-      border-radius: 999px;
-      background: linear-gradient(180deg, #ffffff, #f8fbff);
-      color: #475467;
-      cursor: pointer;
-      font-size: 12px;
-      font-weight: 700;
-      transition: all 0.18s ease;
-    }}
-    .advice-position-chip:hover {{
-      border-color: rgba(84, 112, 198, 0.35);
-      color: #24324a;
-    }}
-    .advice-position-chip.is-active {{
-      border-color: rgba(84, 112, 198, 0.45);
-      background: linear-gradient(180deg, rgba(84, 112, 198, 0.16), rgba(84, 112, 198, 0.08));
-      color: #24324a;
-      box-shadow: 0 10px 22px rgba(84, 112, 198, 0.14);
-    }}
-    .advice-source-chip {{
-      height: 34px;
-      padding: 0 12px;
-      border: 1px solid rgba(148, 163, 184, 0.26);
-      border-radius: 999px;
-      background: linear-gradient(180deg, #ffffff, #f8fbff);
-      color: #475467;
-      cursor: pointer;
-      font-size: 12px;
-      font-weight: 700;
-      transition: all 0.18s ease;
-    }}
-    .advice-source-chip:hover {{
-      border-color: rgba(84, 112, 198, 0.35);
-      color: #24324a;
-    }}
-    .advice-source-chip.is-active {{
-      border-color: rgba(84, 112, 198, 0.45);
-      background: linear-gradient(180deg, rgba(84, 112, 198, 0.16), rgba(84, 112, 198, 0.08));
-      color: #24324a;
-      box-shadow: 0 10px 22px rgba(84, 112, 198, 0.14);
-    }}
-    .advice-stat-pill {{
-      padding: 4px 10px;
-      border-radius: 999px;
-      font-size: 12px;
-      font-weight: 700;
-      color: #344054;
-      background: rgba(148, 163, 184, 0.14);
-    }}
-    .advice-stat-pill.is-buy {{
-      color: #0f4cdb;
-      background: rgba(15, 76, 219, 0.10);
-    }}
-    .advice-stat-pill.is-sell {{
-      color: #c62828;
-      background: rgba(198, 40, 40, 0.10);
-    }}
-    .advice-stat-pill.is-watch {{
-      color: #0f766e;
-      background: rgba(15, 118, 110, 0.10);
-    }}
     .advice-mode-group {{
       display: flex;
       flex-wrap: wrap;
       gap: 8px;
     }}
+    .advice-position-chip,
+    .advice-source-chip {{
+      height: 36px;
+      padding: 0 12px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+    }}
     .advice-mode-chip {{
       height: 32px;
       padding: 0 12px;
-      border: 1px solid rgba(148, 163, 184, 0.26);
-      border-radius: 999px;
-      background: linear-gradient(180deg, #ffffff, #f8fbff);
-      color: #475467;
       cursor: pointer;
       font-size: 12px;
-      font-weight: 700;
-      transition: all 0.18s ease;
+      font-weight: 600;
     }}
-    .advice-mode-chip:hover {{
-      border-color: rgba(84, 112, 198, 0.35);
-      color: #24324a;
+    .advice-stat-pill,
+    .advice-badge {{
+      padding: 5px 10px;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+      border: 1px solid transparent;
     }}
-    .advice-mode-chip.is-active {{
-      border-color: rgba(84, 112, 198, 0.45);
-      background: linear-gradient(180deg, rgba(84, 112, 198, 0.16), rgba(84, 112, 198, 0.08));
-      color: #24324a;
-      box-shadow: 0 10px 22px rgba(84, 112, 198, 0.14);
+    .advice-stat-pill {{
+      color: var(--heading);
+      background: #f7f9fc;
+      border-color: var(--border);
+    }}
+    .advice-stat-pill.is-buy,
+    .advice-badge.is-buy {{
+      color: #108c3d;
+      background: rgba(21, 190, 83, 0.1);
+      border-color: rgba(21, 190, 83, 0.2);
+    }}
+    .advice-stat-pill.is-sell,
+    .advice-badge.is-sell {{
+      color: #c23d63;
+      background: rgba(234, 34, 97, 0.1);
+      border-color: rgba(234, 34, 97, 0.18);
+    }}
+    .advice-stat-pill.is-watch,
+    .advice-badge.is-hold {{
+      color: var(--warning);
+      background: rgba(155, 104, 41, 0.1);
+      border-color: rgba(155, 104, 41, 0.18);
+    }}
+    .advice-badge.is-watch_buy {{
+      color: var(--primary);
+      background: rgba(83, 58, 253, 0.1);
+      border-color: rgba(83, 58, 253, 0.18);
+    }}
+    .advice-badge.is-observe {{
+      color: var(--text);
+      background: rgba(107, 124, 147, 0.1);
+      border-color: rgba(107, 124, 147, 0.16);
+    }}
+    .advice-list {{
+      max-height: 420px;
+      overflow: auto;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
     }}
     .advice-item {{
-      padding: 14px;
-      border: 1px solid rgba(229, 231, 235, 0.9);
-      border-radius: 16px;
+      padding: 16px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
       background: linear-gradient(180deg, #ffffff, #fbfcff);
     }}
     .advice-item-head {{
@@ -2753,61 +2874,37 @@ def html(
       gap: 12px;
       margin-bottom: 8px;
     }}
-    .advice-date {{
-      font-size: 13px;
-      font-weight: 700;
-      color: #344054;
-    }}
-    .advice-badge {{
-      padding: 4px 10px;
-      border-radius: 999px;
-      font-size: 12px;
-      font-weight: 700;
-      white-space: nowrap;
-    }}
-    .advice-badge.is-buy {{
-      color: #0f4cdb;
-      background: rgba(15, 76, 219, 0.10);
-    }}
-    .advice-badge.is-sell {{
-      color: #c62828;
-      background: rgba(198, 40, 40, 0.10);
-    }}
-    .advice-badge.is-hold {{
-      color: #a16207;
-      background: rgba(202, 138, 4, 0.12);
-    }}
-    .advice-badge.is-watch_buy {{
-      color: #0f766e;
-      background: rgba(15, 118, 110, 0.10);
-    }}
-    .advice-badge.is-observe {{
-      color: #475467;
-      background: rgba(148, 163, 184, 0.16);
-    }}
-    .advice-price {{
-      margin-bottom: 6px;
-      font-size: 13px;
-      color: #344054;
+    .advice-date,
+    .advice-price,
+    .log-year-label {{
+      color: var(--heading);
       font-weight: 600;
+      font-variant-numeric: tabular-nums;
     }}
+    .advice-date,
+    .advice-price {{
+      font-size: 13px;
+    }}
+    .advice-price,
     .advice-summary {{
       margin-bottom: 6px;
-      font-size: 13px;
-      color: #1f2937;
-      line-height: 1.6;
     }}
-    .advice-reason {{
+    .advice-summary {{
+      color: var(--heading);
+      font-size: 14px;
+      line-height: 1.7;
+    }}
+    .advice-reason,
+    .advice-empty,
+    .log-empty {{
       color: var(--muted);
-      font-size: 12px;
-      line-height: 1.6;
+      font-size: 13px;
+      line-height: 1.7;
       white-space: pre-wrap;
       word-break: break-word;
     }}
     .advice-empty {{
       padding: 20px;
-      color: var(--muted);
-      font-size: 13px;
     }}
     .log-panel {{
       position: sticky;
@@ -2819,7 +2916,7 @@ def html(
       padding: 8px 0;
     }}
     .log-year-group {{
-      border-bottom: 1px solid rgba(229, 231, 235, 0.7);
+      border-bottom: 1px solid var(--border);
     }}
     .log-year-group:last-child {{
       border-bottom: 0;
@@ -2833,14 +2930,10 @@ def html(
       cursor: pointer;
       list-style: none;
       user-select: none;
-      background: rgba(84, 112, 198, 0.04);
+      background: linear-gradient(180deg, rgba(83, 58, 253, 0.04), rgba(83, 58, 253, 0));
     }}
     .log-year-group summary::-webkit-details-marker {{
       display: none;
-    }}
-    .log-year-label {{
-      font-weight: 700;
-      font-size: 13px;
     }}
     .log-year-meta {{
       display: flex;
@@ -2857,10 +2950,6 @@ def html(
     .log-year-toggle {{
       min-width: 52px;
       padding: 4px 10px;
-      border: 1px solid rgba(148, 163, 184, 0.24);
-      border-radius: 999px;
-      background: linear-gradient(180deg, #ffffff, #f8fbff);
-      color: #475467;
       text-align: center;
       white-space: nowrap;
     }}
@@ -2869,10 +2958,11 @@ def html(
     }}
     .log-line {{
       padding: 10px 16px;
-      border-bottom: 1px solid rgba(229, 231, 235, 0.7);
+      border-bottom: 1px solid var(--border);
       font-family: Consolas, "SFMono-Regular", monospace;
       font-size: 12px;
       line-height: 1.6;
+      color: #273951;
       white-space: pre-wrap;
       word-break: break-word;
     }}
@@ -2881,22 +2971,56 @@ def html(
     }}
     .log-empty {{
       padding: 24px 20px;
-      color: var(--muted);
       font-size: 14px;
     }}
-    .empty-card h2 {{
-      margin: 0 0 10px;
+    .embedded-ai-section {{
+      margin-top: 24px;
+      overflow: hidden;
+      box-shadow: var(--shadow-elevated);
     }}
-    .empty-card p {{
-      margin: 0;
-      color: var(--muted);
+    .embedded-ai-header {{
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 22px 24px 18px;
+      border-bottom: 1px solid var(--border);
+      background:
+        radial-gradient(circle at top right, rgba(249, 107, 238, 0.14), transparent 34%),
+        linear-gradient(180deg, rgba(83, 58, 253, 0.08), rgba(83, 58, 253, 0.01));
+    }}
+    .embedded-ai-frame-wrap {{
+      padding: 0;
+      background: linear-gradient(180deg, #f6f9fc, #eef3fb);
+    }}
+    .embedded-ai-iframe {{
+      display: block;
+      width: 100%;
+      min-height: 920px;
+      border: 0;
+      background: #fff;
+    }}
+    .empty-card {{
+      padding: 40px 28px;
+      text-align: center;
+      box-shadow: var(--shadow);
+    }}
+    .empty-card h2 {{
+      font-size: 26px;
+      letter-spacing: -0.03em;
     }}
     @media (max-width: 768px) {{
       .container {{
-        padding: 20px 12px 32px;
+        padding: 20px 12px 36px;
+      }}
+      .page-header {{
+        padding: 20px 18px 18px;
       }}
       .page-header h1 {{
-        font-size: 24px;
+        font-size: 30px;
+      }}
+      .page-header p {{
+        font-size: 14px;
       }}
       .filter-toolbar {{
         padding: 14px;
@@ -2926,6 +3050,7 @@ def html(
       }}
       .embedded-ai-header {{
         flex-direction: column;
+        padding: 18px 18px 16px;
       }}
       .embedded-ai-link {{
         min-width: 100%;
@@ -2948,11 +3073,15 @@ def html(
 <body>
 	 <div class="container">
 	    <header class="page-header">
+	      <div class="page-header-kicker">Quantitative Trading Report</div>
 	      <div class="page-header-title">
 	        <h1>{title}</h1>
 	        {ai_report_link_html}
 	      </div>
-	      <p>{datetime.now().strftime("%Y-%m-%d %H:%M:%S")} 本报告由本地回测结果自动生成，图表使用 ECharts 6 渲染。</p>
+	      <p>{generated_at} 生成。本报告聚合了回测核心指标、图表、交易日志与操作建议，适合直接复盘策略收益、风险和交易节奏。</p>
+        <div class="page-header-badges">
+          {report_badges_html}
+        </div>
 	    </header>
     {filter_toolbar_html}
     {metric_cards_html}
