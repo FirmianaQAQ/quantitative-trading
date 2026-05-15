@@ -25,6 +25,7 @@
 - 回测 HTML 里会同时展示 `买卖点` 与 `优化买卖点`
 - `买卖建议` 面板支持在 `原策略` / `优化策略` 间切换
 - 年 / 月 / 日时间筛选会同时作用于图表、买卖建议和日志面板
+- 单次回测 HTML 会自动内嵌对应的 AI 分析 HTML，转发一份回测报告即可分享完整内容
 
 说明：
 
@@ -123,14 +124,16 @@ cd /Users/y/Downloads/project/quantitative-trading
 2. GUI 回测（不启用 AI）
 3. 终端批量回测
 4. 拉取数据
+5. 合并历史回测报告为分享版
 q. 退出
 ```
 
 说明：
 
 - 直接回车默认进入 `1. GUI 回测 + AI 分析`
-- 也支持快捷键：`ga`、`g`、`b`、`s`
+- 也支持快捷键：`ga`、`g`、`b`、`s`、`m`
 - 现在不再需要先选 GUI，再单独选一次 AI 开关
+- 如果要把历史 `backtest HTML + llm_analysis HTML` 合成一份可分享报告，可以直接选 `5`
 
 ## 5.1 启用大模型分析
 
@@ -208,6 +211,26 @@ logs/llm_analysis/simple_ma_backtest_v2-batch.html
 - `买卖点`：原始策略实际信号
 - `优化买卖点`：在原策略基础上增加趋势确认、回撤保护和不追高过滤后的建议信号
 - `买卖建议` 面板：可在 `原策略` / `优化策略` 间切换，并保持与时间筛选联动
+
+如果你手里已经有历史回测 HTML 和对应的 AI HTML，不想重跑回测，也可以直接合并成单文件分享版：
+
+```bash
+python3 merge_backtest_ai_html.py logs/backtest/simple_ma_backtest_v2-sz.000725.html
+```
+
+默认行为：
+
+- 自动查找同名 AI 报告：`logs/llm_analysis/simple_ma_backtest_v2-sz.000725.html`
+- 输出到原目录，文件名自动变为：`simple_ma_backtest_v2-sz.000725-share.html`
+
+如果 AI 文件路径不同，也可以手动指定：
+
+```bash
+python3 merge_backtest_ai_html.py \
+  logs/backtest/simple_ma_backtest_v2-sz.000725.html \
+  --ai-report logs/llm_analysis/simple_ma_backtest_v2-sz.000725.html \
+  --output logs/backtest/simple_ma_backtest_v2-sz.000725-share.html
+```
 
 ## 6. 数据同步
 

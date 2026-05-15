@@ -715,6 +715,7 @@ def _generate_html_report(
         log_lines=log_lines,
         current_position=str(config.get("current_position", "auto")),
         ai_report_link=ai_report_link,
+        ai_report_path=str(ai_report_path) if ai_report_path is not None else None,
     )
     print(f"HTML 回测报告: {html_report_path}")
 

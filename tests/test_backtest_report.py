@@ -6,6 +6,7 @@ from utils.backtest_report import (
     _build_advice_panel,
     _extract_daily_advice_entries,
     html as generate_backtest_html,
+    merge_backtest_html_with_ai_report,
 )
 
 
@@ -149,6 +150,96 @@ class BacktestReportAdviceTests(unittest.TestCase):
         self.assertIn("page-header-ai-link", html)
         self.assertIn('href="../llm_analysis/test-ai-report.html"', html)
         self.assertIn(">AI<", html)
+
+    def test_html_report_can_embed_ai_report_into_single_file(self) -> None:
+        report_data = build_buy_sell_report(
+            dates=["2026-05-13", "2026-05-14"],
+            buy_points=[["2026-05-13", 10.0]],
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "report.html"
+            ai_report_path = Path(temp_dir) / "ai.html"
+            ai_report_path.write_text(
+                """<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>AI 页</title></head>
+<body><div>AI 结论：趋势策略有效，但震荡市需谨慎。</div></body>
+</html>
+""",
+                encoding="utf-8",
+            )
+            generate_backtest_html(
+                report_data=report_data,
+                output_path=str(output_path),
+                benchmarks=[],
+                title="测试回测报告",
+                ai_report_link="../llm_analysis/test-ai-report.html",
+                ai_report_path=str(ai_report_path),
+            )
+            html = output_path.read_text(encoding="utf-8")
+
+        self.assertIn('href="#ai-analysis-section"', html)
+        self.assertIn('id="ai-analysis-section"', html)
+        self.assertIn('class="embedded-ai-iframe"', html)
+        self.assertIn("查看独立 AI 页", html)
+        self.assertIn("AI 结论：趋势策略有效，但震荡市需谨慎。", html)
+
+    def test_merge_existing_backtest_and_ai_html_into_share_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            backtest_report_path = temp_path / "backtest.html"
+            ai_report_path = temp_path / "ai.html"
+            output_path = temp_path / "backtest-share.html"
+
+            backtest_report_path.write_text(
+                """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    .page-header-ai-link { color: #fff; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header class="page-header">
+      <div class="page-header-title">
+        <h1>测试回测报告</h1>
+        <a class="page-header-ai-link" href="../llm_analysis/ai.html">AI</a>
+      </div>
+    </header>
+  </div>
+  <script>
+    window.__BTReport = {};
+  </script>
+</body>
+</html>
+""",
+                encoding="utf-8",
+            )
+            ai_report_path.write_text(
+                """<!DOCTYPE html>
+<html lang="zh-CN">
+<body><div>AI 分析内容：可直接分享。</div></body>
+</html>
+""",
+                encoding="utf-8",
+            )
+
+            merged_path = merge_backtest_html_with_ai_report(
+                str(backtest_report_path),
+                str(ai_report_path),
+                str(output_path),
+            )
+            html = merged_path.read_text(encoding="utf-8")
+
+        self.assertEqual(merged_path, output_path)
+        self.assertIn('href="#ai-analysis-section"', html)
+        self.assertIn('id="ai-analysis-section"', html)
+        self.assertIn("AI 分析内容：可直接分享。", html)
+        self.assertIn("resizeEmbeddedAIFrames", html)
+        self.assertIn(".embedded-ai-section", html)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from html import escape as html_escape
 from pathlib import Path
@@ -879,6 +880,241 @@ def _build_chart_block(chart_id: str, title: str, subtitle: str = "") -> str:
       <div id="{chart_id}" class="chart"></div>
     </section>
     """
+
+
+def _read_ai_report_html(ai_report_path: str | None) -> str:
+    if not ai_report_path:
+        return ""
+    try:
+        return Path(ai_report_path).read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _build_embedded_ai_section(
+    ai_report_html: str,
+    ai_report_link: str | None = None,
+) -> str:
+    if not ai_report_html:
+        return ""
+
+    external_link_html = ""
+    if ai_report_link:
+        external_link_html = (
+            f'<a class="embedded-ai-link" href="{html_escape(ai_report_link)}" '
+            'target="_blank" rel="noopener noreferrer">查看独立 AI 页</a>'
+        )
+
+    return f"""
+    <section class="embedded-ai-section" id="ai-analysis-section">
+      <div class="embedded-ai-header">
+        <div>
+          <h2>AI 分析</h2>
+          <p>已将 `llm_analysis` 报告内容直接内嵌到当前回测 HTML，分享这一份文件即可。</p>
+        </div>
+        {external_link_html}
+      </div>
+      <div class="embedded-ai-frame-wrap">
+        <iframe
+          class="embedded-ai-iframe"
+          title="AI 分析报告"
+          loading="lazy"
+          srcdoc="{html_escape(ai_report_html)}"
+        ></iframe>
+      </div>
+    </section>
+    """
+
+
+def _build_embedded_ai_style_block() -> str:
+    return """
+    .embedded-ai-section {
+      margin-top: 20px;
+      background: var(--card);
+      border: 1px solid rgba(229, 231, 235, 0.9);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }
+    .embedded-ai-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid rgba(229, 231, 235, 0.9);
+      background: linear-gradient(180deg, rgba(37, 99, 235, 0.06), rgba(37, 99, 235, 0));
+    }
+    .embedded-ai-header h2 {
+      margin: 0;
+      font-size: 18px;
+    }
+    .embedded-ai-header p {
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }
+    .embedded-ai-link {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 112px;
+      height: 34px;
+      padding: 0 14px;
+      border-radius: 999px;
+      border: 1px solid rgba(37, 99, 235, 0.18);
+      background: linear-gradient(180deg, #ffffff, #f3f8ff);
+      color: #1d4ed8;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 700;
+      white-space: nowrap;
+    }
+    .embedded-ai-link:hover {
+      background: linear-gradient(180deg, #ffffff, #eaf2ff);
+    }
+    .embedded-ai-frame-wrap {
+      padding: 0;
+      background: #eef4ff;
+    }
+    .embedded-ai-iframe {
+      display: block;
+      width: 100%;
+      min-height: 920px;
+      border: 0;
+      background: #fff;
+    }
+    @media (max-width: 768px) {
+      .embedded-ai-header {
+        flex-direction: column;
+      }
+      .embedded-ai-link {
+        min-width: 100%;
+      }
+      .embedded-ai-iframe {
+        min-height: 760px;
+      }
+    }
+    """
+
+
+def _build_embedded_ai_resize_script() -> str:
+    return """
+    (function () {
+      function resizeEmbeddedAIFrames() {
+        document.querySelectorAll('.embedded-ai-iframe').forEach((frame) => {
+          const doc = frame.contentWindow?.document;
+          if (!doc?.body) return;
+          const nextHeight = Math.max(
+            doc.body.scrollHeight || 0,
+            doc.documentElement?.scrollHeight || 0,
+            760
+          );
+          frame.style.height = `${nextHeight + 8}px`;
+        });
+      }
+      document.querySelectorAll('.embedded-ai-iframe').forEach((frame) => {
+        frame.addEventListener('load', resizeEmbeddedAIFrames);
+      });
+      window.addEventListener('load', resizeEmbeddedAIFrames);
+      window.addEventListener('resize', resizeEmbeddedAIFrames);
+      setTimeout(resizeEmbeddedAIFrames, 180);
+    })();
+    """
+
+
+def merge_backtest_html_with_ai_report(
+    backtest_html_path: str,
+    ai_report_path: str,
+    output_path: str | None = None,
+) -> Path:
+    backtest_path = Path(backtest_html_path)
+    ai_path = Path(ai_report_path)
+    if not backtest_path.exists():
+        raise FileNotFoundError(f"回测报告不存在: {backtest_path}")
+    if not ai_path.exists():
+        raise FileNotFoundError(f"AI 报告不存在: {ai_path}")
+
+    merged_output_path = (
+        Path(output_path)
+        if output_path
+        else backtest_path.with_name(f"{backtest_path.stem}-share.html")
+    )
+    merged_output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    backtest_html = backtest_path.read_text(encoding="utf-8")
+    ai_report_html = ai_path.read_text(encoding="utf-8")
+    ai_report_link = Path(
+        os.path.relpath(ai_path, start=merged_output_path.parent)
+    ).as_posix()
+    embedded_section_html = _build_embedded_ai_section(
+        ai_report_html,
+        ai_report_link=ai_report_link,
+    )
+
+    # 若历史文件已经合并过，先移除旧区块，再重建一份，保证结果可重复生成。
+    backtest_html = re.sub(
+        r"\s*<section class=\"embedded-ai-section\" id=\"ai-analysis-section\">.*?</section>\s*",
+        "\n",
+        backtest_html,
+        flags=re.DOTALL,
+    )
+
+    if ".embedded-ai-section" not in backtest_html and "</style>" in backtest_html:
+        backtest_html = backtest_html.replace(
+            "</style>",
+            f"{_build_embedded_ai_style_block()}\n  </style>",
+            1,
+        )
+
+    if 'class="page-header-ai-link"' in backtest_html:
+        backtest_html = re.sub(
+            r'(<a class="page-header-ai-link"[^>]*href=")[^"]+(")',
+            r'\1#ai-analysis-section\2',
+            backtest_html,
+            count=1,
+        )
+
+    content_marker = "</div>\n  <script>"
+    if content_marker in backtest_html:
+        backtest_html = backtest_html.replace(
+            content_marker,
+            f"    {embedded_section_html}\n  </div>\n  <script>",
+            1,
+        )
+    elif "</body>" in backtest_html:
+        backtest_html = backtest_html.replace(
+            "</body>",
+            f"{embedded_section_html}\n</body>",
+            1,
+        )
+    else:
+        backtest_html = f"{backtest_html}\n{embedded_section_html}"
+
+    if "resizeEmbeddedAIFrames" not in backtest_html:
+        if "</script>" in backtest_html:
+            script_pos = backtest_html.rfind("</script>")
+            backtest_html = (
+                backtest_html[:script_pos]
+                + "\n"
+                + _build_embedded_ai_resize_script()
+                + "\n"
+                + backtest_html[script_pos:]
+            )
+        elif "</body>" in backtest_html:
+            backtest_html = backtest_html.replace(
+                "</body>",
+                f"<script>\n{_build_embedded_ai_resize_script()}\n</script>\n</body>",
+                1,
+            )
+        else:
+            backtest_html = (
+                f"{backtest_html}\n<script>\n{_build_embedded_ai_resize_script()}\n</script>\n"
+            )
+
+    merged_output_path.write_text(backtest_html, encoding="utf-8")
+    return merged_output_path
 
 
 def _build_buy_sell_chart_script(chart_id: str, payload: dict[str, Any]) -> str:
@@ -1905,6 +2141,7 @@ def html(
     log_lines: list[str] | None = None,
     current_position: str = CURRENT_POSITION_AUTO,
     ai_report_link: str | None = None,
+    ai_report_path: str | None = None,
 ) -> None:
     """
     生成一份 HTML 回测报告。
@@ -1934,10 +2171,19 @@ def html(
 
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
+    embedded_ai_report_html = _read_ai_report_html(ai_report_path)
     ai_report_link_html = (
-        f'<a class="page-header-ai-link" href="{html_escape(ai_report_link)}" target="_blank" rel="noopener noreferrer">AI</a>'
-        if ai_report_link
-        else ""
+        '<a class="page-header-ai-link" href="#ai-analysis-section">AI</a>'
+        if embedded_ai_report_html
+        else (
+            f'<a class="page-header-ai-link" href="{html_escape(ai_report_link)}" target="_blank" rel="noopener noreferrer">AI</a>'
+            if ai_report_link
+            else ""
+        )
+    )
+    embedded_ai_section_html = _build_embedded_ai_section(
+        embedded_ai_report_html,
+        ai_report_link=ai_report_link,
     )
 
     report_items = list(report_data or [])
@@ -2251,6 +2497,63 @@ def html(
     .chart-card {{
       margin-bottom: 20px;
       padding: 18px 18px 10px;
+    }}
+    .embedded-ai-section {{
+      margin-top: 20px;
+      background: var(--card);
+      border: 1px solid rgba(229, 231, 235, 0.9);
+      border-radius: 18px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+    }}
+    .embedded-ai-header {{
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 18px 20px 14px;
+      border-bottom: 1px solid rgba(229, 231, 235, 0.9);
+      background: linear-gradient(180deg, rgba(37, 99, 235, 0.06), rgba(37, 99, 235, 0));
+    }}
+    .embedded-ai-header h2 {{
+      margin: 0;
+      font-size: 18px;
+    }}
+    .embedded-ai-header p {{
+      margin: 8px 0 0;
+      color: var(--muted);
+      font-size: 13px;
+      line-height: 1.6;
+    }}
+    .embedded-ai-link {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 112px;
+      height: 34px;
+      padding: 0 14px;
+      border-radius: 999px;
+      border: 1px solid rgba(37, 99, 235, 0.18);
+      background: linear-gradient(180deg, #ffffff, #f3f8ff);
+      color: #1d4ed8;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 700;
+      white-space: nowrap;
+    }}
+    .embedded-ai-link:hover {{
+      background: linear-gradient(180deg, #ffffff, #eaf2ff);
+    }}
+    .embedded-ai-frame-wrap {{
+      padding: 0;
+      background: #eef4ff;
+    }}
+    .embedded-ai-iframe {{
+      display: block;
+      width: 100%;
+      min-height: 920px;
+      border: 0;
+      background: #fff;
     }}
     .chart-header {{
       margin-bottom: 8px;
@@ -2621,6 +2924,15 @@ def html(
       .advice-toolbar {{
         padding: 12px;
       }}
+      .embedded-ai-header {{
+        flex-direction: column;
+      }}
+      .embedded-ai-link {{
+        min-width: 100%;
+      }}
+      .embedded-ai-iframe {{
+        min-height: 760px;
+      }}
       .log-panel {{
         position: static;
       }}
@@ -2653,11 +2965,32 @@ def html(
         {log_panel_html}
       </div>
     </div>
+    {embedded_ai_section_html}
   </div>
   <script>
     {bootstrap_script}
     {''.join(chart_scripts)}
     window.__BTReport.init();
+    (function () {{
+      function resizeEmbeddedAIFrames() {{
+        document.querySelectorAll('.embedded-ai-iframe').forEach((frame) => {{
+          const doc = frame.contentWindow?.document;
+          if (!doc?.body) return;
+          const nextHeight = Math.max(
+            doc.body.scrollHeight || 0,
+            doc.documentElement?.scrollHeight || 0,
+            760
+          );
+          frame.style.height = `${{nextHeight + 8}}px`;
+        }});
+      }}
+      document.querySelectorAll('.embedded-ai-iframe').forEach((frame) => {{
+        frame.addEventListener('load', resizeEmbeddedAIFrames);
+      }});
+      window.addEventListener('load', resizeEmbeddedAIFrames);
+      window.addEventListener('resize', resizeEmbeddedAIFrames);
+      setTimeout(resizeEmbeddedAIFrames, 180);
+    }})();
   </script>
 </body>
 </html>
