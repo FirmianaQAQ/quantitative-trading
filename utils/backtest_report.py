@@ -19,6 +19,12 @@ CURRENT_POSITION_CHOICES = {
     CURRENT_POSITION_EMPTY,
     CURRENT_POSITION_HOLD,
 }
+ADVICE_SOURCE_STRATEGY = "strategy"
+ADVICE_SOURCE_OPTIMIZED = "optimized"
+ADVICE_SOURCE_CHOICES = {
+    ADVICE_SOURCE_STRATEGY,
+    ADVICE_SOURCE_OPTIMIZED,
+}
 
 
 def _is_missing(value: Any) -> bool:
@@ -90,6 +96,69 @@ def _strip_log_date_prefix(log_line: str) -> str:
     return re.sub(r"^\d{4}-\d{2}-\d{2}\s*", "", str(log_line)).strip()
 
 
+ACTION_SPECS = [
+    ("sell", "执行卖出", "建议按策略信号执行卖出，优先落袋或止损。"),
+    ("buy", "执行买入", "建议按策略信号执行买入，分配本轮计划仓位。"),
+    ("hold", "继续持有", "当前更适合继续持有，等待更明确的退出信号。"),
+    ("watch_buy", "关注买点", "当前接近买点，先观察确认，不要抢跑。"),
+    ("observe", "空仓观察", "当前没有明确买卖信号，继续观察即可。"),
+]
+ACTION_TITLE_MAP = {key: label for key, label, _ in ACTION_SPECS}
+ACTION_SUMMARY_MAP = {key: desc for key, _label, desc in ACTION_SPECS}
+
+
+def _rewrite_latest_action_for_position(
+    action: str,
+    reason: str,
+    normalized_current_position: str,
+) -> tuple[str, str, bool]:
+    if normalized_current_position == CURRENT_POSITION_AUTO:
+        return action, reason, action in {"buy", "sell", "watch_buy"}
+
+    if normalized_current_position == CURRENT_POSITION_EMPTY:
+        if action == "sell":
+            return (
+                "observe",
+                "当前实际空仓，卖出信号无需执行，继续观察下一次买点。",
+                False,
+            )
+        if action == "hold":
+            return (
+                "observe",
+                "当前实际空仓，不执行持有建议，继续观察即可。",
+                False,
+            )
+        if action == "observe":
+            return (
+                "observe",
+                "当前实际空仓，暂时没有明确买点，继续观察即可。",
+                False,
+            )
+        return action, reason, action in {"buy", "watch_buy"}
+
+    if action == "sell":
+        return action, reason, True
+    if action == "buy":
+        return (
+            "hold",
+            "当前实际持仓，买入信号可作为加仓参考，默认继续持有观察。",
+            False,
+        )
+    if action == "watch_buy":
+        return (
+            "hold",
+            "当前实际持仓，观察买点不作为新开仓信号，继续持有观察。",
+            False,
+        )
+    if action == "observe":
+        return (
+            "hold",
+            "当前实际持仓，暂无明确卖点，继续持有观察。",
+            False,
+        )
+    return action, reason, False
+
+
 def _extract_daily_advice_entries(
     report_data: list[dict[str, Any]],
     log_lines: list[str] | None,
@@ -138,13 +207,6 @@ def _extract_daily_advice_entries(
             continue
         logs_by_date.setdefault(date_text, []).append(_strip_log_date_prefix(str(line)))
 
-    action_specs = [
-        ("sell", "执行卖出", "建议按策略信号执行卖出，优先落袋或止损。"),
-        ("buy", "执行买入", "建议按策略信号执行买入，分配本轮计划仓位。"),
-        ("hold", "继续持有", "当前更适合继续持有，等待更明确的退出信号。"),
-        ("watch_buy", "关注买点", "当前接近买点，先观察确认，不要抢跑。"),
-        ("observe", "空仓观察", "当前没有明确买卖信号，继续观察即可。"),
-    ]
     action_priority = {
         "sell": [
             "卖出成交",
@@ -189,56 +251,6 @@ def _extract_daily_advice_entries(
             return "hold", "当前处于持仓阶段，继续跟踪卖出信号。", False
         return "observe", "当前没有明确买卖信号，保持观察。", False
 
-    def rewrite_latest_action(
-        action: str,
-        reason: str,
-    ) -> tuple[str, str, bool]:
-        if normalized_current_position == CURRENT_POSITION_AUTO:
-            return action, reason, action in {"buy", "sell", "watch_buy"}
-
-        if normalized_current_position == CURRENT_POSITION_EMPTY:
-            if action == "sell":
-                return (
-                    "observe",
-                    "当前实际空仓，卖出信号无需执行，继续观察下一次买点。",
-                    False,
-                )
-            if action == "hold":
-                return (
-                    "observe",
-                    "当前实际空仓，不执行持有建议，继续观察即可。",
-                    False,
-                )
-            if action == "observe":
-                return (
-                    "observe",
-                    "当前实际空仓，暂时没有明确买点，继续观察即可。",
-                    False,
-                )
-            return action, reason, action in {"buy", "watch_buy"}
-
-        if action == "sell":
-            return action, reason, True
-        if action == "buy":
-            return (
-                "hold",
-                "当前实际持仓，买入信号可作为加仓参考，默认继续持有观察。",
-                False,
-            )
-        if action == "watch_buy":
-            return (
-                "hold",
-                "当前实际持仓，观察买点不作为新开仓信号，继续持有观察。",
-                False,
-            )
-        if action == "observe":
-            return (
-                "hold",
-                "当前实际持仓，暂无明确卖点，继续持有观察。",
-                False,
-            )
-        return action, reason, False
-
     entries: list[dict[str, str | bool]] = []
     has_position = False
     for index, date in enumerate(dates):
@@ -257,12 +269,11 @@ def _extract_daily_advice_entries(
         reason = base_reason
         is_explicit_signal = action in {"buy", "sell", "watch_buy"}
         if is_latest_date:
-            action, reason, is_explicit_signal = rewrite_latest_action(
+            action, reason, is_explicit_signal = _rewrite_latest_action_for_position(
                 base_action,
                 base_reason,
+                normalized_current_position,
             )
-        title_map = {key: label for key, label, _ in action_specs}
-        default_desc_map = {key: desc for key, _label, desc in action_specs}
         reference_price = close_price_map.get(date)
         if base_action == "buy":
             reference_price = buy_price_map.get(date, reference_price)
@@ -282,14 +293,70 @@ def _extract_daily_advice_entries(
             {
                 "date": date,
                 "action": action,
-                "title": title_map.get(action, "空仓观察"),
+                "title": ACTION_TITLE_MAP.get(action, "空仓观察"),
                 "price": price_text,
-                "reason": reason or default_desc_map.get(action, ""),
-                "summary": default_desc_map.get(action, ""),
+                "reason": reason or ACTION_SUMMARY_MAP.get(action, ""),
+                "summary": ACTION_SUMMARY_MAP.get(action, ""),
                 "is_signal": action in {"buy", "sell", "watch_buy"},
             }
         )
 
+    entries.reverse()
+    return entries
+
+
+def _extract_optimized_advice_entries(
+    report_data: list[dict[str, Any]],
+    current_position: str = CURRENT_POSITION_AUTO,
+) -> list[dict[str, str | bool]]:
+    normalized_current_position = _normalize_current_position(current_position)
+    payload: dict[str, Any] | None = None
+    for item in report_data:
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("chart_name", "")).strip() != "优化买卖点":
+            continue
+        payload = _normalize_kline_payload(item.get("chart_data"))
+        break
+
+    if not payload:
+        return []
+
+    raw_entries = payload.get("advice_entries", []) or []
+    if not raw_entries:
+        return []
+
+    entries: list[dict[str, str | bool]] = []
+    for raw_entry in raw_entries:
+        if not isinstance(raw_entry, dict):
+            continue
+        date_text = str(raw_entry.get("date", "")).strip()
+        if not date_text:
+            continue
+        action = str(raw_entry.get("action", "observe")).strip() or "observe"
+        entries.append(
+            {
+                "date": date_text,
+                "action": action,
+                "title": str(raw_entry.get("title", ACTION_TITLE_MAP.get(action, "优化建议"))),
+                "price": str(raw_entry.get("price", "-")),
+                "reason": str(raw_entry.get("reason", ACTION_SUMMARY_MAP.get(action, ""))),
+                "summary": str(raw_entry.get("summary", ACTION_SUMMARY_MAP.get(action, ""))),
+                "is_signal": bool(raw_entry.get("is_signal", action in {"buy", "sell", "watch_buy"})),
+            }
+        )
+
+    entries.sort(key=lambda item: str(item["date"]))
+    if entries:
+        latest_entry = entries[-1]
+        action, reason, is_signal = _rewrite_latest_action_for_position(
+            str(latest_entry["action"]),
+            str(latest_entry["reason"]),
+            normalized_current_position,
+        )
+        latest_entry["action"] = action
+        latest_entry["reason"] = reason
+        latest_entry["is_signal"] = is_signal
     entries.reverse()
     return entries
 
@@ -305,16 +372,35 @@ def _build_advice_panel(
         CURRENT_POSITION_EMPTY,
         CURRENT_POSITION_HOLD,
     ]
-    entries_by_position = {
-        mode: _extract_daily_advice_entries(
-            report_data,
-            log_lines,
-            current_position=mode,
-        )
-        for mode in position_modes
+    source_entries_by_position = {
+        ADVICE_SOURCE_STRATEGY: {
+            mode: _extract_daily_advice_entries(
+                report_data,
+                log_lines,
+                current_position=mode,
+            )
+            for mode in position_modes
+        },
+        ADVICE_SOURCE_OPTIMIZED: {
+            mode: _extract_optimized_advice_entries(
+                report_data,
+                current_position=mode,
+            )
+            for mode in position_modes
+        },
     }
-    if not any(entries_by_position.values()):
+    available_sources = [
+        source
+        for source, entries_by_position in source_entries_by_position.items()
+        if any(entries_by_position.values())
+    ]
+    if not available_sources:
         return ""
+    default_source = (
+        ADVICE_SOURCE_OPTIMIZED
+        if ADVICE_SOURCE_OPTIMIZED in available_sources
+        else available_sources[0]
+    )
 
     position_mode_labels = {
         CURRENT_POSITION_AUTO: "按回测信号自动推断",
@@ -326,27 +412,28 @@ def _build_advice_panel(
         CURRENT_POSITION_EMPTY: "当前空仓",
         CURRENT_POSITION_HOLD: "当前持仓",
     }
+    source_labels = {
+        ADVICE_SOURCE_STRATEGY: "原策略",
+        ADVICE_SOURCE_OPTIMIZED: "优化策略",
+    }
     cards_html = []
     stats_html = []
     position_mode_chips_html = []
+    source_chips_html = []
+
+    if len(available_sources) > 1:
+        for source in available_sources:
+            source_chips_html.append(
+                f"""
+                <button
+                  type="button"
+                  class="advice-source-chip{' is-active' if source == default_source else ''}"
+                  data-advice-source="{html_escape(source)}"
+                >{html_escape(source_labels[source])}</button>
+                """
+            )
 
     for mode in position_modes:
-        entries = entries_by_position[mode]
-        signal_count = sum(1 for entry in entries if entry["is_signal"])
-        buy_count = sum(1 for entry in entries if entry["action"] == "buy")
-        sell_count = sum(1 for entry in entries if entry["action"] == "sell")
-        watch_count = sum(1 for entry in entries if entry["action"] == "watch_buy")
-        stats_style = "" if mode == normalized_current_position else ' style="display:none;"'
-        stats_html.append(
-            f"""
-            <div class="advice-stats" data-position-mode-stats="{html_escape(mode)}"{stats_style}>
-              <span class="advice-stat-pill">关键日 {signal_count}</span>
-              <span class="advice-stat-pill is-buy">买入 {buy_count}</span>
-              <span class="advice-stat-pill is-sell">卖出 {sell_count}</span>
-              <span class="advice-stat-pill is-watch">关注买点 {watch_count}</span>
-            </div>
-            """
-        )
         position_mode_chips_html.append(
             f"""
             <button
@@ -356,39 +443,71 @@ def _build_advice_panel(
             >{html_escape(position_mode_tab_labels[mode])}</button>
             """
         )
-        for entry in entries:
-            date_text = entry["date"]
-            year, month, day = _split_date_parts(date_text)
-            cards_html.append(
+
+    for source in available_sources:
+        entries_by_position = source_entries_by_position[source]
+        for mode in position_modes:
+            entries = entries_by_position[mode]
+            signal_count = sum(1 for entry in entries if entry["is_signal"])
+            buy_count = sum(1 for entry in entries if entry["action"] == "buy")
+            sell_count = sum(1 for entry in entries if entry["action"] == "sell")
+            watch_count = sum(1 for entry in entries if entry["action"] == "watch_buy")
+            stats_style = (
+                ""
+                if mode == normalized_current_position and source == default_source
+                else ' style="display:none;"'
+            )
+            stats_html.append(
                 f"""
-                <article
-                  class="advice-item"
-                  data-advice-date="{html_escape(date_text)}"
-                  data-advice-year="{html_escape(year)}"
-                  data-advice-month="{html_escape(month)}"
-                  data-advice-day="{html_escape(day)}"
-                  data-advice-action="{html_escape(entry['action'])}"
-                  data-advice-signal="{str(bool(entry['is_signal'])).lower()}"
-                  data-advice-position-mode="{html_escape(mode)}"
+                <div
+                  class="advice-stats"
+                  data-position-mode-stats="{html_escape(mode)}"
+                  data-advice-source="{html_escape(source)}"{stats_style}
                 >
-                  <div class="advice-item-head">
-                    <span class="advice-date">{date_text}</span>
-                    <span class="advice-badge is-{html_escape(entry['action'])}">{html_escape(entry['title'])}</span>
-                  </div>
-                  <div class="advice-price">参考价格：{html_escape(entry['price'])}</div>
-                  <div class="advice-summary">{html_escape(entry['summary'])}</div>
-                  <div class="advice-reason">{html_escape(entry['reason'])}</div>
-                </article>
+                  <span class="advice-stat-pill">关键日 {signal_count}</span>
+                  <span class="advice-stat-pill is-buy">买入 {buy_count}</span>
+                  <span class="advice-stat-pill is-sell">卖出 {sell_count}</span>
+                  <span class="advice-stat-pill is-watch">关注买点 {watch_count}</span>
+                </div>
                 """
             )
+            for entry in entries:
+                date_text = entry["date"]
+                year, month, day = _split_date_parts(date_text)
+                cards_html.append(
+                    f"""
+                    <article
+                      class="advice-item"
+                      data-advice-date="{html_escape(date_text)}"
+                      data-advice-year="{html_escape(year)}"
+                      data-advice-month="{html_escape(month)}"
+                      data-advice-day="{html_escape(day)}"
+                      data-advice-action="{html_escape(entry['action'])}"
+                      data-advice-signal="{str(bool(entry['is_signal'])).lower()}"
+                      data-advice-position-mode="{html_escape(mode)}"
+                      data-advice-source="{html_escape(source)}"
+                    >
+                      <div class="advice-item-head">
+                        <span class="advice-date">{date_text}</span>
+                        <span class="advice-badge is-{html_escape(entry['action'])}">{html_escape(entry['title'])}</span>
+                      </div>
+                      <div class="advice-price">参考价格：{html_escape(entry['price'])}</div>
+                      <div class="advice-summary">{html_escape(entry['summary'])}</div>
+                      <div class="advice-reason">{html_escape(entry['reason'])}</div>
+                    </article>
+                    """
+                )
 
     return f"""
-    <aside class="advice-panel">
+    <aside class="advice-panel" data-default-advice-source="{html_escape(default_source)}">
       <div class="advice-panel-header">
-        <h2>每日操作建议</h2>
-        <p>同一份报告内同时提供三种实际持仓口径，可切换查看。默认展示：{html_escape(position_mode_labels[normalized_current_position])}。</p>
+        <h2>买卖建议</h2>
+        <p>同一份报告内同时提供原策略与优化策略两套口径，并保留时间筛选与实际持仓切换。默认展示：{html_escape(source_labels[default_source])} / {html_escape(position_mode_labels[normalized_current_position])}。</p>
       </div>
       <div class="advice-toolbar">
+        <div class="advice-source-group" id="advice-source-group">
+          {''.join(source_chips_html)}
+        </div>
         <div class="advice-position-group" id="advice-position-group">
           {''.join(position_mode_chips_html)}
         </div>
@@ -523,6 +642,7 @@ def _normalize_kline_payload(data: Any) -> dict[str, Any]:
         "buy_points": [],
         "sell_points": [],
         "indicator_lines": [],
+        "advice_entries": [],
     }
 
     if isinstance(data, pd.DataFrame):
@@ -544,6 +664,7 @@ def _normalize_kline_payload(data: Any) -> dict[str, Any]:
             "buy_points": [],
             "sell_points": [],
             "indicator_lines": [],
+            "advice_entries": [],
         }
 
         reserved_columns = {"date", "open", "high", "low", "close", "volume"}
@@ -840,6 +961,7 @@ def _build_report_bootstrap_script() -> str:
       const currentFilter = { year: '', month: '', day: '' };
       let currentAdviceMode = 'all';
       let currentAdvicePositionMode = 'auto';
+      let currentAdviceSource = 'strategy';
 
       function parseDateParts(value) {
         const text = String(value || '');
@@ -1637,6 +1759,8 @@ def _build_report_bootstrap_script() -> str:
         const action = item.dataset.adviceAction || '';
         const isSignal = item.dataset.adviceSignal === 'true';
         const positionMode = item.dataset.advicePositionMode || 'auto';
+        const adviceSource = item.dataset.adviceSource || 'strategy';
+        if (adviceSource !== currentAdviceSource) return false;
         if (positionMode !== currentAdvicePositionMode) return false;
         if (currentAdviceMode === 'all') return true;
         if (currentAdviceMode === 'signal') return isSignal;
@@ -1661,10 +1785,22 @@ def _build_report_bootstrap_script() -> str:
         });
       }
 
+      function updateAdviceSourceButtons() {
+        document.querySelectorAll('.advice-source-chip').forEach((item) => {
+          item.classList.toggle(
+            'is-active',
+            item.dataset.adviceSource === currentAdviceSource
+          );
+        });
+      }
+
       function updateAdviceStatsVisibility() {
         document.querySelectorAll('[data-position-mode-stats]').forEach((item) => {
           item.style.display =
-            item.dataset.positionModeStats === currentAdvicePositionMode ? '' : 'none';
+            item.dataset.positionModeStats === currentAdvicePositionMode &&
+            (item.dataset.adviceSource || 'strategy') === currentAdviceSource
+              ? ''
+              : 'none';
         });
       }
 
@@ -1680,6 +1816,7 @@ def _build_report_bootstrap_script() -> str:
         });
         updateAdviceModeButtons();
         updateAdvicePositionButtons();
+        updateAdviceSourceButtons();
         updateAdviceStatsVisibility();
         if (emptyNode) {
           emptyNode.style.display = visibleCount > 0 ? 'none' : '';
@@ -1733,6 +1870,12 @@ def _build_report_bootstrap_script() -> str:
             updateAdviceVisibility();
           });
         });
+        document.querySelectorAll('.advice-source-chip').forEach((item) => {
+          item.addEventListener('click', () => {
+            currentAdviceSource = item.dataset.adviceSource || 'strategy';
+            updateAdviceVisibility();
+          });
+        });
       }
 
       return {
@@ -1742,6 +1885,10 @@ def _build_report_bootstrap_script() -> str:
           updateFilterControls();
         },
         init() {
+          const advicePanel = document.querySelector('.advice-panel[data-default-advice-source]');
+          if (advicePanel?.dataset.defaultAdviceSource) {
+            currentAdviceSource = advicePanel.dataset.defaultAdviceSource;
+          }
           bindFilterEvents();
           applyFilter();
         },
@@ -1822,7 +1969,7 @@ def html(
         chart_index += 1
         chart_id = f"chart_{chart_index}"
 
-        if chart_name == "买卖点":
+        if chart_name in {"买卖点", "优化买卖点"}:
             payload = _normalize_kline_payload(chart_data)
             chart_sections.append(_build_chart_block(chart_id, chart_name, subtitle))
             chart_scripts.append(_build_buy_sell_chart_script(chart_id, payload))
@@ -2193,6 +2340,12 @@ def html(
       gap: 8px;
       margin-bottom: 10px;
     }}
+    .advice-source-group {{
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 10px;
+    }}
     .advice-position-chip {{
       height: 34px;
       padding: 0 12px;
@@ -2210,6 +2363,28 @@ def html(
       color: #24324a;
     }}
     .advice-position-chip.is-active {{
+      border-color: rgba(84, 112, 198, 0.45);
+      background: linear-gradient(180deg, rgba(84, 112, 198, 0.16), rgba(84, 112, 198, 0.08));
+      color: #24324a;
+      box-shadow: 0 10px 22px rgba(84, 112, 198, 0.14);
+    }}
+    .advice-source-chip {{
+      height: 34px;
+      padding: 0 12px;
+      border: 1px solid rgba(148, 163, 184, 0.26);
+      border-radius: 999px;
+      background: linear-gradient(180deg, #ffffff, #f8fbff);
+      color: #475467;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 700;
+      transition: all 0.18s ease;
+    }}
+    .advice-source-chip:hover {{
+      border-color: rgba(84, 112, 198, 0.35);
+      color: #24324a;
+    }}
+    .advice-source-chip.is-active {{
       border-color: rgba(84, 112, 198, 0.45);
       background: linear-gradient(180deg, rgba(84, 112, 198, 0.16), rgba(84, 112, 198, 0.08));
       color: #24324a;

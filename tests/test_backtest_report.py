@@ -89,6 +89,46 @@ class BacktestReportAdviceTests(unittest.TestCase):
         )
         self.assertIn("当前实际持仓", html)
 
+    def test_advice_panel_contains_optimized_strategy_source(self) -> None:
+        report_data = build_buy_sell_report(
+            dates=["2026-05-13", "2026-05-14"],
+            buy_points=[["2026-05-13", 10.0]],
+        )
+        report_data.append(
+            {
+                "chart_name": "优化买卖点",
+                "chart_data": {
+                    "x_axis": ["2026-05-13", "2026-05-14"],
+                    "candles": [[10.0, 10.0], [11.0, 11.0]],
+                    "buy_points": [["2026-05-13", 10.0]],
+                    "sell_points": [],
+                    "indicator_lines": [],
+                    "advice_entries": [
+                        {
+                            "date": "2026-05-14",
+                            "action": "watch_buy",
+                            "title": "优化观察",
+                            "price": "11.00",
+                            "summary": "等待更好的入场点。",
+                            "reason": "趋势转暖，但不追高。",
+                            "is_signal": True,
+                        }
+                    ],
+                },
+            }
+        )
+
+        html = _build_advice_panel(
+            report_data,
+            log_lines=[],
+            current_position="auto",
+        )
+
+        self.assertIn('data-advice-source="optimized"', html)
+        self.assertIn('data-default-advice-source="optimized"', html)
+        self.assertIn("优化策略", html)
+        self.assertIn("优化观察", html)
+
     def test_html_report_title_can_include_ai_link(self) -> None:
         report_data = build_buy_sell_report(
             dates=["2026-05-13", "2026-05-14"],

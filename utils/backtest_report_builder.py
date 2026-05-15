@@ -215,6 +215,21 @@ def build_backtest_report_data(
         asset_name=config["code"],
         buy_sell_subtitle=f"{config['code']} 日线 + 均线信号",
     )
+    optimized_chart_data = build_optimized_trade_chart_data(
+        source_df=df,
+        filtered_df=filtered_df,
+        config=config,
+        indicator_lines=indicator_lines,
+        ma_periods=ma,
+    )
+    if optimized_chart_data:
+        report_data.append(
+            {
+                "chart_name": "优化买卖点",
+                "subtitle": "基于原策略增加趋势确认、回撤保护和不追高过滤后的优化建议",
+                "chart_data": optimized_chart_data,
+            }
+        )
     return report_data
 
 
@@ -358,6 +373,7 @@ def build_kline_chart_data(
     buy_points: list[list[Any]] | None = None,
     sell_points: list[list[Any]] | None = None,
     indicator_lines: list[dict[str, Any]] | None = None,
+    advice_entries: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     chart_df = df.copy()
     chart_df["date"] = pd.to_datetime(chart_df["date"])
@@ -370,7 +386,223 @@ def build_kline_chart_data(
         "buy_points": buy_points or [],
         "sell_points": sell_points or [],
         "indicator_lines": indicator_lines or [],
+        "advice_entries": advice_entries or [],
     }
+
+
+def build_optimized_trade_chart_data(
+    source_df: pd.DataFrame,
+    filtered_df: pd.DataFrame,
+    config: dict[str, Any],
+    indicator_lines: list[dict[str, Any]] | None = None,
+    ma_periods: list[int] | None = None,
+) -> dict[str, Any]:
+    if filtered_df.empty:
+        return {}
+
+    full_df = source_df.copy()
+    full_df["date"] = pd.to_datetime(full_df["date"])
+    full_df = full_df.sort_values("date").reset_index(drop=True)
+
+    fast_period = int(config.get("fast") or (ma_periods[0] if ma_periods else 8))
+    slow_period = int(
+        config.get("slow")
+        or (ma_periods[1] if ma_periods and len(ma_periods) > 1 else max(fast_period * 3, 20))
+    )
+    stop_loss_pct = float(config.get("stop_loss_pct", 0.1))
+    optimized_stop_loss_pct = min(max(stop_loss_pct * 0.8, 0.04), 0.12)
+    optimized_trailing_stop_pct = min(max(stop_loss_pct * 0.7, 0.05), 0.12)
+
+    full_df["fast_ma"] = full_df["close"].rolling(window=fast_period, min_periods=1).mean()
+    full_df["slow_ma"] = full_df["close"].rolling(window=slow_period, min_periods=1).mean()
+    full_df["prev_fast_ma"] = full_df["fast_ma"].shift(1)
+    full_df["prev_close"] = full_df["close"].shift(1)
+    full_df["momentum_3d"] = full_df["close"].pct_change(3)
+    full_df["momentum_5d"] = full_df["close"].pct_change(5)
+    full_df["turn_ma20"] = full_df["turn"].rolling(window=20, min_periods=5).mean()
+    full_df["recent_high_20"] = full_df["close"].rolling(window=20, min_periods=5).max()
+    full_df["recent_low_20"] = full_df["close"].rolling(window=20, min_periods=5).min()
+    full_df["up_days_4"] = (
+        (full_df["close"] > full_df["close"].shift(1)).astype(int).rolling(window=4, min_periods=4).sum()
+    )
+    full_df["close_below_fast_2d"] = (
+        (full_df["close"] < full_df["fast_ma"]).astype(int).rolling(window=2, min_periods=2).sum()
+    )
+
+    filtered_dates = pd.to_datetime(filtered_df["date"])
+    work_df = full_df.set_index("date").reindex(filtered_dates).reset_index().rename(
+        columns={"index": "date"}
+    )
+    work_df[["open", "high", "low", "close", "volume", "turn"]] = filtered_df[
+        ["open", "high", "low", "close", "volume", "turn"]
+    ].reset_index(drop=True)
+
+    buy_points: list[list[Any]] = []
+    sell_points: list[list[Any]] = []
+    advice_entries: list[dict[str, Any]] = []
+
+    holding = False
+    entry_price: float | None = None
+    highest_close_since_entry: float | None = None
+
+    for index, row in work_df.iterrows():
+        date_text = pd.Timestamp(row["date"]).strftime("%Y-%m-%d")
+        close_price = float(row["close"])
+        fast_ma = row["fast_ma"]
+        slow_ma = row["slow_ma"]
+        prev_fast_ma = row["prev_fast_ma"]
+        momentum_3d = row["momentum_3d"]
+        turn_ma20 = row["turn_ma20"]
+        recent_high_20 = row["recent_high_20"]
+        recent_low_20 = row["recent_low_20"]
+        up_days_4 = row["up_days_4"]
+        close_below_fast_2d = row["close_below_fast_2d"]
+
+        bullish_trend = (
+            pd.notna(fast_ma)
+            and pd.notna(slow_ma)
+            and close_price > float(slow_ma)
+            and float(fast_ma) >= float(slow_ma)
+            and (pd.isna(prev_fast_ma) or float(fast_ma) >= float(prev_fast_ma))
+        )
+        momentum_ok = (
+            (pd.notna(momentum_3d) and float(momentum_3d) >= 0.01)
+            or (pd.notna(up_days_4) and float(up_days_4) >= 3)
+        )
+        liquidity_ok = pd.isna(turn_ma20) or float(row["turn"]) >= float(turn_ma20) * 0.8
+        pullback_ok = (
+            pd.notna(recent_high_20)
+            and close_price <= float(recent_high_20) * 0.98
+        ) or (
+            pd.notna(fast_ma) and close_price <= float(fast_ma) * 1.015
+        )
+        chase_too_far = (
+            pd.notna(recent_low_20)
+            and float(recent_low_20) > 0
+            and (close_price / float(recent_low_20) - 1) > 0.18
+        )
+
+        if not holding and bullish_trend and momentum_ok and liquidity_ok and pullback_ok and not chase_too_far:
+            buy_points.append([date_text, round(close_price, 4)])
+            advice_entries.append(
+                {
+                    "date": date_text,
+                    "action": "buy",
+                    "title": "优化买入",
+                    "price": f"{close_price:.2f}",
+                    "summary": "趋势确认后择机低吸，不追高。",
+                    "reason": (
+                        f"快线 {float(fast_ma):.2f} 站上慢线 {float(slow_ma):.2f}，"
+                        f"近 4 天上涨天数={int(up_days_4) if pd.notna(up_days_4) else 0}，"
+                        "同时价格没有脱离短线太远，适合执行优化买入。"
+                    ),
+                    "is_signal": True,
+                }
+            )
+            holding = True
+            entry_price = close_price
+            highest_close_since_entry = close_price
+            continue
+
+        if holding:
+            highest_close_since_entry = max(highest_close_since_entry or close_price, close_price)
+            stop_loss_price = (entry_price or close_price) * (1 - optimized_stop_loss_pct)
+            trailing_stop_price = (highest_close_since_entry or close_price) * (1 - optimized_trailing_stop_pct)
+            trend_break = (
+                (pd.notna(close_below_fast_2d) and float(close_below_fast_2d) >= 2)
+                or (pd.notna(fast_ma) and pd.notna(slow_ma) and float(fast_ma) < float(slow_ma))
+            )
+            take_profit_soft = (
+                entry_price is not None
+                and close_price >= entry_price * 1.15
+                and pd.notna(momentum_3d)
+                and float(momentum_3d) < 0
+            )
+
+            sell_reason: str | None = None
+            if close_price <= stop_loss_price:
+                sell_reason = (
+                    f"跌破优化止损价 {stop_loss_price:.2f}，"
+                    "优先控制回撤。"
+                )
+            elif close_price <= trailing_stop_price and close_price > (entry_price or close_price):
+                sell_reason = (
+                    f"从持仓高点回撤超过 {optimized_trailing_stop_pct * 100:.1f}%，"
+                    "建议先落袋。"
+                )
+            elif trend_break:
+                sell_reason = "短线趋势走弱，连续跌破快线或快慢线重新转弱，建议退出。"
+            elif take_profit_soft:
+                sell_reason = "已有明显浮盈且短线动能转弱，适合先兑现收益。"
+
+            if sell_reason:
+                sell_points.append([date_text, round(close_price, 4)])
+                advice_entries.append(
+                    {
+                        "date": date_text,
+                        "action": "sell",
+                        "title": "优化卖出",
+                        "price": f"{close_price:.2f}",
+                        "summary": "优先保护利润和回撤，不恋战。",
+                        "reason": sell_reason,
+                        "is_signal": True,
+                    }
+                )
+                holding = False
+                entry_price = None
+                highest_close_since_entry = None
+
+    latest_row = work_df.iloc[-1]
+    latest_date = pd.Timestamp(latest_row["date"]).strftime("%Y-%m-%d")
+    latest_close = float(latest_row["close"])
+    if holding:
+        advice_entries.append(
+            {
+                "date": latest_date,
+                "action": "hold",
+                "title": "优化持有",
+                "price": f"{latest_close:.2f}",
+                "summary": "趋势尚未破坏，继续持有观察。",
+                "reason": "当前优化规则下仍未触发止损、回撤保护或趋势转弱卖点。",
+                "is_signal": False,
+            }
+        )
+    elif (
+        pd.notna(latest_row["fast_ma"])
+        and pd.notna(latest_row["slow_ma"])
+        and float(latest_row["close"]) > float(latest_row["slow_ma"])
+    ):
+        advice_entries.append(
+            {
+                "date": latest_date,
+                "action": "watch_buy",
+                "title": "优化观察",
+                "price": f"{latest_close:.2f}",
+                "summary": "趋势转暖，但仍需等更好的入场点。",
+                "reason": "长线趋势不差，但当前还没同时满足低吸位置与动量确认，先观察。",
+                "is_signal": True,
+            }
+        )
+    else:
+        advice_entries.append(
+            {
+                "date": latest_date,
+                "action": "observe",
+                "title": "继续观察",
+                "price": f"{latest_close:.2f}",
+                "summary": "当前不主动开仓。",
+                "reason": "趋势与位置尚未形成高质量买点，保持等待更稳妥。",
+                "is_signal": False,
+            }
+        )
+
+    return build_kline_chart_data(
+        filtered_df,
+        buy_points=buy_points,
+        sell_points=sell_points,
+        indicator_lines=indicator_lines,
+        advice_entries=advice_entries,
+    )
 
 
 def build_price_returns_series(
