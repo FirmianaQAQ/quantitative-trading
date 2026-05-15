@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import sys
 import math
+import os
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,7 @@ from backtest.simple_ma_backtest import (
     build_data_feed,
     create_cerebro,
 )
+from analysis.service import maybe_generate_pair_analysis
 from utils.backtest_report import html as generate_backtest_html
 from utils.backtest_report_builder import (
     build_backtrader_report_payload,
@@ -90,6 +92,7 @@ CONFIG: dict[str, Any] = {
     "report_name": "pair_trade_backtest",
     "strategy_name": "统计套利配对交易",
     "strategy_brief": "比值 zscore 穿越回归",
+    "enable_llm_analysis": False,
 }
 
 
@@ -691,6 +694,7 @@ def _generate_html_report(
     config: dict[str, Any],
     pair_label: str,
     log_lines: list[str] | None = None,
+    ai_report_path: Path | None = None,
 ) -> None:
     if not report_data:
         print("没有可用的回测数据来生成报告")
@@ -698,6 +702,11 @@ def _generate_html_report(
     report_dir = ensure_dir(PROJECT_ROOT / config["report_dir"])
     html_report_path = report_dir / f"{config['report_name']}-{config['code']}.html"
     title = f"{pair_label} {config.get('strategy_name', '配对交易')} 回测报告"
+    ai_report_link = None
+    if ai_report_path is not None:
+        ai_report_link = Path(
+            os.path.relpath(ai_report_path, start=html_report_path.parent)
+        ).as_posix()
     generate_backtest_html(
         report_data,
         str(html_report_path),
@@ -705,6 +714,7 @@ def _generate_html_report(
         title,
         log_lines=log_lines,
         current_position=str(config.get("current_position", "auto")),
+        ai_report_link=ai_report_link,
     )
     print(f"HTML 回测报告: {html_report_path}")
 
@@ -738,13 +748,29 @@ def run_backtest(config: dict[str, Any], df: pd.DataFrame | None = None) -> dict
     print(f"开始回测: 交易对={pair_label}，初始资金={initial_value:.2f}")
     strategy = cerebro.run()[0]
     summary = _build_summary(strategy, initial_value)
+    pair_quality = evaluate_pair_signal_quality(
+        signal_frame=spread_price_df,
+        selection_window=int(config["selection_window"]),
+        min_correlation=float(config["selection_min_correlation"]),
+        min_zero_crossings=int(config["selection_min_zero_crossings"]),
+        max_half_life=float(config["selection_max_half_life"]),
+    )
     summary.update(
         {
             "pair_code_a": code_a,
             "pair_code_b": code_b,
+            "pair_quality": pair_quality,
         }
     )
     _print_summary(summary, config, pair_label)
+
+    ai_report_path = maybe_generate_pair_analysis(
+        config=config,
+        summary=summary,
+        spread_price_df=spread_price_df,
+        pair_label=pair_label,
+        pair_quality=pair_quality,
+    )
 
     if config["plot"]:
         report_data = _build_pair_report_data(
@@ -754,7 +780,13 @@ def run_backtest(config: dict[str, Any], df: pd.DataFrame | None = None) -> dict
             pair_label,
             summary,
         )
-        _generate_html_report(report_data, config, pair_label, strategy.log_messages)
+        _generate_html_report(
+            report_data,
+            config,
+            pair_label,
+            strategy.log_messages,
+            ai_report_path=ai_report_path,
+        )
 
     return summary
 

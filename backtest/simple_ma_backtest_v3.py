@@ -23,6 +23,7 @@ from backtest.simple_ma_backtest import (
     generate_html_report,
     print_summary,
 )
+from analysis.service import maybe_generate_single_stock_analysis
 from utils.backtest_report_builder import (
     build_backtest_report_data,
     summarize_result,
@@ -388,13 +389,20 @@ def run_backtest(config: dict[str, Any], df: pd.DataFrame) -> dict[str, Any]:
     )
     print_summary(summary)
 
+    ai_report_path = maybe_generate_single_stock_analysis(config, summary, df)
+
     if config["plot"]:
         report_data = build_backtest_report_data(
             strategy,
             config,
             [config["fast"], config["slow"]],
         )
-        generate_html_report(report_data, config, getattr(strategy, "log_messages", []))
+        generate_html_report(
+            report_data,
+            config,
+            getattr(strategy, "log_messages", []),
+            ai_report_path=ai_report_path,
+        )
 
     return summary
 

@@ -1,9 +1,16 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from backtest.strategy_registry import StrategySpec
-from run_single_backtest_gui import write_family_dashboard_report
+from run_single_backtest_gui import (
+    AI_ANALYSIS_OFF,
+    AI_ANALYSIS_ON,
+    parse_cli_args,
+    resolve_ai_analysis_enabled,
+    write_family_dashboard_report,
+)
 
 
 def _dummy_strategy_spec(strategy_id: str, display_name: str) -> StrategySpec:
@@ -23,6 +30,27 @@ def _dummy_strategy_spec(strategy_id: str, display_name: str) -> StrategySpec:
 
 
 class FamilyDashboardReportTests(unittest.TestCase):
+    def test_parse_cli_args_supports_ai_flag_with_strategy_and_stock(self) -> None:
+        with patch(
+            "sys.argv",
+            [
+                "run_single_backtest_gui.py",
+                "--ai=off",
+                "tcl_simple_ma_backtest",
+                "sz.000100",
+            ],
+        ):
+            strategy_id, stock_code, ai_mode = parse_cli_args()
+
+        self.assertEqual(strategy_id, "tcl_simple_ma_backtest")
+        self.assertEqual(stock_code, "sz.000100")
+        self.assertEqual(ai_mode, AI_ANALYSIS_OFF)
+
+    def test_resolve_ai_analysis_enabled_honors_explicit_switch(self) -> None:
+        with patch("run_single_backtest_gui.is_llm_analysis_requested", return_value=False):
+            self.assertTrue(resolve_ai_analysis_enabled(AI_ANALYSIS_ON))
+            self.assertFalse(resolve_ai_analysis_enabled(AI_ANALYSIS_OFF))
+
     def test_dashboard_embeds_child_reports_into_single_html(self) -> None:
         spec_a = _dummy_strategy_spec("strategy_a", "版本A")
         spec_b = _dummy_strategy_spec("strategy_b", "版本B")

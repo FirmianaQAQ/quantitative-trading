@@ -7,3 +7,5 @@ data/*.db
 .vscode
 */__pycache__
 .minimax
+.env.local
+.env.*.local

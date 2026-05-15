@@ -36,6 +36,7 @@ r"""
 """
 
 import sys
+import os
 from pathlib import Path
 from typing import Any
 import json
@@ -54,6 +55,7 @@ from utils.backtest_report_builder import (
     summarize_result,
     build_backtest_report_data,
 )
+from analysis.service import maybe_generate_single_stock_analysis
 from utils.default_stocks import (
     DEFAULT_PRIMARY_STOCK_CODE,
     build_default_stock_test_cases,
@@ -121,6 +123,7 @@ CONFIG: dict[str, Any] = {
     "strategy_name": "普通双均线",
     "strategy_brief": "基础版",
     "current_position": "auto",
+    "enable_llm_analysis": False,
 }
 
 # 如需找到最合适的均线周期，启用这里的参数
@@ -1025,6 +1028,7 @@ def generate_html_report(
     report_data: list,
     config: dict[str, Any],
     log_lines: list[str] | None = None,
+    ai_report_path: Path | None = None,
 ) -> None:
     if not report_data:
         print("没有可用的回测数据来生成报告")
@@ -1032,6 +1036,11 @@ def generate_html_report(
     report_dir = ensure_dir(PROJECT_ROOT / config["report_dir"])
     html_report_path = report_dir / f"{config['report_name']}-{config['code']}.html"
     title = f"{config.get('code')} {config.get('strategy_name', '我的策略')} 回测报告"
+    ai_report_link = None
+    if ai_report_path is not None:
+        ai_report_link = Path(
+            os.path.relpath(ai_report_path, start=html_report_path.parent)
+        ).as_posix()
     generate_backtest_html(
         report_data,
         str(html_report_path),
@@ -1039,6 +1048,7 @@ def generate_html_report(
         title,
         log_lines=log_lines,
         current_position=str(config.get("current_position", "auto")),
+        ai_report_link=ai_report_link,
     )
     print(f"HTML 回测报告: {html_report_path}")
 
@@ -1153,13 +1163,20 @@ def run_backtest(config: dict[str, Any], df: pd.DataFrame) -> dict[str, Any]:
     print_summary(summary)
 
     # 绘图
+    ai_report_path = maybe_generate_single_stock_analysis(config, summary, df)
+
     if config["plot"]:
         report_data = build_backtest_report_data(
             strategy,
             config,
             [config["fast"], config["slow"]],
         )
-        generate_html_report(report_data, config, getattr(strategy, "log_messages", []))
+        generate_html_report(
+            report_data,
+            config,
+            getattr(strategy, "log_messages", []),
+            ai_report_path=ai_report_path,
+        )
 
     return summary
 

@@ -1757,6 +1757,7 @@ def html(
     title: str = "回测报告",
     log_lines: list[str] | None = None,
     current_position: str = CURRENT_POSITION_AUTO,
+    ai_report_link: str | None = None,
 ) -> None:
     """
     生成一份 HTML 回测报告。
@@ -1786,6 +1787,11 @@ def html(
 
     output = Path(output_path)
     output.parent.mkdir(parents=True, exist_ok=True)
+    ai_report_link_html = (
+        f'<a class="page-header-ai-link" href="{html_escape(ai_report_link)}" target="_blank" rel="noopener noreferrer">AI</a>'
+        if ai_report_link
+        else ""
+    )
 
     report_items = list(report_data or [])
     metric_cards_html = _build_metric_cards(report_items)
@@ -1926,6 +1932,34 @@ def html(
       margin: 0;
       font-size: 30px;
       line-height: 1.2;
+    }}
+    .page-header-title {{
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+    }}
+    .page-header-ai-link {{
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 42px;
+      height: 34px;
+      padding: 0 14px;
+      border-radius: 999px;
+      background: linear-gradient(135deg, #163b85, #2563eb);
+      color: #fff;
+      text-decoration: none;
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 0.04em;
+      box-shadow: 0 10px 24px rgba(37, 99, 235, 0.22);
+      transition: transform 0.18s ease, box-shadow 0.18s ease, opacity 0.18s ease;
+    }}
+    .page-header-ai-link:hover {{
+      transform: translateY(-1px);
+      box-shadow: 0 14px 28px rgba(37, 99, 235, 0.28);
+      opacity: 0.96;
     }}
     .page-header p {{
       margin: 10px 0 0;
@@ -2425,11 +2459,14 @@ def html(
   </style>
 </head>
 <body>
-  <div class="container">
-    <header class="page-header">
-      <h1>{title}</h1>
-      <p>{datetime.now().strftime("%Y-%m-%d %H:%M:%S")} 本报告由本地回测结果自动生成，图表使用 ECharts 6 渲染。</p>
-    </header>
+	 <div class="container">
+	    <header class="page-header">
+	      <div class="page-header-title">
+	        <h1>{title}</h1>
+	        {ai_report_link_html}
+	      </div>
+	      <p>{datetime.now().strftime("%Y-%m-%d %H:%M:%S")} 本报告由本地回测结果自动生成，图表使用 ECharts 6 渲染。</p>
+	    </header>
     {filter_toolbar_html}
     {metric_cards_html}
     <div class="content-layout">

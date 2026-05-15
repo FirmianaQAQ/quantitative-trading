@@ -16,6 +16,13 @@
 - 普通双均线
 - 统计套利配对交易
 
+当前项目还支持一层可选的 **大模型分析**：
+
+- 单次回测完成后，基于结构化指标生成 AI 分析报告
+- 批量回测完成后，基于候选结果生成 AI 横向比较报告
+- 大模型只做分析和归因，不直接参与下单或改写策略逻辑
+- 回测 HTML 标题后会自动出现 `AI` 按钮，可直接跳转到 AI 分析页
+
 说明：
 
 - 仓库里还有其他策略文件，但默认白名单只放开了上面两个大类
@@ -109,10 +116,88 @@ cd /Users/y/Downloads/project/quantitative-trading
 `start.sh` 会进入总菜单：
 
 ```text
-1. GUI 回测
-2. 终端批量回测
-3. 拉取数据
+1. GUI 回测 + AI 分析
+2. GUI 回测（不启用 AI）
+3. 终端批量回测
+4. 拉取数据
 q. 退出
+```
+
+说明：
+
+- 直接回车默认进入 `1. GUI 回测 + AI 分析`
+- 也支持快捷键：`ga`、`g`、`b`、`s`
+- 现在不再需要先选 GUI，再单独选一次 AI 开关
+
+## 5.1 启用大模型分析
+
+当前项目已经支持 **可切换模型**，并且默认按 **DeepSeek** 预设运行。
+
+默认加载顺序：
+
+1. 项目根目录下的 `.env.local`
+2. 项目根目录下的 `.env.llm.local`
+3. 当前 shell 已经导出的环境变量
+
+仓库里提供了一个示例文件：
+
+```text
+.env.llm.example
+```
+
+默认 DeepSeek 配置最少只需要这些字段：
+
+```bash
+QT_ENABLE_LLM_ANALYSIS=1
+QT_LLM_PROVIDER=deepseek
+QT_LLM_DEEPSEEK_API_KEY="你的 DeepSeek 密钥"
+```
+
+如果你想切换模型提供方，可以改：
+
+```bash
+QT_LLM_PROVIDER=openai
+QT_LLM_OPENAI_API_KEY="你的 OpenAI 密钥"
+QT_LLM_MODEL="gpt-5"
+```
+
+也支持自定义 OpenAI 兼容网关：
+
+```bash
+QT_LLM_PROVIDER=custom
+QT_LLM_API_KEY="你的密钥"
+QT_LLM_BASE_URL="你的兼容接口地址"
+QT_LLM_MODEL="你的模型名"
+```
+
+可选参数：
+
+```bash
+QT_LLM_TIMEOUT_SECONDS=60
+QT_LLM_TEMPERATURE=0.2
+```
+
+说明：
+
+- 默认 provider 是 `deepseek`
+- 默认 DeepSeek `base_url` 是 `https://api.deepseek.com`
+- 默认 DeepSeek `model` 是 `deepseek-chat`
+- 你可以随时用 `QT_LLM_PROVIDER` 和 `QT_LLM_MODEL` 覆盖默认值
+- 如果已开启分析但缺少必要环境变量，程序会直接报错，不做静默跳过
+- GUI 单次回测会产出单票分析报告
+- 终端批量回测会额外产出一份横向排序分析报告
+
+分析报告输出目录：
+
+```text
+logs/llm_analysis/
+```
+
+典型文件示例：
+
+```text
+logs/llm_analysis/simple_ma_backtest-sz.000725.html
+logs/llm_analysis/simple_ma_backtest_v2-batch.html
 ```
 
 ## 6. 数据同步

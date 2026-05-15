@@ -14,6 +14,7 @@ from backtest.pair_trade_backtest import (
     _build_spread_price_frame,
     evaluate_pair_signal_quality,
 )
+from analysis.config import is_llm_analysis_requested
 from backtest.strategy_registry import (
     StrategySpec,
     get_required_codes,
@@ -38,6 +39,9 @@ FULL_EXIT_CODE = 86
 DEFAULT_CASH = 100000.0
 DEFAULT_ADJUST_ORDER = ("hfq", "qfq", "cq")
 DEFAULT_CURRENT_POSITION = "auto"
+AI_ANALYSIS_ON = "on"
+AI_ANALYSIS_OFF = "off"
+AI_ANALYSIS_AUTO = "auto"
 PAIR_AUTO_PREFIX = "pair_auto|"
 MULTI_VERSION_FAMILY_IDS = {"simple_ma_backtest"}
 
@@ -290,29 +294,73 @@ def prompt_current_position() -> str:
         print("输入无效，请重新输入")
 
 
-def parse_cli_args() -> tuple[str | None, str | None]:
+def resolve_ai_analysis_enabled(ai_analysis_mode: str | None) -> bool:
+    if ai_analysis_mode == AI_ANALYSIS_ON:
+        return True
+    if ai_analysis_mode == AI_ANALYSIS_OFF:
+        return False
+    return is_llm_analysis_requested()
+
+
+def prompt_ai_analysis_enabled(default_enabled: bool) -> bool:
+    default_choice = "1" if default_enabled else "2"
+    while True:
+        print()
+        print("请选择是否启用 AI 分析：")
+        print(f"  1. 启用{'（当前默认）' if default_enabled else ''}")
+        print(f"  2. 关闭{'（当前默认）' if not default_enabled else ''}")
+        print("  q. 退出")
+
+        raw_value = input(f"请输入编号，直接回车默认 {default_choice}: ").strip().lower()
+        if not raw_value:
+            return default_enabled
+        if raw_value == "1":
+            return True
+        if raw_value == "2":
+            return False
+        if raw_value == "q":
+            raise SystemExit(FULL_EXIT_CODE)
+        print("输入无效，请重新输入")
+
+
+def parse_cli_args() -> tuple[str | None, str | None, str | None]:
     if len(sys.argv) <= 1:
-        return None, None
+        return None, None, None
+
+    positional_args: list[str] = []
+    ai_analysis_mode: str | None = None
+    for raw_arg in sys.argv[1:]:
+        arg = raw_arg.strip()
+        if arg.startswith("--ai="):
+            mode = arg.split("=", 1)[1].strip().lower()
+            if mode not in {AI_ANALYSIS_ON, AI_ANALYSIS_OFF, AI_ANALYSIS_AUTO}:
+                raise ValueError("无效的 --ai 参数，可选值: on, off, auto")
+            ai_analysis_mode = mode
+            continue
+        positional_args.append(arg)
+
+    if not positional_args:
+        return None, None, ai_analysis_mode
 
     strategy_ids = {spec.strategy_id for spec in list_strategy_specs()}
-    first_arg = sys.argv[1].strip()
+    first_arg = positional_args[0]
     if first_arg in strategy_ids:
         strategy_id = first_arg
         spec = get_strategy_spec(strategy_id)
         if supports_manual_pair_input(spec):
-            if len(sys.argv) >= 4:
+            if len(positional_args) >= 3:
                 stock_code = parse_manual_pair_selection(
-                    f"{sys.argv[2].strip()},{sys.argv[3].strip()}"
+                    f"{positional_args[1]},{positional_args[2]}"
                 )
-            elif len(sys.argv) >= 3:
-                stock_code = parse_manual_pair_selection(sys.argv[2].strip())
+            elif len(positional_args) >= 2:
+                stock_code = parse_manual_pair_selection(positional_args[1])
             else:
                 stock_code = None
         else:
-            stock_code = sys.argv[2].strip() if len(sys.argv) >= 3 else None
-        return strategy_id, stock_code
+            stock_code = positional_args[1] if len(positional_args) >= 2 else None
+        return strategy_id, stock_code, ai_analysis_mode
 
-    return None, normalize_code(first_arg)
+    return None, normalize_code(first_arg), ai_analysis_mode
 
 
 def normalize_cli_stock_selection(spec: StrategySpec, cli_stock_code: str | None) -> str | None:
@@ -342,6 +390,7 @@ def resolve_config(
     stock_selection: str | tuple[str, str] | None,
     cash: float,
     current_position: str = DEFAULT_CURRENT_POSITION,
+    enable_llm_analysis: bool | None = None,
 ) -> dict:
     config = dict(spec.config)
     if isinstance(stock_selection, tuple):
@@ -354,6 +403,11 @@ def resolve_config(
     config["plot"] = True
     config["print_log"] = False
     config["current_position"] = str(current_position or DEFAULT_CURRENT_POSITION).strip().lower()
+    config["enable_llm_analysis"] = (
+        resolve_ai_analysis_enabled(None)
+        if enable_llm_analysis is None
+        else bool(enable_llm_analysis)
+    )
 
     benchmark_code = config.get("benchmark_code", "")
     if benchmark_code:
@@ -858,6 +912,7 @@ def evaluate_stock_for_recommendation(
             "plot": False,
             "print_log": False,
             "benchmark_code": "",
+            "enable_llm_analysis": False,
         }
     )
     try:
@@ -967,9 +1022,16 @@ def run_single_strategy(
     cash: float,
     *,
     current_position: str = DEFAULT_CURRENT_POSITION,
+    enable_llm_analysis: bool | None = None,
     preload_df: pd.DataFrame | None = None,
 ) -> tuple[dict, Path]:
-    config = resolve_config(spec, stock_selection, cash, current_position)
+    config = resolve_config(
+        spec,
+        stock_selection,
+        cash,
+        current_position,
+        enable_llm_analysis=enable_llm_analysis,
+    )
     print(f"已选择策略: {spec.display_name} ({spec.strategy_id})")
     print(f"已选择股票: {config['code']} {get_display_label(spec, config['code'])}")
     print(f"初始资金: {config['cash']:.2f}")
@@ -988,6 +1050,7 @@ def run_simple_ma_family(
     stock_selection: str | tuple[str, str],
     cash: float,
     current_position: str = DEFAULT_CURRENT_POSITION,
+    enable_llm_analysis: bool | None = None,
 ) -> Path:
     family_specs = list_family_strategy_specs(selected_spec.family_id)
     if not family_specs:
@@ -998,6 +1061,7 @@ def run_simple_ma_family(
         stock_selection,
         cash,
         current_position,
+        enable_llm_analysis=enable_llm_analysis,
     )
     selected_code = selected_config["code"]
     selected_label = get_display_label(selected_spec, selected_code)
@@ -1012,6 +1076,7 @@ def run_simple_ma_family(
             stock_selection,
             cash,
             current_position,
+            enable_llm_analysis=enable_llm_analysis,
         )
         df_key = (preview_config["code"], preview_config["adjust_flag"])
         preload_df = None
@@ -1028,6 +1093,7 @@ def run_simple_ma_family(
             stock_selection,
             cash,
             current_position=current_position,
+            enable_llm_analysis=enable_llm_analysis,
             preload_df=preload_df,
         )
         version_reports.append((family_spec, report_path))
@@ -1046,7 +1112,7 @@ def run_simple_ma_family(
 
 
 def main() -> None:
-    cli_strategy_id, cli_stock_code = parse_cli_args()
+    cli_strategy_id, cli_stock_code, cli_ai_analysis_mode = parse_cli_args()
     while True:
         spec = choose_strategy_spec(cli_strategy_id)
         stock_code = normalize_cli_stock_selection(spec, cli_stock_code) or choose_stock_interactively(spec)
@@ -1057,12 +1123,18 @@ def main() -> None:
         break
     cash = prompt_initial_cash()
     current_position = prompt_current_position()
+    enable_llm_analysis = (
+        resolve_ai_analysis_enabled(cli_ai_analysis_mode)
+        if cli_ai_analysis_mode is not None
+        else prompt_ai_analysis_enabled(resolve_ai_analysis_enabled(None))
+    )
     if spec.family_id == "simple_ma_backtest":
         report_path = run_simple_ma_family(
             spec,
             stock_code,
             cash,
             current_position,
+            enable_llm_analysis,
         )
     else:
         _config, report_path = run_single_strategy(
@@ -1070,6 +1142,7 @@ def main() -> None:
             stock_code,
             cash,
             current_position=current_position,
+            enable_llm_analysis=enable_llm_analysis,
         )
         print(f"GUI 回测报告: {report_path}")
     try_open_report(report_path)

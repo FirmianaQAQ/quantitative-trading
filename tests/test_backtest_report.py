@@ -1,8 +1,11 @@
 import unittest
+import tempfile
+from pathlib import Path
 
 from utils.backtest_report import (
     _build_advice_panel,
     _extract_daily_advice_entries,
+    html as generate_backtest_html,
 )
 
 
@@ -85,6 +88,27 @@ class BacktestReportAdviceTests(unittest.TestCase):
             html,
         )
         self.assertIn("当前实际持仓", html)
+
+    def test_html_report_title_can_include_ai_link(self) -> None:
+        report_data = build_buy_sell_report(
+            dates=["2026-05-13", "2026-05-14"],
+            buy_points=[["2026-05-13", 10.0]],
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "report.html"
+            generate_backtest_html(
+                report_data=report_data,
+                output_path=str(output_path),
+                benchmarks=[],
+                title="测试回测报告",
+                ai_report_link="../llm_analysis/test-ai-report.html",
+            )
+            html = output_path.read_text(encoding="utf-8")
+
+        self.assertIn("page-header-ai-link", html)
+        self.assertIn('href="../llm_analysis/test-ai-report.html"', html)
+        self.assertIn(">AI<", html)
 
 
 if __name__ == "__main__":

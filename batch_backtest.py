@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from typing import Any
+
+from analysis.config import is_llm_analysis_requested
+from analysis.service import maybe_generate_batch_analysis
 from backtest.strategy_registry import (
     get_default_strategy_spec,
     get_required_codes,
@@ -12,7 +16,10 @@ from utils.project_utils import load_daily_data
 MULTI_VERSION_FAMILY_IDS = {"simple_ma_backtest"}
 
 
-def _run_single_batch_strategy(strategy_id: str, cash: float | None = None) -> None:
+def _run_single_batch_strategy(
+    strategy_id: str,
+    cash: float | None = None,
+) -> list[dict[str, Any]]:
     spec = get_strategy_spec(strategy_id)
     if not spec.test_cases:
         raise ValueError(f"策略 {spec.strategy_id} 没有配置 TEST_CASES，无法批量回测")
@@ -20,6 +27,7 @@ def _run_single_batch_strategy(strategy_id: str, cash: float | None = None) -> N
     base_config = dict(spec.config)
     base_config["plot"] = False
     base_config["print_log"] = False
+    base_config["enable_llm_analysis"] = is_llm_analysis_requested()
     if cash is not None:
         base_config["cash"] = cash
 
@@ -32,6 +40,7 @@ def _run_single_batch_strategy(strategy_id: str, cash: float | None = None) -> N
     print(f"已选择策略: {spec.display_name} ({spec.strategy_id})")
     print(f"初始资金: {base_config['cash']:.2f}")
 
+    batch_results: list[dict[str, Any]] = []
     for test_case in spec.test_cases:
         config = dict(base_config)
         config["code"] = test_case["code"]
@@ -40,7 +49,22 @@ def _run_single_batch_strategy(strategy_id: str, cash: float | None = None) -> N
             if get_required_codes(spec, config["code"]) == [config["code"]]
             else None
         )
-        spec.run_backtest(config, df)
+        summary = spec.run_backtest(config, df)
+        batch_results.append(
+            {
+                **summary,
+                "code": config["code"],
+                "strategy_id": spec.strategy_id,
+                "strategy_name": spec.display_name,
+                "enable_llm_analysis": bool(config.get("enable_llm_analysis")),
+            }
+        )
+    maybe_generate_batch_analysis(
+        strategy_id=spec.strategy_id,
+        strategy_name=spec.display_name,
+        batch_results=batch_results,
+    )
+    return batch_results
 
 
 def _run_multi_version_batch(spec_family_id: str, cash: float | None = None) -> None:
