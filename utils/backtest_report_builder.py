@@ -113,51 +113,6 @@ def build_backtest_report_data(
     
     summary = summarize_result(strategy, config["cash"])
     total_days = summary["position_days_total"] + summary["idle_cash_days_total"]
-
-    summary_metrics = format_summary_metrics(
-        [
-            {"label": "股票代码", "value": config["code"]},
-            {"label": "策略名称", "value": config.get("strategy_name", "my strategy")},
-            {"label": "初始资金", "value": summary["initial_value"], "kind": "number"},
-            {"label": "期末资产", "value": summary["final_value"], "kind": "number"},
-            {
-                "label": "总收益率",
-                "value": summary["total_return_pct"],
-                "kind": "percent",
-            },
-            {
-                "label": "年化收益率",
-                "value": summary["annual_return_pct"],
-                "kind": "percent",
-            },
-            {
-                "label": "最大回撤",
-                "value": summary["max_drawdown_pct"],
-                "kind": "percent",
-            },
-            {
-                "label": "最大回撤金额",
-                "value": summary["max_drawdown_amount"],
-                "kind": "number",
-            },
-            {"label": "最大回撤周期", "value": summary["drawdown_max_len"]},
-            {"label": "夏普比率", "value": summary["sharpe_ratio"], "kind": "number"},
-            {"label": "总交易次数", "value": summary["trades_total"]},
-            {"label": "盈利次数", "value": summary["trades_won"]},
-            {"label": "亏损次数", "value": summary["trades_lost"]},
-            {"label": "胜率", "value": summary["win_rate_pct"], "kind": "percent"},
-            {"label": "净利润", "value": summary["net_profit"], "kind": "number"},
-            {
-                "label": "平均每笔净利润",
-                "value": summary["avg_trade_profit"],
-                "kind": "number",
-            },
-            {"label": "资金占用天数", "value": summary["position_days_total"]},
-            {"label": "资金占用天数占比", "value": (summary["position_days_total"] / total_days * 100) if total_days > 0 else 0, "kind": "percent"},
-            {"label": "资金空闲天数", "value": summary["idle_cash_days_total"]},
-            {"label": "资金空闲天数占比", "value": (summary["idle_cash_days_total"] / total_days * 100) if total_days > 0 else 0, "kind": "percent"},
-        ]
-    )
     
     # 加载标的股票日线数据并进行日期过滤
     df = load_daily_data(config["code"], config["adjust_flag"])
@@ -191,6 +146,85 @@ def build_backtest_report_data(
             "name": f"MA{m}",
             "data": aligned_ma,
         })
+    optimized_chart_data = build_optimized_trade_chart_data(
+        source_df=df,
+        filtered_df=filtered_df,
+        config=config,
+        indicator_lines=indicator_lines,
+        ma_periods=ma,
+    )
+    next_trade_plan_by_position = {
+        "empty": extract_next_trade_plan_from_chart_data(
+            optimized_chart_data,
+            current_position="empty",
+        ),
+        "hold": extract_next_trade_plan_from_chart_data(
+            optimized_chart_data,
+            current_position="hold",
+        ),
+    }
+
+    summary_items = [
+        {"label": "股票代码", "value": config["code"]},
+        {"label": "策略名称", "value": config.get("strategy_name", "my strategy")},
+        {"label": "初始资金", "value": summary["initial_value"], "kind": "number"},
+        {"label": "期末资产", "value": summary["final_value"], "kind": "number"},
+        {
+            "label": "总收益率",
+            "value": summary["total_return_pct"],
+            "kind": "percent",
+        },
+        {
+            "label": "年化收益率",
+            "value": summary["annual_return_pct"],
+            "kind": "percent",
+        },
+        {
+            "label": "最大回撤",
+            "value": summary["max_drawdown_pct"],
+            "kind": "percent",
+        },
+        {
+            "label": "最大回撤金额",
+            "value": summary["max_drawdown_amount"],
+            "kind": "number",
+        },
+        {"label": "最大回撤周期", "value": summary["drawdown_max_len"]},
+        {"label": "夏普比率", "value": summary["sharpe_ratio"], "kind": "number"},
+        {"label": "总交易次数", "value": summary["trades_total"]},
+        {"label": "盈利次数", "value": summary["trades_won"]},
+        {"label": "亏损次数", "value": summary["trades_lost"]},
+        {"label": "胜率", "value": summary["win_rate_pct"], "kind": "percent"},
+        {"label": "净利润", "value": summary["net_profit"], "kind": "number"},
+        {
+            "label": "平均每笔净利润",
+            "value": summary["avg_trade_profit"],
+            "kind": "number",
+        },
+        {"label": "资金占用天数", "value": summary["position_days_total"]},
+        {"label": "资金占用天数占比", "value": (summary["position_days_total"] / total_days * 100) if total_days > 0 else 0, "kind": "percent"},
+        {"label": "资金空闲天数", "value": summary["idle_cash_days_total"]},
+        {"label": "资金空闲天数占比", "value": (summary["idle_cash_days_total"] / total_days * 100) if total_days > 0 else 0, "kind": "percent"},
+    ]
+    empty_plan = next_trade_plan_by_position.get("empty")
+    hold_plan = next_trade_plan_by_position.get("hold")
+    if empty_plan:
+        summary_items.extend(
+            [
+                {"label": "空仓-下一交易日策略", "value": empty_plan["display_action"]},
+                {"label": "空仓-预判摘要", "value": empty_plan["summary"]},
+            ]
+        )
+    if hold_plan:
+        summary_items.extend(
+            [
+                {"label": "持仓-下一交易日策略", "value": hold_plan["display_action"]},
+                {"label": "持仓-预判摘要", "value": hold_plan["summary"]},
+            ]
+        )
+
+    summary_metrics = format_summary_metrics(summary_items)
+
     # 计算基准收益率序列
     benchmark_returns = build_stock_returns_series(
         config.get("benchmark_code", ""), config["adjust_flag"], config["from_date"], config["to_date"]
@@ -214,13 +248,6 @@ def build_backtest_report_data(
         benchmark_name=config.get("benchmark_code", "基准"),
         asset_name=config["code"],
         buy_sell_subtitle=f"{config['code']} 日线 + 均线信号",
-    )
-    optimized_chart_data = build_optimized_trade_chart_data(
-        source_df=df,
-        filtered_df=filtered_df,
-        config=config,
-        indicator_lines=indicator_lines,
-        ma_periods=ma,
     )
     if optimized_chart_data:
         report_data.append(
@@ -387,6 +414,112 @@ def build_kline_chart_data(
         "sell_points": sell_points or [],
         "indicator_lines": indicator_lines or [],
         "advice_entries": advice_entries or [],
+    }
+
+
+_NEXT_TRADE_ACTION_LABELS = {
+    "buy": "偏买入",
+    "sell": "偏卖出",
+    "hold": "偏持有",
+    "watch_buy": "观察买点",
+    "observe": "继续观察",
+}
+_NEXT_TRADE_ACTION_SUMMARIES = {
+    "buy": "当前更适合准备买入，优先等确认后执行。",
+    "sell": "当前更适合准备卖出，优先控制回撤或落袋。",
+    "hold": "当前更适合继续持有，等待更明确的退出信号。",
+    "watch_buy": "当前接近买点，先观察确认，不要抢跑。",
+    "observe": "当前没有明确买卖信号，继续观察即可。",
+}
+
+
+def _normalize_trade_plan_position(current_position: str) -> str:
+    normalized = str(current_position or "").strip().lower()
+    alias_map = {
+        "": "auto",
+        "auto": "auto",
+        "empty": "empty",
+        "flat": "empty",
+        "none": "empty",
+        "hold": "hold",
+        "holding": "hold",
+        "position": "hold",
+    }
+    return alias_map.get(normalized, "auto")
+
+
+def _rewrite_trade_plan_for_position(
+    action: str,
+    reason: str,
+    current_position: str,
+) -> tuple[str, str]:
+    normalized_position = _normalize_trade_plan_position(current_position)
+    if normalized_position == "auto":
+        return action, reason
+
+    if normalized_position == "empty":
+        if action == "sell":
+            return "observe", "当前实际空仓，卖出信号无需执行，继续观察下一次买点。"
+        if action == "hold":
+            return "observe", "当前实际空仓，不执行持有建议，继续观察即可。"
+        if action == "observe":
+            return "observe", "当前实际空仓，暂时没有明确买点，继续观察即可。"
+        return action, reason
+
+    if action == "sell":
+        return action, reason
+    if action == "buy":
+        return "hold", "当前实际持仓，买入信号可作为加仓参考，默认继续持有观察。"
+    if action == "watch_buy":
+        return "hold", "当前实际持仓，观察买点不作为新开仓信号，继续持有观察。"
+    if action == "observe":
+        return "hold", "当前实际持仓，暂无明确卖点，继续持有观察。"
+    return action, reason
+
+
+def extract_next_trade_plan_from_chart_data(
+    chart_data: dict[str, Any] | None,
+    current_position: str = "auto",
+) -> dict[str, Any]:
+    if not isinstance(chart_data, dict):
+        return {}
+
+    advice_entries = chart_data.get("advice_entries") or []
+    if not advice_entries:
+        return {}
+
+    latest_entry = advice_entries[-1]
+    raw_action = str(latest_entry.get("action", "")).strip().lower()
+    if not raw_action:
+        return {}
+    raw_reason = str(latest_entry.get("reason", "")).strip()
+    raw_summary = str(latest_entry.get("summary", "")).strip()
+    action, reason = _rewrite_trade_plan_for_position(
+        raw_action,
+        raw_reason,
+        current_position=current_position,
+    )
+
+    display_action = _NEXT_TRADE_ACTION_LABELS.get(action, action)
+    latest_date = str(latest_entry.get("date", "")).strip()
+    latest_summary = (
+        raw_summary
+        if action == raw_action and raw_summary
+        else _NEXT_TRADE_ACTION_SUMMARIES.get(action, raw_summary)
+    )
+
+    summary_prefix = "基于最新趋势结构，"
+    if latest_date:
+        summary_prefix = f"基于 {latest_date} 收盘后的趋势结构，"
+
+    return {
+        "as_of_date": latest_date,
+        "session_label": "下一交易日",
+        "action": action,
+        "display_action": display_action,
+        "title": f"下一交易日{display_action}",
+        "summary": summary_prefix + latest_summary if latest_summary else summary_prefix,
+        "reason": reason,
     }
 
 
@@ -603,6 +736,58 @@ def build_optimized_trade_chart_data(
         indicator_lines=indicator_lines,
         advice_entries=advice_entries,
     )
+
+
+def build_next_trade_plan(
+    source_df: pd.DataFrame,
+    config: dict[str, Any],
+    indicator_lines: list[dict[str, Any]] | None = None,
+    ma_periods: list[int] | None = None,
+    current_position: str = "auto",
+) -> dict[str, Any]:
+    filtered_df = filter_backtest_data(
+        source_df,
+        from_date=config.get("from_date"),
+        to_date=config.get("to_date"),
+    )
+    if filtered_df.empty:
+        return {}
+
+    optimized_chart_data = build_optimized_trade_chart_data(
+        source_df=source_df,
+        filtered_df=filtered_df,
+        config=config,
+        indicator_lines=indicator_lines,
+        ma_periods=ma_periods,
+    )
+    return extract_next_trade_plan_from_chart_data(
+        optimized_chart_data,
+        current_position=current_position,
+    )
+
+
+def build_next_trade_plan_by_position(
+    source_df: pd.DataFrame,
+    config: dict[str, Any],
+    indicator_lines: list[dict[str, Any]] | None = None,
+    ma_periods: list[int] | None = None,
+) -> dict[str, dict[str, Any]]:
+    return {
+        "empty": build_next_trade_plan(
+            source_df=source_df,
+            config=config,
+            indicator_lines=indicator_lines,
+            ma_periods=ma_periods,
+            current_position="empty",
+        ),
+        "hold": build_next_trade_plan(
+            source_df=source_df,
+            config=config,
+            indicator_lines=indicator_lines,
+            ma_periods=ma_periods,
+            current_position="hold",
+        ),
+    }
 
 
 def build_price_returns_series(

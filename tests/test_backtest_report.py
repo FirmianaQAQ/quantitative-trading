@@ -2,11 +2,18 @@ import unittest
 import tempfile
 from pathlib import Path
 
+import pandas as pd
+
 from utils.backtest_report import (
+    _build_next_trade_plan_card,
     _build_advice_panel,
     _extract_daily_advice_entries,
     html as generate_backtest_html,
     merge_backtest_html_with_ai_report,
+)
+from utils.backtest_report_builder import (
+    build_next_trade_plan,
+    extract_next_trade_plan_from_chart_data,
 )
 
 
@@ -32,6 +39,118 @@ def build_buy_sell_report(
 
 
 class BacktestReportAdviceTests(unittest.TestCase):
+    def test_next_trade_plan_card_contains_action_summary_and_reason(self) -> None:
+        report_data = [
+            {
+                "chart_name": "优化买卖点",
+                "chart_data": {
+                    "x_axis": ["2026-05-19"],
+                    "candles": [[10.0, 10.1, 9.9, 10.2]],
+                    "buy_points": [],
+                    "sell_points": [],
+                    "indicator_lines": [],
+                    "advice_entries": [
+                        {
+                            "date": "2026-05-19",
+                            "action": "hold",
+                            "title": "优化持有",
+                            "summary": "趋势尚未破坏，继续持有观察。",
+                            "reason": "当前优化规则下仍未触发止损、回撤保护或趋势转弱卖点。",
+                            "is_signal": False,
+                        }
+                    ],
+                },
+            },
+        ]
+
+        html = _build_next_trade_plan_card(report_data)
+
+        self.assertIn("明日策略预判", html)
+        self.assertIn("如果你当前空仓", html)
+        self.assertIn("如果你当前持仓", html)
+        self.assertIn("继续观察", html)
+        self.assertIn("继续持有", html)
+        self.assertIn("预判依据", html)
+        self.assertIn("2026-05-19", html)
+
+    def test_extract_next_trade_plan_from_chart_data_maps_latest_advice(self) -> None:
+        plan = extract_next_trade_plan_from_chart_data(
+            {
+                "advice_entries": [
+                    {
+                        "date": "2026-05-19",
+                        "action": "watch_buy",
+                        "summary": "趋势转暖，但仍需等更好的入场点。",
+                        "reason": "长线趋势不差，但当前还没同时满足低吸位置与动量确认，先观察。",
+                    }
+                ]
+            }
+        )
+
+        self.assertEqual(plan["action"], "watch_buy")
+        self.assertEqual(plan["display_action"], "观察买点")
+        self.assertIn("2026-05-19", plan["summary"])
+        self.assertIn("低吸位置", plan["reason"])
+
+    def test_build_next_trade_plan_can_generate_hold_bias(self) -> None:
+        dates = pd.date_range("2026-04-01", periods=40, freq="D")
+        rows = []
+        for index, day in enumerate(dates, start=1):
+            close = 10 + index * 0.06
+            rows.append(
+                {
+                    "date": day.strftime("%Y-%m-%d"),
+                    "open": round(close - 0.05, 4),
+                    "high": round(close + 0.08, 4),
+                    "low": round(close - 0.08, 4),
+                    "close": round(close, 4),
+                    "volume": 100000 + index * 1000,
+                    "turn": 1.0 + index * 0.01,
+                }
+            )
+        df = pd.DataFrame(rows)
+
+        plan = build_next_trade_plan(
+            source_df=df,
+            config={
+                "from_date": "2026-04-01",
+                "to_date": "2026-05-10",
+                "fast": 8,
+                "slow": 20,
+                "stop_loss_pct": 0.1,
+            },
+            ma_periods=[8, 20],
+        )
+
+        self.assertEqual(plan["action"], "hold")
+        self.assertEqual(plan["display_action"], "偏持有")
+        self.assertIn("下一交易日", plan["title"])
+
+    def test_build_next_trade_plan_by_position_distinguishes_empty_and_hold(self) -> None:
+        chart_data = {
+            "advice_entries": [
+                {
+                    "date": "2026-05-19",
+                    "action": "watch_buy",
+                    "summary": "趋势转暖，但仍需等更好的入场点。",
+                    "reason": "长线趋势不差，但当前还没同时满足低吸位置与动量确认，先观察。",
+                }
+            ]
+        }
+
+        empty_plan = extract_next_trade_plan_from_chart_data(
+            chart_data,
+            current_position="empty",
+        )
+        hold_plan = extract_next_trade_plan_from_chart_data(
+            chart_data,
+            current_position="hold",
+        )
+
+        self.assertEqual(empty_plan["action"], "watch_buy")
+        self.assertEqual(hold_plan["action"], "hold")
+        self.assertIn("继续持有观察", hold_plan["reason"])
+
     def test_latest_advice_respects_empty_position_when_backtest_is_holding(self) -> None:
         report_data = build_buy_sell_report(
             dates=["2026-05-13", "2026-05-14"],
@@ -150,6 +269,50 @@ class BacktestReportAdviceTests(unittest.TestCase):
         self.assertIn("page-header-ai-link", html)
         self.assertIn('href="../llm_analysis/test-ai-report.html"', html)
         self.assertIn(">AI<", html)
+
+    def test_html_report_renders_next_trade_plan_card(self) -> None:
+        report_data = build_buy_sell_report(
+            dates=["2026-05-19"],
+            buy_points=[],
+            sell_points=[],
+        )
+        report_data.append(
+            {
+                "chart_name": "优化买卖点",
+                "chart_data": {
+                    "x_axis": ["2026-05-19"],
+                    "candles": [[10.0, 10.2, 9.9, 10.3]],
+                    "buy_points": [],
+                    "sell_points": [],
+                    "indicator_lines": [],
+                    "advice_entries": [
+                        {
+                            "date": "2026-05-19",
+                            "action": "watch_buy",
+                            "title": "优化观察",
+                            "summary": "趋势转暖，但仍需等更好的入场点。",
+                            "reason": "长线趋势不差，但当前还没同时满足低吸位置与动量确认，先观察。",
+                            "is_signal": True,
+                        }
+                    ],
+                },
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "report.html"
+            generate_backtest_html(
+                report_data=report_data,
+                output_path=str(output_path),
+                benchmarks=[],
+                title="测试回测报告",
+            )
+            html = output_path.read_text(encoding="utf-8")
+
+        self.assertIn("明日策略预判", html)
+        self.assertIn("如果你当前空仓", html)
+        self.assertIn("如果你当前持仓", html)
+        self.assertIn("含明日预判", html)
 
     def test_html_report_can_embed_ai_report_into_single_file(self) -> None:
         report_data = build_buy_sell_report(

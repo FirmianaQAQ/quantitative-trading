@@ -26,6 +26,8 @@ from backtest.simple_ma_backtest_v2 import (
 )
 from utils.backtest_report_builder import (
     build_backtest_report_data,
+    build_next_trade_plan,
+    build_next_trade_plan_by_position,
     summarize_result,
 )
 from utils.project_utils import load_daily_data
@@ -87,10 +89,21 @@ def run_backtest(config: dict[str, Any], df: pd.DataFrame) -> dict[str, Any]:
     strategies = cerebro.run()
     strategy = strategies[0]
     summary = summarize_result(strategy, initial_value)
+    next_trade_plan_by_position = build_next_trade_plan_by_position(
+        source_df=df,
+        config=config,
+        ma_periods=[config["fast"], config["slow"]],
+    )
     summary.update(
         {
             "fast_period": strategy.params.fast_period,
             "slow_period": strategy.params.slow_period,
+            "next_trade_plan": build_next_trade_plan(
+                source_df=df,
+                config=config,
+                ma_periods=[config["fast"], config["slow"]],
+            ),
+            "next_trade_plan_by_position": next_trade_plan_by_position,
         }
     )
     print_summary(summary)

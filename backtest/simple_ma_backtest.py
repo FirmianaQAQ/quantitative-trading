@@ -1022,6 +1022,33 @@ def print_summary(summary: dict[str, Any]) -> None:
     )
     print(f"  资金占用天数: {summary['position_days_total']}")
     print(f"  资金空闲天数: {summary['idle_cash_days_total']}")
+    next_trade_plan_by_position = summary.get("next_trade_plan_by_position")
+    if isinstance(next_trade_plan_by_position, dict) and next_trade_plan_by_position:
+        empty_plan = next_trade_plan_by_position.get("empty")
+        hold_plan = next_trade_plan_by_position.get("hold")
+        if isinstance(empty_plan, dict) and empty_plan:
+            print(
+                "  明日策略预判(当前空仓): "
+                f"{empty_plan.get('display_action', empty_plan.get('action', '-'))}"
+            )
+            print(f"  空仓预判摘要: {empty_plan.get('summary', '-')}")
+            print(f"  空仓预判依据: {empty_plan.get('reason', '-')}")
+        if isinstance(hold_plan, dict) and hold_plan:
+            print(
+                "  明日策略预判(当前持仓): "
+                f"{hold_plan.get('display_action', hold_plan.get('action', '-'))}"
+            )
+            print(f"  持仓预判摘要: {hold_plan.get('summary', '-')}")
+            print(f"  持仓预判依据: {hold_plan.get('reason', '-')}")
+        return
+    next_trade_plan = summary.get("next_trade_plan")
+    if isinstance(next_trade_plan, dict) and next_trade_plan:
+        print(
+            "  下一交易日策略: "
+            f"{next_trade_plan.get('display_action', next_trade_plan.get('action', '-'))}"
+        )
+        print(f"  预判摘要: {next_trade_plan.get('summary', '-')}")
+        print(f"  预判依据: {next_trade_plan.get('reason', '-')}")
 
 
 def generate_html_report(

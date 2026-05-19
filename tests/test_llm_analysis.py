@@ -86,6 +86,11 @@ class LLMAnalysisTests(unittest.TestCase):
                 "annual_return_pct": 18.3,
                 "max_drawdown_pct": 9.5,
                 "sharpe_ratio": 1.2,
+                "next_trade_plan": {
+                    "action": "watch_buy",
+                    "display_action": "观察买点",
+                    "summary": "基于 2024-03-30 收盘后的趋势结构，趋势转暖，但仍需等更好的入场点。",
+                },
             },
             df=_build_sample_price_df(),
         )
@@ -96,6 +101,10 @@ class LLMAnalysisTests(unittest.TestCase):
         self.assertIn("market_snapshot", payload)
         self.assertIsNotNone(payload["market_snapshot"]["return_20d_pct"])
         self.assertIsNotNone(payload["market_snapshot"]["ma20"])
+        self.assertEqual(
+            payload["performance_summary"]["next_trade_plan"]["action"],
+            "watch_buy",
+        )
 
     def test_build_batch_analysis_payload_ranks_best_candidate_first(self) -> None:
         payload = build_batch_analysis_payload(

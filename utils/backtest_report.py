@@ -807,6 +807,162 @@ def _build_metric_cards(report_data: list[dict[str, Any]]) -> str:
     return f'<section class="metrics-grid">{"".join(cards)}</section>'
 
 
+def _resolve_forecast_tone(action: str) -> str:
+    tone_map = {
+        "buy": "buy",
+        "watch_buy": "watch",
+        "hold": "hold",
+        "sell": "sell",
+        "observe": "neutral",
+    }
+    return tone_map.get(str(action or "").strip().lower(), "neutral")
+
+
+def _extract_next_trade_plan_preview(report_data: list[dict[str, Any]]) -> dict[str, Any]:
+    metrics_payload: dict[str, Any] = {}
+    optimized_chart_data: dict[str, Any] = {}
+
+    for item in report_data:
+        chart_name = str(item.get("chart_name", ""))
+        chart_data = item.get("chart_data")
+        if chart_name in {"指标概览", "绩效指标", "summary", "metrics"} and isinstance(chart_data, dict):
+            metrics_payload = chart_data
+        if chart_name == "优化买卖点" and isinstance(chart_data, dict):
+            optimized_chart_data = chart_data
+
+    advice_entries = optimized_chart_data.get("advice_entries") or []
+    latest_advice = advice_entries[-1] if advice_entries else {}
+    action = str(latest_advice.get("action", "")).strip().lower()
+    if not action:
+        display_action = (
+            str(metrics_payload.get("持仓-下一交易日策略", "")).strip()
+            or str(metrics_payload.get("下一交易日策略", "")).strip()
+        )
+        summary_text = (
+            str(metrics_payload.get("持仓-预判摘要", "")).strip()
+            or str(metrics_payload.get("预判摘要", "")).strip()
+        )
+        if not display_action:
+            return {}
+        return {
+            "display_action": display_action,
+            "summary": summary_text,
+            "reason": "",
+            "as_of_date": "",
+            "tone": "neutral",
+        }
+
+    tone_map = {
+        "buy": "buy",
+        "watch_buy": "watch",
+        "hold": "hold",
+        "sell": "sell",
+        "observe": "neutral",
+    }
+    return {
+        "display_action": (
+            str(metrics_payload.get("持仓-下一交易日策略", "")).strip()
+            or str(metrics_payload.get("下一交易日策略", "")).strip()
+            or str(latest_advice.get("title", "")).strip()
+        ),
+        "summary": (
+            str(metrics_payload.get("持仓-预判摘要", "")).strip()
+            or str(metrics_payload.get("预判摘要", "")).strip()
+            or str(latest_advice.get("summary", "")).strip()
+        ),
+        "reason": str(latest_advice.get("reason", "")).strip(),
+        "as_of_date": str(latest_advice.get("date", "")).strip(),
+        "tone": tone_map.get(action, "neutral"),
+    }
+
+
+def _extract_position_forecast_preview(
+    report_data: list[dict[str, Any]],
+    position_mode: str,
+) -> dict[str, Any]:
+    entries = _extract_optimized_advice_entries(
+        report_data,
+        current_position=position_mode,
+    )
+    if not entries:
+        return ""
+    latest_entry = entries[0]
+    return {
+        "position_mode": position_mode,
+        "position_label": "如果你当前空仓" if position_mode == CURRENT_POSITION_EMPTY else "如果你当前持仓",
+        "display_action": ACTION_TITLE_MAP.get(str(latest_entry.get("action", "")), str(latest_entry.get("action", "-"))),
+        "summary": ACTION_SUMMARY_MAP.get(str(latest_entry.get("action", "")), str(latest_entry.get("summary", "-"))),
+        "reason": str(latest_entry.get("reason", "")).strip(),
+        "as_of_date": str(latest_entry.get("date", "")).strip(),
+        "tone": _resolve_forecast_tone(str(latest_entry.get("action", ""))),
+    }
+
+
+def _build_next_trade_plan_card(report_data: list[dict[str, Any]]) -> str:
+    previews = [
+        preview
+        for preview in [
+            _extract_position_forecast_preview(report_data, CURRENT_POSITION_EMPTY),
+            _extract_position_forecast_preview(report_data, CURRENT_POSITION_HOLD),
+        ]
+        if preview
+    ]
+    if not previews:
+        single_preview = _extract_next_trade_plan_preview(report_data)
+        if not single_preview:
+            return ""
+        previews = [single_preview]
+
+    cards_html = []
+    for preview in previews:
+        as_of_text = ""
+        if preview.get("as_of_date"):
+            as_of_text = f"{html_escape(str(preview['as_of_date']))} 收盘后推演"
+
+        reason_html = ""
+        if preview.get("reason"):
+            reason_html = (
+                '<div class="forecast-scenario-reason">'
+                f'<span class="forecast-card-label">预判依据</span>'
+                f'<p>{html_escape(str(preview["reason"]))}</p>'
+                "</div>"
+            )
+
+        scenario_label_html = ""
+        if preview.get("position_label"):
+            scenario_label_html = (
+                f'<div class="forecast-scenario-label">{html_escape(str(preview["position_label"]))}</div>'
+            )
+
+        cards_html.append(
+            f"""
+            <article class="forecast-scenario is-{html_escape(str(preview.get("tone", "neutral")))}">
+              {scenario_label_html}
+              <div class="forecast-scenario-head">
+                <div class="forecast-scenario-action">{html_escape(str(preview.get("display_action", "-")))}</div>
+                <div class="forecast-scenario-meta">{as_of_text or "基于最新收盘后的趋势结构"}</div>
+              </div>
+              <p class="forecast-scenario-summary">{html_escape(str(preview.get("summary", "-")))}</p>
+              {reason_html}
+            </article>
+            """
+        )
+
+    return f"""
+    <section class="forecast-card">
+      <div class="forecast-card-head">
+        <div>
+          <div class="forecast-card-kicker">Tomorrow Bias</div>
+          <h2>明日策略预判</h2>
+        </div>
+      </div>
+      <div class="forecast-scenario-grid">
+        {"".join(cards_html)}
+      </div>
+    </section>
+    """
+
+
 def _build_filter_toolbar() -> str:
     return """
     <section class="filter-toolbar">
@@ -2304,6 +2460,7 @@ def html(
     )
 
     report_items = list(report_data or [])
+    next_trade_plan_html = _build_next_trade_plan_card(report_items)
     metric_cards_html = _build_metric_cards(report_items)
     filter_toolbar_html = _build_filter_toolbar()
     advice_panel_html = _build_advice_panel(
@@ -2410,6 +2567,8 @@ def html(
     ]
     if advice_panel_html:
         report_badges.append("含买卖建议")
+    if next_trade_plan_html:
+        report_badges.append("含明日预判")
     if embedded_ai_report_html:
         report_badges.append("已内嵌 AI 分析")
     elif ai_report_link:
@@ -2555,6 +2714,7 @@ def html(
       white-space: nowrap;
       box-shadow: 0 10px 20px -22px rgba(50, 50, 93, 0.45);
     }}
+    .forecast-card,
     .filter-toolbar,
     .metric-card,
     .chart-card,
@@ -2574,6 +2734,140 @@ def html(
       margin-bottom: 24px;
       padding: 20px 22px;
       box-shadow: var(--shadow);
+    }}
+    .forecast-card {{
+      position: relative;
+      margin-bottom: 24px;
+      padding: 22px 24px 20px;
+      box-shadow: var(--shadow-elevated);
+      overflow: hidden;
+      background:
+        radial-gradient(circle at top right, rgba(83, 58, 253, 0.08), transparent 28%),
+        linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(245, 248, 255, 0.96));
+    }}
+    .forecast-card::before {{
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 5px;
+      background: linear-gradient(180deg, #7c8aa5, #c5cfdb);
+    }}
+    .forecast-scenario-grid {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+      margin-top: 16px;
+    }}
+    .forecast-scenario {{
+      position: relative;
+      min-width: 0;
+      padding: 18px 18px 16px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.9);
+      box-shadow: 0 14px 30px -28px rgba(50, 50, 93, 0.48);
+      overflow: hidden;
+    }}
+    .forecast-scenario::before {{
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 4px;
+      background: linear-gradient(180deg, #7c8aa5, #c5cfdb);
+    }}
+    .forecast-scenario.is-buy::before {{
+      background: linear-gradient(180deg, #15be53, #84cc16);
+    }}
+    .forecast-scenario.is-watch::before {{
+      background: linear-gradient(180deg, #533afd, #8b7bff);
+    }}
+    .forecast-scenario.is-hold::before {{
+      background: linear-gradient(180deg, #2874ad, #5ba8df);
+    }}
+    .forecast-scenario.is-sell::before {{
+      background: linear-gradient(180deg, #ea2261, #f96bee);
+    }}
+    .forecast-card-head {{
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 16px;
+    }}
+    .forecast-card-kicker {{
+      margin-bottom: 8px;
+      color: var(--primary);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+    }}
+    .forecast-card h2 {{
+      margin: 0;
+      color: var(--heading);
+      font-size: 28px;
+      font-weight: 500;
+      letter-spacing: -0.03em;
+    }}
+    .forecast-scenario-label {{
+      margin-bottom: 10px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }}
+    .forecast-scenario-head {{
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }}
+    .forecast-scenario-action {{
+      display: inline-flex;
+      align-items: center;
+      min-height: 38px;
+      padding: 0 14px;
+      border-radius: 999px;
+      border: 1px solid rgba(83, 58, 253, 0.14);
+      background: rgba(255, 255, 255, 0.95);
+      color: var(--heading);
+      font-size: 14px;
+      font-weight: 700;
+      white-space: nowrap;
+      box-shadow: 0 14px 28px -24px rgba(50, 50, 93, 0.45);
+    }}
+    .forecast-scenario-meta {{
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.8;
+      text-align: right;
+    }}
+    .forecast-scenario-summary {{
+      margin: 14px 0 0;
+      color: var(--heading);
+      font-size: 15px;
+      line-height: 1.8;
+    }}
+    .forecast-scenario-reason {{
+      margin-top: 14px;
+      display: flex;
+      gap: 12px;
+      align-items: flex-start;
+    }}
+    .forecast-card-label {{
+      flex: 0 0 72px;
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      line-height: 1.8;
+    }}
+    .forecast-scenario-reason p {{
+      margin: 0;
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.8;
     }}
     .filter-toolbar-title {{
       width: 100%;
@@ -3025,6 +3319,31 @@ def html(
       .filter-toolbar {{
         padding: 14px;
       }}
+      .forecast-card {{
+        padding: 18px 16px 16px;
+      }}
+      .forecast-card h2 {{
+        font-size: 24px;
+      }}
+      .forecast-scenario-grid {{
+        grid-template-columns: 1fr;
+      }}
+      .forecast-scenario-head {{
+        flex-direction: column;
+      }}
+      .forecast-scenario-action {{
+        min-height: 36px;
+      }}
+      .forecast-scenario-meta {{
+        text-align: left;
+      }}
+      .forecast-scenario-reason {{
+        flex-direction: column;
+        gap: 4px;
+      }}
+      .forecast-card-label {{
+        flex-basis: auto;
+      }}
       .filter-toolbar-controls {{
         width: 100%;
       }}
@@ -3084,6 +3403,7 @@ def html(
         </div>
 	    </header>
     {filter_toolbar_html}
+    {next_trade_plan_html}
     {metric_cards_html}
     <div class="content-layout">
       <main class="charts-column">
