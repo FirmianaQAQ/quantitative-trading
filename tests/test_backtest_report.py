@@ -12,6 +12,7 @@ from utils.backtest_report import (
     merge_backtest_html_with_ai_report,
 )
 from utils.backtest_report_builder import (
+    build_empty_entry_timing_plan,
     build_next_trade_plan,
     extract_next_trade_plan_from_chart_data,
 )
@@ -125,6 +126,40 @@ class BacktestReportAdviceTests(unittest.TestCase):
         self.assertEqual(plan["action"], "hold")
         self.assertEqual(plan["display_action"], "偏持有")
         self.assertIn("下一交易日", plan["title"])
+
+    def test_build_empty_entry_timing_plan_returns_entry_window_hint(self) -> None:
+        dates = pd.date_range("2026-04-01", periods=40, freq="D")
+        rows = []
+        for index, day in enumerate(dates, start=1):
+            close = 10 + index * 0.04
+            rows.append(
+                {
+                    "date": day.strftime("%Y-%m-%d"),
+                    "open": round(close - 0.05, 4),
+                    "high": round(close + 0.08, 4),
+                    "low": round(close - 0.08, 4),
+                    "close": round(close, 4),
+                    "volume": 100000 + index * 1000,
+                    "turn": 1.0 + index * 0.01,
+                }
+            )
+        df = pd.DataFrame(rows)
+
+        timing = build_empty_entry_timing_plan(
+            source_df=df,
+            config={
+                "from_date": "2026-04-01",
+                "to_date": "2026-05-10",
+                "fast": 8,
+                "slow": 20,
+                "stop_loss_pct": 0.1,
+            },
+            ma_periods=[8, 20],
+        )
+
+        self.assertIn("label", timing)
+        self.assertIn("summary", timing)
+        self.assertIn("reference", timing)
 
     def test_build_next_trade_plan_by_position_distinguishes_empty_and_hold(self) -> None:
         chart_data = {

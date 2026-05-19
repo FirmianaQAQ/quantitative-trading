@@ -26,6 +26,7 @@ from backtest.simple_ma_backtest_v2 import (
 )
 from utils.backtest_report_builder import (
     build_backtest_report_data,
+    build_empty_entry_timing_plan,
     build_next_trade_plan,
     build_next_trade_plan_by_position,
     summarize_result,
@@ -34,6 +35,7 @@ from utils.project_utils import load_daily_data
 
 
 BOE_CODE = "sz.000725"
+STRATEGY_FAMILY_ID = "specialized_ma_backtest"
 
 CONFIG: dict[str, Any] = dict(V2_BASE_CONFIG)
 CONFIG.update(
@@ -94,6 +96,12 @@ def run_backtest(config: dict[str, Any], df: pd.DataFrame) -> dict[str, Any]:
         config=config,
         ma_periods=[config["fast"], config["slow"]],
     )
+    if next_trade_plan_by_position.get("empty"):
+        next_trade_plan_by_position["empty"]["entry_timing"] = build_empty_entry_timing_plan(
+            source_df=df,
+            config=config,
+            ma_periods=[config["fast"], config["slow"]],
+        )
     summary.update(
         {
             "fast_period": strategy.params.fast_period,

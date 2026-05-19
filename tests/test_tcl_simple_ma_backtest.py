@@ -13,8 +13,9 @@ class TclSimpleMABacktestTests(unittest.TestCase):
             validate_config(bad_config)
 
     def test_strategy_registry_contains_tcl_family(self) -> None:
-        strategy_ids = {spec.strategy_id for spec in list_strategy_specs()}
-        self.assertIn("tcl_simple_ma_backtest", strategy_ids)
+        specs = {spec.strategy_id: spec for spec in list_strategy_specs()}
+        self.assertIn("tcl_simple_ma_backtest", specs)
+        self.assertEqual(specs["tcl_simple_ma_backtest"].family_id, "specialized_ma_backtest")
 
 
 if __name__ == "__main__":

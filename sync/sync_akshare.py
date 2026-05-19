@@ -3,6 +3,8 @@ from __future__ import annotations
 import atexit
 import logging
 import os
+import shutil
+import subprocess
 import sys
 import time
 from collections import deque
@@ -13,6 +15,11 @@ import akshare as ak
 import pandas as pd
 import requests
 from requests import exceptions as requests_exceptions
+
+try:
+    import browser_cookie3
+except ImportError:
+    browser_cookie3 = None
 
 try:
     import baostock as bs
@@ -47,6 +54,9 @@ EASTMONEY_COOKIE_BOOTSTRAP_URLS = (
     "https://quote.eastmoney.com/center/gridlist.html",
     "https://quote.eastmoney.com/concept/sz000014.html",
 )
+EASTMONEY_COOKIE_CHROME_URL = "https://quote.eastmoney.com/"
+EASTMONEY_COOKIE_CHROME_APP = "Google Chrome"
+EASTMONEY_COOKIE_CHROME_TIMEOUT_SECONDS = 45
 TUSHARE_TOKEN = "2755050aba62303e45f6842ee9e67defdf6e3c1b32bb033ca4ba037e"
 TUSHARE_DAILY_MAX_CALLS_PER_MINUTE = 45
 TUSHARE_DAILY_WINDOW_SECONDS = 60
@@ -166,8 +176,110 @@ def build_eastmoney_headers(referer_url: str, cookie_str: str = "") -> dict[str,
     return headers
 
 
+def get_eastmoney_cookie_chrome_app_name() -> str:
+    chrome_app_name = os.getenv("EASTMONEY_COOKIE_CHROME_APP", EASTMONEY_COOKIE_CHROME_APP).strip()
+    if not chrome_app_name:
+        return EASTMONEY_COOKIE_CHROME_APP
+    return chrome_app_name
+
+
+def refresh_eastmoney_cookie_from_chrome_profile() -> str:
+    if browser_cookie3 is None:
+        raise RuntimeError("未安装 browser_cookie3，无法直接读取 Chrome cookie")
+
+    try:
+        cookie_jar = browser_cookie3.chrome(domain_name=".eastmoney.com")
+    except Exception as exc:
+        raise RuntimeError(f"读取 Chrome cookie 库失败: {exc}") from exc
+
+    cookie_str = format_cookie_header(cookie_jar)
+    if not cookie_str:
+        raise RuntimeError("Chrome cookie 库未返回有效的东方财富 cookie")
+    write_eastmoney_cookie(cookie_str)
+    logger.info("已从 Chrome cookie 库刷新东方财富 cookie")
+    return cookie_str
+
+
+def build_eastmoney_cookie_chrome_applescript(chrome_app_name: str, target_url: str) -> str:
+    escaped_app_name = chrome_app_name.replace("\\", "\\\\").replace('"', '\\"')
+    escaped_target_url = target_url.replace("\\", "\\\\").replace('"', '\\"')
+    return f"""
+set chromeAppName to "{escaped_app_name}"
+set targetURL to "{escaped_target_url}"
+using terms from application "Google Chrome"
+    tell application chromeAppName
+        activate
+        if (count of windows) = 0 then
+            make new window
+        end if
+        set targetWindow to front window
+        open location targetURL
+        repeat 60 times
+            delay 0.5
+            try
+                set cookieText to execute javascript "document.cookie" in active tab of targetWindow
+                if cookieText is not "" then
+                    return cookieText
+                end if
+            end try
+        end repeat
+        return ""
+    end tell
+end using terms from
+""".strip()
+
+
+def refresh_eastmoney_cookie_from_chrome() -> str:
+    profile_error: Exception | None = None
+    try:
+        return refresh_eastmoney_cookie_from_chrome_profile()
+    except Exception as exc:
+        profile_error = exc
+        logger.warning("从 Chrome cookie 库获取东方财富 cookie 失败: %s", exc)
+
+    if sys.platform != "darwin":
+        raise RuntimeError(f"从 Chrome 自动获取东方财富 cookie 失败: {profile_error}")
+    if shutil.which("osascript") is None:
+        raise RuntimeError(f"从 Chrome 自动获取东方财富 cookie 失败: {profile_error}")
+
+    chrome_app_name = get_eastmoney_cookie_chrome_app_name()
+    script = build_eastmoney_cookie_chrome_applescript(
+        chrome_app_name=chrome_app_name,
+        target_url=EASTMONEY_COOKIE_CHROME_URL,
+    )
+    try:
+        result = subprocess.run(
+            ["osascript", "-"],
+            input=script,
+            text=True,
+            capture_output=True,
+            timeout=EASTMONEY_COOKIE_CHROME_TIMEOUT_SECONDS,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("从 Chrome 获取东方财富 cookie 超时") from exc
+
+    if result.returncode != 0:
+        error_message = result.stderr.strip() or result.stdout.strip() or f"退出码 {result.returncode}"
+        raise RuntimeError(f"Chrome AppleScript 执行失败: {error_message}")
+
+    cookie_str = result.stdout.strip()
+    if not cookie_str:
+        raise RuntimeError("Chrome 页面未返回有效 cookie")
+    write_eastmoney_cookie(cookie_str)
+    logger.info("已从 Chrome 浏览器刷新东方财富 cookie")
+    return cookie_str
+
+
 def refresh_eastmoney_cookie(bootstrap_urls: list[str]) -> tuple[requests.Session, str]:
     last_error: Exception | None = None
+    try:
+        cookie_str = refresh_eastmoney_cookie_from_chrome()
+        return requests.Session(), cookie_str
+    except Exception as exc:
+        last_error = exc
+        logger.warning("从 Chrome 浏览器获取东方财富 cookie 失败: %s", exc)
+
     for bootstrap_url in bootstrap_urls:
         session = requests.Session()
         try:
@@ -191,8 +303,11 @@ def refresh_eastmoney_cookie(bootstrap_urls: list[str]) -> tuple[requests.Sessio
             logger.warning("从页面 %s 获取东方财富 cookie 失败: %s", bootstrap_url, exc)
 
     if last_error is not None:
-        raise RuntimeError(f"所有东方财富 cookie 页面都失败: {last_error}")
-    raise RuntimeError("未配置可用的东方财富 cookie 页面")
+        logger.warning("所有东方财富 cookie 页面都失败，改用无 cookie 新会话继续重试: %s", last_error)
+        return requests.Session(), ""
+
+    logger.warning("未配置可用的东方财富 cookie 页面，改用无 cookie 新会话继续重试")
+    return requests.Session(), ""
 
 
 def ensure_baostock_login() -> None:
@@ -615,7 +730,7 @@ def fetch_stock_history(
             raise RuntimeError(f"Tushare 仅支持不复权日线，不支持 {adjust_flag}")
         stock_sources = [tushare_source]
     elif source_name == SYNC_SOURCE_EASTMONEY:
-        stock_sources = [eastmoney_source, baostock_source, *akshare_sources]
+        stock_sources = [eastmoney_source, *akshare_sources, baostock_source]
         if is_unadjusted_flag(adjust_flag):
             stock_sources.append(tushare_source)
     elif source_name == SYNC_SOURCE_BAOSTOCK:
@@ -627,7 +742,7 @@ def fetch_stock_history(
         if is_unadjusted_flag(adjust_flag):
             stock_sources.append(tushare_source)
     else:
-        stock_sources = [eastmoney_source, baostock_source, *akshare_sources]
+        stock_sources = [eastmoney_source, *akshare_sources, baostock_source]
         if is_unadjusted_flag(adjust_flag):
             stock_sources.append(tushare_source)
         else:
@@ -1071,7 +1186,32 @@ def normalize_sina_stock_history_df(
     if raw_df.empty:
         return pd.DataFrame(columns=STORAGE_COLUMNS)
 
-    normalized_df = raw_df.copy()
+    column_aliases = {
+        "date": ("date", "Date", "日期"),
+        "open": ("open", "Open", "开盘"),
+        "high": ("high", "High", "最高"),
+        "low": ("low", "Low", "最低"),
+        "close": ("close", "Close", "收盘"),
+        "volume": ("volume", "Volume", "成交量"),
+        "amount": ("amount", "Amount", "成交额"),
+        "turnover": ("turnover", "Turnover", "换手率"),
+    }
+    rename_map: dict[str, str] = {}
+    for normalized_name, candidate_names in column_aliases.items():
+        for candidate_name in candidate_names:
+            if candidate_name in raw_df.columns:
+                rename_map[candidate_name] = normalized_name
+                break
+
+    normalized_df = raw_df.rename(columns=rename_map).copy()
+    required_columns = ["date", "open", "high", "low", "close", "volume"]
+    missing_columns = [column for column in required_columns if column not in normalized_df.columns]
+    if missing_columns:
+        raise RuntimeError(f"Sina 日线字段缺失: {', '.join(missing_columns)}")
+    if "amount" not in normalized_df.columns:
+        normalized_df["amount"] = 0
+    if "turnover" not in normalized_df.columns:
+        normalized_df["turnover"] = 0
     normalized_df["date"] = pd.to_datetime(
         normalized_df["date"], errors="coerce"
     ).dt.strftime("%Y-%m-%d")

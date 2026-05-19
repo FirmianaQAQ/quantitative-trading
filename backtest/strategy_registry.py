@@ -26,8 +26,7 @@ class StrategySpec:
 
 STRATEGY_FAMILY_DISPLAY_NAMES = {
     "simple_ma_backtest": "普通双均线",
-    "boe_simple_ma_backtest": "京东方双均线专版",
-    "tcl_simple_ma_backtest": "TCL双均线专版",
+    "specialized_ma_backtest": "单票双均线专版",
     "pair_trade_backtest": "统计套利配对交易",
     "rotation_backtest": "多因子轮动策略",
     "cta_event_backtest": "CTA策略",
@@ -36,13 +35,12 @@ STRATEGY_FAMILY_DISPLAY_NAMES = {
 }
 STRATEGY_FAMILY_ORDER = {
     "simple_ma_backtest": 0,
-    "boe_simple_ma_backtest": 1,
-    "tcl_simple_ma_backtest": 2,
-    "pair_trade_backtest": 3,
-    "rotation_backtest": 4,
-    "cta_event_backtest": 5,
-    "intraday_t_backtest": 6,
-    "asset_allocation_backtest": 7,
+    "specialized_ma_backtest": 1,
+    "pair_trade_backtest": 2,
+    "rotation_backtest": 3,
+    "cta_event_backtest": 4,
+    "intraday_t_backtest": 5,
+    "asset_allocation_backtest": 6,
 }
 
 # 白名单开关：
@@ -53,8 +51,7 @@ STRATEGY_ID_WHITELIST: frozenset[str] = frozenset()
 STRATEGY_FAMILY_WHITELIST: frozenset[str] = frozenset(
     {
         "simple_ma_backtest",
-        "boe_simple_ma_backtest",
-        "tcl_simple_ma_backtest",
+        "specialized_ma_backtest",
         "pair_trade_backtest",
     }
 )
@@ -86,6 +83,7 @@ def _build_strategy_spec(module: ModuleType, strategy_id: str) -> StrategySpec |
     config = dict(getattr(module, "CONFIG"))
     test_cases = list(getattr(module, "TEST_CASES"))
     family_id, version_number = _parse_strategy_family(strategy_id)
+    family_id = str(getattr(module, "STRATEGY_FAMILY_ID", family_id))
     if STRATEGY_ID_WHITELIST and strategy_id not in STRATEGY_ID_WHITELIST:
         return None
     if STRATEGY_FAMILY_WHITELIST and family_id not in STRATEGY_FAMILY_WHITELIST:

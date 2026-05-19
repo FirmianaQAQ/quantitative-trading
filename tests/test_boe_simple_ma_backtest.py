@@ -13,8 +13,9 @@ class BoeSimpleMABacktestTests(unittest.TestCase):
             validate_config(bad_config)
 
     def test_strategy_registry_contains_boe_family(self) -> None:
-        strategy_ids = {spec.strategy_id for spec in list_strategy_specs()}
-        self.assertIn("boe_simple_ma_backtest", strategy_ids)
+        specs = {spec.strategy_id: spec for spec in list_strategy_specs()}
+        self.assertIn("boe_simple_ma_backtest", specs)
+        self.assertEqual(specs["boe_simple_ma_backtest"].family_id, "specialized_ma_backtest")
 
 
 if __name__ == "__main__":

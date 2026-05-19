@@ -163,10 +163,21 @@ def build_backtest_report_data(
             current_position="hold",
         ),
     }
+    empty_entry_timing = build_empty_entry_timing_plan(
+        source_df=df,
+        config=config,
+        ma_periods=ma,
+    )
+    if next_trade_plan_by_position.get("empty") and empty_entry_timing:
+        next_trade_plan_by_position["empty"]["entry_timing"] = empty_entry_timing
 
     summary_items = [
         {"label": "股票代码", "value": config["code"]},
         {"label": "策略名称", "value": config.get("strategy_name", "my strategy")},
+        {
+            "label": "均线说明",
+            "value": "快线看短期节奏，慢线看中期趋势；快线强于慢线通常表示趋势偏强。",
+        },
         {"label": "初始资金", "value": summary["initial_value"], "kind": "number"},
         {"label": "期末资产", "value": summary["final_value"], "kind": "number"},
         {
@@ -215,6 +226,14 @@ def build_backtest_report_data(
                 {"label": "空仓-预判摘要", "value": empty_plan["summary"]},
             ]
         )
+        empty_entry_timing = empty_plan.get("entry_timing")
+        if isinstance(empty_entry_timing, dict) and empty_entry_timing:
+            summary_items.extend(
+                [
+                    {"label": "空仓-建仓时机", "value": empty_entry_timing.get("label", "")},
+                    {"label": "空仓-建仓提示", "value": empty_entry_timing.get("summary", "")},
+                ]
+            )
     if hold_plan:
         summary_items.extend(
             [
@@ -417,6 +436,48 @@ def build_kline_chart_data(
     }
 
 
+def _build_optimized_signal_frame(
+    source_df: pd.DataFrame,
+    filtered_df: pd.DataFrame,
+    config: dict[str, Any],
+    ma_periods: list[int] | None = None,
+) -> pd.DataFrame:
+    full_df = source_df.copy()
+    full_df["date"] = pd.to_datetime(full_df["date"])
+    full_df = full_df.sort_values("date").reset_index(drop=True)
+
+    fast_period = int(config.get("fast") or (ma_periods[0] if ma_periods else 8))
+    slow_period = int(
+        config.get("slow")
+        or (ma_periods[1] if ma_periods and len(ma_periods) > 1 else max(fast_period * 3, 20))
+    )
+
+    full_df["fast_ma"] = full_df["close"].rolling(window=fast_period, min_periods=1).mean()
+    full_df["slow_ma"] = full_df["close"].rolling(window=slow_period, min_periods=1).mean()
+    full_df["prev_fast_ma"] = full_df["fast_ma"].shift(1)
+    full_df["prev_close"] = full_df["close"].shift(1)
+    full_df["momentum_3d"] = full_df["close"].pct_change(3)
+    full_df["momentum_5d"] = full_df["close"].pct_change(5)
+    full_df["turn_ma20"] = full_df["turn"].rolling(window=20, min_periods=5).mean()
+    full_df["recent_high_20"] = full_df["close"].rolling(window=20, min_periods=5).max()
+    full_df["recent_low_20"] = full_df["close"].rolling(window=20, min_periods=5).min()
+    full_df["up_days_4"] = (
+        (full_df["close"] > full_df["close"].shift(1)).astype(int).rolling(window=4, min_periods=4).sum()
+    )
+    full_df["close_below_fast_2d"] = (
+        (full_df["close"] < full_df["fast_ma"]).astype(int).rolling(window=2, min_periods=2).sum()
+    )
+
+    filtered_dates = pd.to_datetime(filtered_df["date"])
+    work_df = full_df.set_index("date").reindex(filtered_dates).reset_index().rename(
+        columns={"index": "date"}
+    )
+    work_df[["open", "high", "low", "close", "volume", "turn"]] = filtered_df[
+        ["open", "high", "low", "close", "volume", "turn"]
+    ].reset_index(drop=True)
+    return work_df
+
+
 _NEXT_TRADE_ACTION_LABELS = {
     "buy": "偏买入",
     "sell": "偏卖出",
@@ -523,6 +584,117 @@ def extract_next_trade_plan_from_chart_data(
     }
 
 
+def build_empty_entry_timing_plan(
+    source_df: pd.DataFrame,
+    config: dict[str, Any],
+    ma_periods: list[int] | None = None,
+) -> dict[str, Any]:
+    filtered_df = filter_backtest_data(
+        source_df,
+        from_date=config.get("from_date"),
+        to_date=config.get("to_date"),
+    )
+    if filtered_df.empty:
+        return {}
+
+    work_df = _build_optimized_signal_frame(
+        source_df=source_df,
+        filtered_df=filtered_df,
+        config=config,
+        ma_periods=ma_periods,
+    )
+    if work_df.empty:
+        return {}
+
+    latest_row = work_df.iloc[-1]
+    close_price = float(latest_row["close"])
+    fast_ma = latest_row["fast_ma"]
+    slow_ma = latest_row["slow_ma"]
+    prev_fast_ma = latest_row["prev_fast_ma"]
+    momentum_3d = latest_row["momentum_3d"]
+    turn_ma20 = latest_row["turn_ma20"]
+    recent_high_20 = latest_row["recent_high_20"]
+    recent_low_20 = latest_row["recent_low_20"]
+    up_days_4 = latest_row["up_days_4"]
+
+    bullish_trend = (
+        pd.notna(fast_ma)
+        and pd.notna(slow_ma)
+        and close_price > float(slow_ma)
+        and float(fast_ma) >= float(slow_ma)
+        and (pd.isna(prev_fast_ma) or float(fast_ma) >= float(prev_fast_ma))
+    )
+    momentum_ok = (
+        (pd.notna(momentum_3d) and float(momentum_3d) >= 0.01)
+        or (pd.notna(up_days_4) and float(up_days_4) >= 3)
+    )
+    liquidity_ok = pd.isna(turn_ma20) or float(latest_row["turn"]) >= float(turn_ma20) * 0.8
+    pullback_ok = (
+        pd.notna(recent_high_20)
+        and close_price <= float(recent_high_20) * 0.98
+    ) or (
+        pd.notna(fast_ma) and close_price <= float(fast_ma) * 1.015
+    )
+    chase_too_far = (
+        pd.notna(recent_low_20)
+        and float(recent_low_20) > 0
+        and (close_price / float(recent_low_20) - 1) > 0.18
+    )
+
+    reference_parts: list[str] = []
+    if pd.notna(fast_ma):
+        reference_parts.append(f"快线参考位 {float(fast_ma):.2f}")
+    if pd.notna(slow_ma):
+        reference_parts.append(f"慢线防守位 {float(slow_ma):.2f}")
+
+    if bullish_trend and momentum_ok and liquidity_ok and pullback_ok and not chase_too_far:
+        label = "可考虑试探建仓"
+        summary = (
+            f"明日若价格继续站在慢线 {float(slow_ma):.2f} 上方，"
+            f"且没有明显高开脱离快线 {float(fast_ma):.2f}，可考虑分批试探建仓。"
+        )
+    elif bullish_trend and momentum_ok and liquidity_ok and chase_too_far:
+        label = "等待回踩再建仓"
+        pullback_price = None
+        if pd.notna(fast_ma):
+            pullback_price = float(fast_ma) * 1.015
+        if pd.notna(recent_high_20):
+            candidate = float(recent_high_20) * 0.98
+            pullback_price = min(pullback_price, candidate) if pullback_price else candidate
+        pullback_text = f"{pullback_price:.2f}" if pullback_price else "快线附近"
+        summary = (
+            "趋势和动能都不差，但当前位置偏高。"
+            f"明日优先等回踩到 {pullback_text} 一带，再考虑建仓，不追高。"
+        )
+    elif bullish_trend and not momentum_ok:
+        label = "等待动能确认"
+        summary = (
+            "长线趋势已转暖，但短线动能还不够。"
+            "明日优先等近 4 日上涨天数达到 3 天以上，或 3 日动能转正到 1% 附近后，再考虑建仓。"
+        )
+    elif bullish_trend and momentum_ok and not liquidity_ok:
+        label = "等待量能恢复"
+        turn_reference = float(turn_ma20) * 0.8 if pd.notna(turn_ma20) else None
+        turn_text = f"{turn_reference:.2f}" if turn_reference is not None else "20 日均量附近"
+        summary = (
+            "趋势条件接近满足，但量能/换手偏弱。"
+            f"明日优先等换手回到 {turn_text} 以上，再考虑建仓。"
+        )
+    else:
+        label = "等待趋势翻多"
+        slow_text = f"{float(slow_ma):.2f}" if pd.notna(slow_ma) else "慢线之上"
+        summary = (
+            "当前均线结构还没完全转强。"
+            f"明日优先观察收盘重新站上 {slow_text}，且快线不弱于慢线后，再考虑建仓。"
+        )
+
+    return {
+        "label": label,
+        "summary": summary,
+        "reference": "；".join(reference_parts),
+    }
+
+
 def build_optimized_trade_chart_data(
     source_df: pd.DataFrame,
     filtered_df: pd.DataFrame,
@@ -532,43 +704,15 @@ def build_optimized_trade_chart_data(
 ) -> dict[str, Any]:
     if filtered_df.empty:
         return {}
-
-    full_df = source_df.copy()
-    full_df["date"] = pd.to_datetime(full_df["date"])
-    full_df = full_df.sort_values("date").reset_index(drop=True)
-
-    fast_period = int(config.get("fast") or (ma_periods[0] if ma_periods else 8))
-    slow_period = int(
-        config.get("slow")
-        or (ma_periods[1] if ma_periods and len(ma_periods) > 1 else max(fast_period * 3, 20))
-    )
     stop_loss_pct = float(config.get("stop_loss_pct", 0.1))
     optimized_stop_loss_pct = min(max(stop_loss_pct * 0.8, 0.04), 0.12)
     optimized_trailing_stop_pct = min(max(stop_loss_pct * 0.7, 0.05), 0.12)
-
-    full_df["fast_ma"] = full_df["close"].rolling(window=fast_period, min_periods=1).mean()
-    full_df["slow_ma"] = full_df["close"].rolling(window=slow_period, min_periods=1).mean()
-    full_df["prev_fast_ma"] = full_df["fast_ma"].shift(1)
-    full_df["prev_close"] = full_df["close"].shift(1)
-    full_df["momentum_3d"] = full_df["close"].pct_change(3)
-    full_df["momentum_5d"] = full_df["close"].pct_change(5)
-    full_df["turn_ma20"] = full_df["turn"].rolling(window=20, min_periods=5).mean()
-    full_df["recent_high_20"] = full_df["close"].rolling(window=20, min_periods=5).max()
-    full_df["recent_low_20"] = full_df["close"].rolling(window=20, min_periods=5).min()
-    full_df["up_days_4"] = (
-        (full_df["close"] > full_df["close"].shift(1)).astype(int).rolling(window=4, min_periods=4).sum()
+    work_df = _build_optimized_signal_frame(
+        source_df=source_df,
+        filtered_df=filtered_df,
+        config=config,
+        ma_periods=ma_periods,
     )
-    full_df["close_below_fast_2d"] = (
-        (full_df["close"] < full_df["fast_ma"]).astype(int).rolling(window=2, min_periods=2).sum()
-    )
-
-    filtered_dates = pd.to_datetime(filtered_df["date"])
-    work_df = full_df.set_index("date").reindex(filtered_dates).reset_index().rename(
-        columns={"index": "date"}
-    )
-    work_df[["open", "high", "low", "close", "volume", "turn"]] = filtered_df[
-        ["open", "high", "low", "close", "volume", "turn"]
-    ].reset_index(drop=True)
 
     buy_points: list[list[Any]] = []
     sell_points: list[list[Any]] = []

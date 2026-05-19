@@ -980,6 +980,7 @@ def print_summary(summary: dict[str, Any]) -> None:
     print("回测结果:")
     print(f"  快线周期: {summary['fast_period']}")
     print(f"  慢线周期: {summary['slow_period']}")
+    print("  均线说明: 快线看短期节奏，慢线看中期趋势；快线强于慢线通常表示趋势偏强。")
     print(f"  初始资金: {summary['initial_value']:.2f}")
     print(f"  期末资产: {summary['final_value']:.2f}")
     print(f"  总收益率: {summary['total_return_pct']:.2f}%")
@@ -1033,6 +1034,12 @@ def print_summary(summary: dict[str, Any]) -> None:
             )
             print(f"  空仓预判摘要: {empty_plan.get('summary', '-')}")
             print(f"  空仓预判依据: {empty_plan.get('reason', '-')}")
+            entry_timing = empty_plan.get("entry_timing")
+            if isinstance(entry_timing, dict) and entry_timing:
+                print(f"  空仓建仓时机: {entry_timing.get('label', '-')}")
+                print(f"  空仓建仓提示: {entry_timing.get('summary', '-')}")
+                if entry_timing.get("reference"):
+                    print(f"  空仓参考价位: {entry_timing.get('reference', '-')}")
         if isinstance(hold_plan, dict) and hold_plan:
             print(
                 "  明日策略预判(当前持仓): "

@@ -880,6 +880,14 @@ def _extract_position_forecast_preview(
     report_data: list[dict[str, Any]],
     position_mode: str,
 ) -> dict[str, Any]:
+    metrics_payload: dict[str, Any] = {}
+    for item in report_data:
+        chart_name = str(item.get("chart_name", ""))
+        chart_data = item.get("chart_data")
+        if chart_name in {"指标概览", "绩效指标", "summary", "metrics"} and isinstance(chart_data, dict):
+            metrics_payload = chart_data
+            break
+
     entries = _extract_optimized_advice_entries(
         report_data,
         current_position=position_mode,
@@ -895,6 +903,16 @@ def _extract_position_forecast_preview(
         "reason": str(latest_entry.get("reason", "")).strip(),
         "as_of_date": str(latest_entry.get("date", "")).strip(),
         "tone": _resolve_forecast_tone(str(latest_entry.get("action", ""))),
+        "entry_timing_label": (
+            str(metrics_payload.get("空仓-建仓时机", "")).strip()
+            if position_mode == CURRENT_POSITION_EMPTY
+            else ""
+        ),
+        "entry_timing_summary": (
+            str(metrics_payload.get("空仓-建仓提示", "")).strip()
+            if position_mode == CURRENT_POSITION_EMPTY
+            else ""
+        ),
     }
 
 
@@ -934,6 +952,15 @@ def _build_next_trade_plan_card(report_data: list[dict[str, Any]]) -> str:
                 f'<div class="forecast-scenario-label">{html_escape(str(preview["position_label"]))}</div>'
             )
 
+        entry_timing_html = ""
+        if preview.get("entry_timing_label") or preview.get("entry_timing_summary"):
+            entry_timing_html = (
+                '<div class="forecast-scenario-timing">'
+                f'<div class="forecast-scenario-timing-title">{html_escape(str(preview.get("entry_timing_label", "建仓时机")))}</div>'
+                f'<p>{html_escape(str(preview.get("entry_timing_summary", "")))}</p>'
+                "</div>"
+            )
+
         cards_html.append(
             f"""
             <article class="forecast-scenario is-{html_escape(str(preview.get("tone", "neutral")))}">
@@ -943,6 +970,7 @@ def _build_next_trade_plan_card(report_data: list[dict[str, Any]]) -> str:
                 <div class="forecast-scenario-meta">{as_of_text or "基于最新收盘后的趋势结构"}</div>
               </div>
               <p class="forecast-scenario-summary">{html_escape(str(preview.get("summary", "-")))}</p>
+              {entry_timing_html}
               {reason_html}
             </article>
             """
@@ -2738,64 +2766,34 @@ def html(
     .forecast-card {{
       position: relative;
       margin-bottom: 24px;
-      padding: 22px 24px 20px;
+      padding: 0;
       box-shadow: var(--shadow-elevated);
       overflow: hidden;
       background:
-        radial-gradient(circle at top right, rgba(83, 58, 253, 0.08), transparent 28%),
-        linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(245, 248, 255, 0.96));
+        radial-gradient(circle at top right, rgba(17, 94, 89, 0.08), transparent 26%),
+        linear-gradient(180deg, #fbfcfd, #f3f7f9 100%);
     }}
     .forecast-card::before {{
       content: "";
       position: absolute;
-      inset: 0 auto 0 0;
-      width: 5px;
-      background: linear-gradient(180deg, #7c8aa5, #c5cfdb);
-    }}
-    .forecast-scenario-grid {{
-      display: grid;
-      grid-template-columns: repeat(2, minmax(0, 1fr));
-      gap: 16px;
-      margin-top: 16px;
-    }}
-    .forecast-scenario {{
-      position: relative;
-      min-width: 0;
-      padding: 18px 18px 16px;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      background: rgba(255, 255, 255, 0.9);
-      box-shadow: 0 14px 30px -28px rgba(50, 50, 93, 0.48);
-      overflow: hidden;
-    }}
-    .forecast-scenario::before {{
-      content: "";
-      position: absolute;
-      inset: 0 auto 0 0;
-      width: 4px;
-      background: linear-gradient(180deg, #7c8aa5, #c5cfdb);
-    }}
-    .forecast-scenario.is-buy::before {{
-      background: linear-gradient(180deg, #15be53, #84cc16);
-    }}
-    .forecast-scenario.is-watch::before {{
-      background: linear-gradient(180deg, #533afd, #8b7bff);
-    }}
-    .forecast-scenario.is-hold::before {{
-      background: linear-gradient(180deg, #2874ad, #5ba8df);
-    }}
-    .forecast-scenario.is-sell::before {{
-      background: linear-gradient(180deg, #ea2261, #f96bee);
+      inset: 0 0 auto 0;
+      height: 4px;
+      width: auto;
+      background: linear-gradient(90deg, #0f766e, #1d4ed8 52%, #b45309);
     }}
     .forecast-card-head {{
       display: flex;
       align-items: flex-start;
       justify-content: space-between;
       gap: 16px;
+      padding: 24px 22px 18px;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+      background:
+        linear-gradient(135deg, rgba(15, 118, 110, 0.08), rgba(29, 78, 216, 0.05) 52%, rgba(180, 83, 9, 0.08));
     }}
     .forecast-card-kicker {{
       margin-bottom: 8px;
-      color: var(--primary);
+      color: #0f766e;
       font-size: 12px;
       font-weight: 700;
       letter-spacing: 0.12em;
@@ -2808,55 +2806,139 @@ def html(
       font-weight: 500;
       letter-spacing: -0.03em;
     }}
+    .forecast-card-intro {{
+      margin: 10px 0 0;
+      max-width: 760px;
+      color: #5b6576;
+      font-size: 14px;
+      line-height: 1.8;
+    }}
+    .forecast-scenario-grid {{
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+      padding: 0 22px 22px;
+    }}
+    .forecast-scenario {{
+      position: relative;
+      min-width: 0;
+      padding: 18px 18px 18px;
+      border: 1px solid rgba(17, 24, 39, 0.08);
+      border-radius: 12px;
+      background:
+        linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(248, 250, 252, 0.96));
+      box-shadow: 0 16px 30px -28px rgba(15, 23, 42, 0.42);
+      overflow: hidden;
+    }}
+    .forecast-scenario::before {{
+      content: "";
+      position: absolute;
+      inset: 0 auto 0 0;
+      width: 6px;
+      background: linear-gradient(180deg, #94a3b8, #cbd5e1);
+    }}
+    .forecast-scenario.is-buy::before {{
+      background: linear-gradient(180deg, #059669, #34d399);
+    }}
+    .forecast-scenario.is-watch::before {{
+      background: linear-gradient(180deg, #1d4ed8, #60a5fa);
+    }}
+    .forecast-scenario.is-hold::before {{
+      background: linear-gradient(180deg, #0f766e, #2dd4bf);
+    }}
+    .forecast-scenario.is-sell::before {{
+      background: linear-gradient(180deg, #dc2626, #fb7185);
+    }}
+    .forecast-scenario-topbar {{
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 14px;
+    }}
     .forecast-scenario-label {{
-      margin-bottom: 10px;
-      color: var(--muted);
+      display: inline-flex;
+      align-items: center;
+      min-height: 30px;
+      padding: 0 10px;
+      border-radius: 999px;
+      background: #eef6f5;
+      color: #0f766e;
+      font-size: 12px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      white-space: nowrap;
+    }}
+    .forecast-scenario-meta {{
+      color: #64748b;
+      font-size: 12px;
+      line-height: 1.8;
+      text-align: right;
+    }}
+    .forecast-scenario-head {{
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
+    }}
+    .forecast-scenario-caption {{
+      color: #64748b;
       font-size: 12px;
       font-weight: 700;
       letter-spacing: 0.08em;
       text-transform: uppercase;
     }}
-    .forecast-scenario-head {{
-      display: flex;
-      align-items: flex-start;
-      justify-content: space-between;
-      gap: 12px;
-    }}
     .forecast-scenario-action {{
       display: inline-flex;
       align-items: center;
-      min-height: 38px;
-      padding: 0 14px;
-      border-radius: 999px;
-      border: 1px solid rgba(83, 58, 253, 0.14);
-      background: rgba(255, 255, 255, 0.95);
-      color: var(--heading);
-      font-size: 14px;
+      min-height: 42px;
+      padding: 0 15px;
+      border-radius: 10px;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      background: linear-gradient(180deg, #ffffff, #f8fafc);
+      color: #0f172a;
+      font-size: 18px;
       font-weight: 700;
-      white-space: nowrap;
-      box-shadow: 0 14px 28px -24px rgba(50, 50, 93, 0.45);
-    }}
-    .forecast-scenario-meta {{
-      color: var(--muted);
-      font-size: 12px;
-      line-height: 1.8;
-      text-align: right;
+      letter-spacing: -0.02em;
+      box-shadow: 0 12px 24px -24px rgba(15, 23, 42, 0.38);
     }}
     .forecast-scenario-summary {{
       margin: 14px 0 0;
-      color: var(--heading);
+      color: #0f172a;
       font-size: 15px;
       line-height: 1.8;
     }}
+    .forecast-scenario-timing {{
+      margin-top: 16px;
+      padding: 14px 14px 12px;
+      border: 1px solid rgba(15, 118, 110, 0.14);
+      border-radius: 10px;
+      background: linear-gradient(180deg, rgba(240, 253, 250, 0.9), rgba(248, 250, 252, 0.95));
+    }}
+    .forecast-scenario-timing-title {{
+      color: #0f766e;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+    }}
+    .forecast-scenario-timing p {{
+      margin: 8px 0 0;
+      color: #0f172a;
+      font-size: 14px;
+      line-height: 1.8;
+    }}
     .forecast-scenario-reason {{
-      margin-top: 14px;
+      margin-top: 16px;
       display: flex;
       gap: 12px;
       align-items: flex-start;
+      padding-top: 14px;
+      border-top: 1px dashed rgba(148, 163, 184, 0.46);
     }}
     .forecast-card-label {{
       flex: 0 0 72px;
-      color: var(--muted);
+      color: #64748b;
       font-size: 12px;
       font-weight: 700;
       letter-spacing: 0.08em;
@@ -3320,19 +3402,26 @@ def html(
         padding: 14px;
       }}
       .forecast-card {{
-        padding: 18px 16px 16px;
+        padding: 0;
       }}
       .forecast-card h2 {{
         font-size: 24px;
       }}
+      .forecast-card-head {{
+        padding: 18px 16px 14px;
+      }}
       .forecast-scenario-grid {{
         grid-template-columns: 1fr;
+        padding: 0 16px 16px;
       }}
+      .forecast-scenario-topbar,
       .forecast-scenario-head {{
         flex-direction: column;
+        align-items: flex-start;
       }}
       .forecast-scenario-action {{
         min-height: 36px;
+        font-size: 17px;
       }}
       .forecast-scenario-meta {{
         text-align: left;
