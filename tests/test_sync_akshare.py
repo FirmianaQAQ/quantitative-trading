@@ -1,13 +1,17 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import pandas as pd
 
 from sync.sync_akshare import (
     STORAGE_COLUMNS,
     compute_incremental_start_date,
+    fetch_index_history,
+    fetch_stock_history,
     merge_and_save_history,
+    resolve_eastmoney_cookie_bootstrap_urls,
     should_full_refresh_history,
 )
 
@@ -34,6 +38,14 @@ def build_row(trade_date: str, close_price: float) -> dict:
 
 
 class SyncAkshareHistoryTests(unittest.TestCase):
+    def test_resolve_eastmoney_cookie_bootstrap_urls_uses_multiple_candidates(self) -> None:
+        urls = resolve_eastmoney_cookie_bootstrap_urls("sh.600580")
+
+        self.assertEqual(urls[0], "https://quote.eastmoney.com/sh600580.html")
+        self.assertIn("https://quote.eastmoney.com/", urls)
+        self.assertIn("https://quote.eastmoney.com/center/gridlist.html", urls)
+        self.assertIn("https://quote.eastmoney.com/concept/sz000014.html", urls)
+
     def test_compute_incremental_start_date_reloads_latest_day(self) -> None:
         existing_df = pd.DataFrame(
             [
@@ -117,6 +129,72 @@ class SyncAkshareHistoryTests(unittest.TestCase):
         self.assertTrue(pd.isna(saved_df.loc[0, "preclose"]))
         self.assertEqual(saved_df.loc[1, "preclose"], 10.0)
         self.assertEqual(saved_df.loc[2, "preclose"], 12.0)
+
+    def test_fetch_stock_history_falls_back_after_eastmoney_failure(self) -> None:
+        fallback_df = pd.DataFrame([{"date": "2026-05-19", "close": 10.0}])
+
+        with (
+            mock.patch(
+                "sync.sync_akshare.fetch_stock_history_from_eastmoney",
+                side_effect=RuntimeError("eastmoney down"),
+            ) as eastmoney_mock,
+            mock.patch(
+                "sync.sync_akshare.fetch_stock_history_from_baostock",
+                return_value=fallback_df,
+            ) as baostock_mock,
+            mock.patch("sync.sync_akshare.fetch_stock_history_from_sina") as sina_mock,
+            mock.patch("sync.sync_akshare.fetch_stock_history_from_tushare") as tushare_mock,
+            mock.patch(
+                "sync.sync_akshare.normalize_stock_history_df",
+                side_effect=lambda raw_df, **_: raw_df,
+            ),
+            mock.patch(
+                "sync.sync_akshare.normalize_sina_stock_history_df",
+                side_effect=lambda raw_df, **_: raw_df,
+            ),
+        ):
+            result = fetch_stock_history(
+                symbol="600580",
+                start_date="2026-05-01",
+                end_date="2026-05-19",
+                adjust_flag="hfq",
+                source_name="eastmoney",
+            )
+
+        self.assertTrue(result.equals(fallback_df))
+        eastmoney_mock.assert_called_once()
+        baostock_mock.assert_called_once()
+        sina_mock.assert_not_called()
+        tushare_mock.assert_not_called()
+
+    def test_fetch_index_history_falls_back_after_eastmoney_failure(self) -> None:
+        fallback_df = pd.DataFrame([{"date": "2026-05-19", "close": 3200.0}])
+
+        with (
+            mock.patch(
+                "sync.sync_akshare.fetch_index_history_from_eastmoney",
+                side_effect=RuntimeError("eastmoney down"),
+            ) as eastmoney_mock,
+            mock.patch(
+                "sync.sync_akshare.fetch_index_history_from_baostock",
+                return_value=fallback_df,
+            ) as baostock_mock,
+            mock.patch(
+                "sync.sync_akshare.normalize_index_history_df",
+                side_effect=lambda raw_df, **_: raw_df,
+            ),
+        ):
+            result = fetch_index_history(
+                full_code="sh.000001",
+                start_date="2026-05-01",
+                end_date="2026-05-19",
+                adjust_flag="cq",
+                source_name="eastmoney",
+            )
+
+        self.assertTrue(result.equals(fallback_df))
+        eastmoney_mock.assert_called_once()
+        baostock_mock.assert_called_once()
 
 
 if __name__ == "__main__":

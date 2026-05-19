@@ -42,7 +42,11 @@ REQUEST_RETRY_SLEEP_SECONDS = 2
 CODE_SYNC_INTERVAL_SECONDS = 0.5
 FAILED_QUEUE_RETRY_ROUNDS = 1
 FAILED_QUEUE_RETRY_COOLDOWN_SECONDS = 8
-EASTMONEY_COOKIE_BOOTSTRAP_URL = "https://quote.eastmoney.com/"
+EASTMONEY_COOKIE_BOOTSTRAP_URLS = (
+    "https://quote.eastmoney.com/",
+    "https://quote.eastmoney.com/center/gridlist.html",
+    "https://quote.eastmoney.com/concept/sz000014.html",
+)
 TUSHARE_TOKEN = "2755050aba62303e45f6842ee9e67defdf6e3c1b32bb033ca4ba037e"
 TUSHARE_DAILY_MAX_CALLS_PER_MINUTE = 45
 TUSHARE_DAILY_WINDOW_SECONDS = 60
@@ -114,7 +118,7 @@ def build_eastmoney_quote_url(full_code: str) -> str:
 
 
 def resolve_eastmoney_cookie_bootstrap_urls(full_code: str) -> list[str]:
-    urls = [build_eastmoney_quote_url(full_code), EASTMONEY_COOKIE_BOOTSTRAP_URL]
+    urls = [build_eastmoney_quote_url(full_code), *EASTMONEY_COOKIE_BOOTSTRAP_URLS]
     deduplicated_urls: list[str] = []
     for url in urls:
         if url not in deduplicated_urls:
@@ -606,16 +610,22 @@ def fetch_stock_history(
         ),
     )
 
-    if source_name == SYNC_SOURCE_EASTMONEY:
-        stock_sources = [eastmoney_source]
-    elif source_name == SYNC_SOURCE_BAOSTOCK:
-        stock_sources = [baostock_source]
-    elif source_name == SYNC_SOURCE_AKSHARE:
-        stock_sources = akshare_sources
-    elif source_name == SYNC_SOURCE_TUSHARE:
+    if source_name == SYNC_SOURCE_TUSHARE:
         if not is_unadjusted_flag(adjust_flag):
             raise RuntimeError(f"Tushare 仅支持不复权日线，不支持 {adjust_flag}")
         stock_sources = [tushare_source]
+    elif source_name == SYNC_SOURCE_EASTMONEY:
+        stock_sources = [eastmoney_source, baostock_source, *akshare_sources]
+        if is_unadjusted_flag(adjust_flag):
+            stock_sources.append(tushare_source)
+    elif source_name == SYNC_SOURCE_BAOSTOCK:
+        stock_sources = [baostock_source, eastmoney_source, *akshare_sources]
+        if is_unadjusted_flag(adjust_flag):
+            stock_sources.append(tushare_source)
+    elif source_name == SYNC_SOURCE_AKSHARE:
+        stock_sources = [*akshare_sources, eastmoney_source, baostock_source]
+        if is_unadjusted_flag(adjust_flag):
+            stock_sources.append(tushare_source)
     else:
         stock_sources = [eastmoney_source, baostock_source, *akshare_sources]
         if is_unadjusted_flag(adjust_flag):
@@ -862,14 +872,10 @@ def fetch_index_history(
         ),
     )
 
-    if source_name == SYNC_SOURCE_EASTMONEY:
-        index_sources = [akshare_source]
+    if source_name == SYNC_SOURCE_TUSHARE:
+        raise RuntimeError("Tushare 暂不支持指数日线同步，请改用 Baostock 或 Akshare")
     elif source_name == SYNC_SOURCE_BAOSTOCK:
         index_sources = [baostock_source]
-    elif source_name == SYNC_SOURCE_AKSHARE:
-        index_sources = [akshare_source]
-    elif source_name == SYNC_SOURCE_TUSHARE:
-        raise RuntimeError("Tushare 暂不支持指数日线同步，请改用 Baostock 或 Akshare")
     else:
         index_sources = [akshare_source, baostock_source]
 
@@ -1345,7 +1351,7 @@ def main() -> None:
     if source_name == SYNC_SOURCE_AUTO:
         logger.info("使用 东方财富直连 -> Baostock -> Akshare -> Tushare 的优先级同步所需数据")
     else:
-        logger.info("按用户指定的数据源同步: %s", source_name)
+        logger.info("优先使用用户指定的数据源同步，失败后按固定顺序回退: %s", source_name)
     logger.info("目标代码: %s", ", ".join(target_codes))
     logger.info("同步区间: %s ~ %s", start_date, end_date)
     logger.info("数据复权口径: %s", adjust_flag)
