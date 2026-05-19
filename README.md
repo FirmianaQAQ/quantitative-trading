@@ -457,7 +457,17 @@ OPEN_GUI=0 ./start_backtest_gui.sh
 
 默认股票池来自 `utils/default_stocks.py`。
 
-### 8.2 统计套利配对交易
+### 8.2 京东方双均线专版
+
+- `boe_simple_ma_backtest`：仅支持 `sz.000725`
+
+基于普通双均线 `V2` 逻辑封装，固定为京东方A单票专版，适合在 GUI 里直接选股回测。
+
+### 8.3 TCL双均线专版
+
+- `tcl_simple_ma_backtest`：仅支持 `sz.000100`
+
+### 8.4 统计套利配对交易
 
 当前默认内置 3 组交易对：
 
