@@ -7,6 +7,7 @@ import pandas as pd
 from utils.backtest_report import (
     _build_next_trade_plan_card,
     _build_advice_panel,
+    _build_metric_cards,
     _extract_daily_advice_entries,
     html as generate_backtest_html,
     merge_backtest_html_with_ai_report,
@@ -23,6 +24,7 @@ def build_buy_sell_report(
     dates: list[str],
     buy_points: list[list[str | float]] | None = None,
     sell_points: list[list[str | float]] | None = None,
+    ex_right_closes: list[float | None] | None = None,
 ) -> list[dict]:
     candles = [[10.0 + index, 10.0 + index] for index, _ in enumerate(dates)]
     return [
@@ -31,6 +33,7 @@ def build_buy_sell_report(
             "chart_data": {
                 "x_axis": dates,
                 "candles": candles,
+                "ex_right_closes": ex_right_closes or [None] * len(dates),
                 "buy_points": buy_points or [],
                 "sell_points": sell_points or [],
                 "indicator_lines": [],
@@ -40,6 +43,35 @@ def build_buy_sell_report(
 
 
 class BacktestReportAdviceTests(unittest.TestCase):
+    def test_metric_cards_hide_redundant_strategy_and_forecast_cards(self) -> None:
+        html = _build_metric_cards(
+            [
+                {
+                    "chart_name": "指标概览",
+                    "chart_data": {
+                        "股票代码": "sh.600236",
+                        "策略名称": "普通双均线V1",
+                        "均线说明": "快线看短期节奏，慢线看中期趋势。",
+                        "总收益率": "41.20%",
+                        "空仓-下一交易日策略": "观察买点",
+                        "空仓-预判摘要": "趋势转暖，但仍需等更好的入场点。",
+                        "空仓-建仓时机": "等待趋势翻多",
+                        "空仓-建仓提示": "当前均线结构还没完全转强。",
+                        "持仓-下一交易日策略": "偏持有",
+                        "持仓-预判摘要": "当前更适合继续持有。",
+                    },
+                }
+            ]
+        )
+
+        self.assertIn("股票代码", html)
+        self.assertIn("总收益率", html)
+        self.assertNotIn("策略名称", html)
+        self.assertNotIn("均线说明", html)
+        self.assertNotIn("空仓-下一交易日策略", html)
+        self.assertNotIn("空仓-建仓提示", html)
+        self.assertNotIn("持仓-下一交易日策略", html)
+
     def test_next_trade_plan_card_contains_action_summary_and_reason(self) -> None:
         report_data = [
             {
@@ -224,6 +256,7 @@ class BacktestReportAdviceTests(unittest.TestCase):
             dates=["2026-05-13", "2026-05-14"],
             buy_points=[["2026-05-13", 10.0]],
             sell_points=[["2026-05-14", 11.0]],
+            ex_right_closes=[9.8, 10.6],
         )
 
         html = _build_advice_panel(
@@ -243,6 +276,7 @@ class BacktestReportAdviceTests(unittest.TestCase):
             html,
         )
         self.assertIn("当前实际持仓", html)
+        self.assertIn("除权价格：10.60", html)
 
     def test_advice_panel_contains_optimized_strategy_source(self) -> None:
         report_data = build_buy_sell_report(
@@ -264,6 +298,7 @@ class BacktestReportAdviceTests(unittest.TestCase):
                             "action": "watch_buy",
                             "title": "优化观察",
                             "price": "11.00",
+                            "ex_right_price": "10.60",
                             "summary": "等待更好的入场点。",
                             "reason": "趋势转暖，但不追高。",
                             "is_signal": True,
@@ -283,6 +318,7 @@ class BacktestReportAdviceTests(unittest.TestCase):
         self.assertIn('data-default-advice-source="optimized"', html)
         self.assertIn("优化策略", html)
         self.assertIn("优化观察", html)
+        self.assertIn("除权价格：10.60", html)
 
     def test_html_report_title_can_include_ai_link(self) -> None:
         report_data = build_buy_sell_report(

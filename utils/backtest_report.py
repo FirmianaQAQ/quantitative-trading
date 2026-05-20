@@ -193,13 +193,19 @@ def _extract_daily_advice_entries(
         for item in buy_sell_payload.get("sell_points", []) or []
         if isinstance(item, (list, tuple)) and len(item) >= 2
     }
+    ex_right_close_map: dict[str, float] = {}
     close_price_map: dict[str, float] = {}
+    ex_right_closes = buy_sell_payload.get("ex_right_closes", []) or []
     for index, date in enumerate(dates):
         if index >= len(candles):
             continue
         candle = candles[index]
         if isinstance(candle, (list, tuple)) and len(candle) >= 2:
             close_price_map[date] = float(candle[1])
+        if index < len(ex_right_closes):
+            ex_right_value = ex_right_closes[index]
+            if not _is_missing(ex_right_value):
+                ex_right_close_map[date] = float(ex_right_value)
 
     logs_by_date: dict[str, list[str]] = {}
     for line in log_lines or []:
@@ -290,12 +296,17 @@ def _extract_daily_advice_entries(
         price_text = (
             f"{reference_price:.2f}" if reference_price is not None else "-"
         )
+        ex_right_price = ex_right_close_map.get(date)
+        ex_right_price_text = (
+            f"{ex_right_price:.2f}" if ex_right_price is not None else "-"
+        )
         entries.append(
             {
                 "date": date,
                 "action": action,
                 "title": ACTION_TITLE_MAP.get(action, "空仓观察"),
                 "price": price_text,
+                "ex_right_price": ex_right_price_text,
                 "reason": reason or ACTION_SUMMARY_MAP.get(action, ""),
                 "summary": ACTION_SUMMARY_MAP.get(action, ""),
                 "is_signal": action in {"buy", "sell", "watch_buy"},
@@ -341,6 +352,7 @@ def _extract_optimized_advice_entries(
                 "action": action,
                 "title": str(raw_entry.get("title", ACTION_TITLE_MAP.get(action, "优化建议"))),
                 "price": str(raw_entry.get("price", "-")),
+                "ex_right_price": str(raw_entry.get("ex_right_price", "-")),
                 "reason": str(raw_entry.get("reason", ACTION_SUMMARY_MAP.get(action, ""))),
                 "summary": str(raw_entry.get("summary", ACTION_SUMMARY_MAP.get(action, ""))),
                 "is_signal": bool(raw_entry.get("is_signal", action in {"buy", "sell", "watch_buy"})),
@@ -493,6 +505,7 @@ def _build_advice_panel(
                         <span class="advice-badge is-{html_escape(entry['action'])}">{html_escape(entry['title'])}</span>
                       </div>
                       <div class="advice-price">参考价格：{html_escape(entry['price'])}</div>
+                      <div class="advice-price">除权价格：{html_escape(str(entry.get('ex_right_price', '-')))}</div>
                       <div class="advice-summary">{html_escape(entry['summary'])}</div>
                       <div class="advice-reason">{html_escape(entry['reason'])}</div>
                     </article>
@@ -639,6 +652,7 @@ def _normalize_kline_payload(data: Any) -> dict[str, Any]:
     default_payload = {
         "x_axis": [],
         "candles": [],
+        "ex_right_closes": [],
         "volumes": [],
         "buy_points": [],
         "sell_points": [],
@@ -657,6 +671,14 @@ def _normalize_kline_payload(data: Any) -> dict[str, Any]:
         payload = {
             "x_axis": frame["date"].dt.strftime("%Y-%m-%d").tolist(),
             "candles": frame[["open", "close", "low", "high"]].round(4).values.tolist(),
+            "ex_right_closes": (
+                [
+                    None if _is_missing(v) else round(float(v), 4)
+                    for v in frame["ex_right_close"].tolist()
+                ]
+                if "ex_right_close" in frame.columns
+                else [None] * len(frame)
+            ),
             "volumes": (
                 frame["volume"].fillna(0).astype(float).round(4).tolist()
                 if "volume" in frame.columns
@@ -668,7 +690,7 @@ def _normalize_kline_payload(data: Any) -> dict[str, Any]:
             "advice_entries": [],
         }
 
-        reserved_columns = {"date", "open", "high", "low", "close", "volume"}
+        reserved_columns = {"date", "open", "high", "low", "close", "volume", "ex_right_close"}
         for column in frame.columns:
             if column in reserved_columns:
                 continue
@@ -769,6 +791,18 @@ def _resolve_metric_card_tone(label: str) -> str:
     return "default"
 
 
+HIDDEN_METRIC_CARD_LABELS = {
+    "策略名称",
+    "均线说明",
+    "空仓-下一交易日策略",
+    "空仓-预判摘要",
+    "空仓-建仓时机",
+    "空仓-建仓提示",
+    "持仓-下一交易日策略",
+    "持仓-预判摘要",
+}
+
+
 def _build_metric_cards(report_data: list[dict[str, Any]]) -> str:
     metrics = []
     for item in report_data:
@@ -787,6 +821,8 @@ def _build_metric_cards(report_data: list[dict[str, Any]]) -> str:
             source = {}
 
         for key, value in source.items():
+            if str(key).strip() in HIDDEN_METRIC_CARD_LABELS:
+                continue
             metrics.append((str(key), _to_serializable(value)))
 
     if not metrics:
@@ -1680,6 +1716,7 @@ def _build_report_bootstrap_script() -> str:
       function buildBuySellOption(payload) {
         const xAxis = payload.x_axis || [];
         const candles = payload.candles || [];
+        const exRightCloses = payload.ex_right_closes || [];
         const volumes = payload.volumes || [];
         const indicatorLines = payload.indicator_lines || [];
         const buyMap = Object.fromEntries(
@@ -1718,12 +1755,16 @@ def _build_report_bootstrap_script() -> str:
                   const high = values[3];
                   const date = point.name;
                   const idx = point.dataIndex;
+                  const exRightClose = idx < exRightCloses.length ? exRightCloses[idx] : null;
                   const prevClose = idx > 0 && candleData[idx - 1] ? candleData[idx - 1][1] : null;
                   const change = prevClose == null ? 0 : close - prevClose;
                   const changePercent = prevClose ? (change / prevClose * 100).toFixed(2) : '0.00';
                   const changeSign = change >= 0 ? '+' : '';
                   const color = change >= 0 ? THEME.sell : THEME.buy;
-                  htmls.push(`<strong>${date}</strong><br/>开: ${open}<br/>收: <span style="color:${color}; font-weight:bold;">${close}</span><br/>高: ${high}<br/>低: ${low}<br/>幅: <span style="color:${color}; font-weight:bold;">${changeSign}${changePercent}%</span><br/><hr style="margin: 4px 0;">`);
+                  const exRightText = exRightClose == null || Number.isNaN(Number(exRightClose))
+                    ? '-'
+                    : Number(exRightClose).toFixed(2);
+                  htmls.push(`<strong>${date}</strong><br/>开: ${open}<br/>收: <span style="color:${color}; font-weight:bold;">${close}</span><br/>除权收: ${exRightText}<br/>高: ${high}<br/>低: ${low}<br/>幅: <span style="color:${color}; font-weight:bold;">${changeSign}${changePercent}%</span><br/><hr style="margin: 4px 0;">`);
                 } else if (Array.isArray(point.data)) {
                   const color = point.seriesName === '卖点' ? THEME.sell : THEME.primary;
                   const pointDate = point.data[0];

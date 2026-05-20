@@ -54,12 +54,13 @@ def load_daily_data(code: str, adjust_flag: str) -> pd.DataFrame:
     if missing_columns:
         raise ValueError(f"日线数据缺少字段: {missing_columns}")
 
-    numeric_columns = ["open", "high", "low", "close", "volume", "turn"]
+    optional_columns = [column for column in ["ex_right_close"] if column in df.columns]
+    numeric_columns = ["open", "high", "low", "close", "volume", "turn", *optional_columns]
     for column in numeric_columns:
         df[column] = pd.to_numeric(df[column], errors="coerce")
 
     df["date"] = pd.to_datetime(df["date"], errors="coerce")
     df = df.dropna(subset=required_columns)
     df = df.sort_values("date").reset_index(drop=True)
-    df = df[required_columns]
+    df = df[[*required_columns, *optional_columns]]
     return df

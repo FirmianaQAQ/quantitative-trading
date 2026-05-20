@@ -34,8 +34,8 @@ STRATEGY_FAMILY_DISPLAY_NAMES = {
     "asset_allocation_backtest": "大类资产配置",
 }
 STRATEGY_FAMILY_ORDER = {
-    "simple_ma_backtest": 0,
-    "specialized_ma_backtest": 1,
+    "specialized_ma_backtest": 0,
+    "simple_ma_backtest": 1,
     "pair_trade_backtest": 2,
     "rotation_backtest": 3,
     "cta_event_backtest": 4,

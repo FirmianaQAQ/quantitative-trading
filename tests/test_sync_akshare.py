@@ -7,6 +7,7 @@ import pandas as pd
 
 from sync.sync_akshare import (
     STORAGE_COLUMNS,
+    attach_ex_right_close_for_sync,
     build_eastmoney_cookie_chrome_applescript,
     compute_incremental_start_date,
     fetch_index_history,
@@ -31,6 +32,7 @@ def build_row(trade_date: str, close_price: float) -> dict:
         "high": close_price,
         "low": close_price,
         "close": close_price,
+        "ex_right_close": pd.NA,
         "preclose": pd.NA,
         "volume": 100,
         "amount": 1000,
@@ -236,6 +238,92 @@ class SyncAkshareHistoryTests(unittest.TestCase):
         self.assertTrue(pd.isna(saved_df.loc[0, "preclose"]))
         self.assertEqual(saved_df.loc[1, "preclose"], 10.0)
         self.assertEqual(saved_df.loc[2, "preclose"], 12.0)
+
+    def test_merge_and_save_history_backfills_ex_right_close_from_local_cq_csv(self) -> None:
+        existing_df = pd.DataFrame(
+            [
+                build_row("2026-05-13", 10.0),
+                build_row("2026-05-14", 11.0),
+            ],
+            columns=STORAGE_COLUMNS,
+        )
+        new_df = pd.DataFrame(
+            [
+                build_row("2026-05-15", 12.0),
+            ],
+            columns=STORAGE_COLUMNS,
+        )
+
+        cq_df = pd.DataFrame(
+            [
+                {"date": "2026-05-13", "close": 9.8},
+                {"date": "2026-05-14", "close": 9.9},
+                {"date": "2026-05-15", "close": 10.1},
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            csv_path = Path(temp_dir) / "daily.csv"
+            cq_path = Path(temp_dir) / "cq.csv"
+            cq_df.to_csv(cq_path, index=False)
+
+            with mock.patch(
+                "sync.sync_akshare.get_daily_csv_path",
+                return_value=cq_path,
+            ):
+                merge_and_save_history(
+                    csv_path,
+                    existing_df,
+                    new_df,
+                    full_refresh=False,
+                )
+            saved_df = pd.read_csv(csv_path)
+
+        self.assertEqual(saved_df["ex_right_close"].tolist(), [9.8, 9.9, 10.1])
+
+    def test_attach_ex_right_close_for_sync_fetches_cq_close_for_adjusted_stock(self) -> None:
+        history_df = pd.DataFrame(
+            [
+                build_row("2026-05-13", 10.0),
+                build_row("2026-05-14", 11.0),
+            ],
+            columns=STORAGE_COLUMNS,
+        )
+        cq_df = pd.DataFrame(
+            [
+                build_row("2026-05-13", 9.8),
+                build_row("2026-05-14", 10.1),
+            ],
+            columns=STORAGE_COLUMNS,
+        )
+
+        with (
+            mock.patch(
+                "sync.sync_akshare.read_local_ex_right_history",
+                return_value=pd.DataFrame(columns=["date", "close"]),
+            ),
+            mock.patch(
+                "sync.sync_akshare.fetch_stock_history",
+                return_value=cq_df,
+            ) as fetch_mock,
+        ):
+            result = attach_ex_right_close_for_sync(
+                history_df,
+                full_code="sz.000100",
+                start_date="2026-05-13",
+                end_date="2026-05-14",
+                adjust_flag="hfq",
+                source_name="eastmoney",
+            )
+
+        fetch_mock.assert_called_once_with(
+            symbol="000100",
+            start_date="2026-05-13",
+            end_date="2026-05-14",
+            adjust_flag="cq",
+            source_name="eastmoney",
+        )
+        self.assertEqual(result["ex_right_close"].tolist(), [9.8, 10.1])
 
     def test_fetch_stock_history_falls_back_after_eastmoney_failure(self) -> None:
         fallback_df = pd.DataFrame([{"date": "2026-05-19", "close": 10.0}])

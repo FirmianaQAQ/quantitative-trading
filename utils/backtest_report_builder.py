@@ -32,6 +32,37 @@ def build_stock_returns_series(
     return benchmark_returns
 
 
+def _is_unadjusted_flag(adjust_flag: str) -> bool:
+    return str(adjust_flag or "").strip().lower() in {"", "3", "bfq", "cq", "raw", "none"}
+
+
+def attach_ex_right_close_column(
+    price_df: pd.DataFrame,
+    stock_code: str,
+    adjust_flag: str,
+) -> pd.DataFrame:
+    frame = price_df.copy()
+    frame["date"] = pd.to_datetime(frame["date"])
+
+    if _is_unadjusted_flag(adjust_flag):
+        frame["ex_right_close"] = pd.to_numeric(frame["close"], errors="coerce")
+        return frame
+
+    try:
+        ex_right_df = load_daily_data(stock_code, "cq")
+    except FileNotFoundError:
+        frame["ex_right_close"] = pd.NA
+        return frame
+
+    ex_right_frame = ex_right_df[["date", "close"]].copy()
+    ex_right_frame["date"] = pd.to_datetime(ex_right_frame["date"])
+    ex_right_frame = ex_right_frame.rename(columns={"close": "ex_right_close"})
+    ex_right_frame["ex_right_close"] = pd.to_numeric(
+        ex_right_frame["ex_right_close"], errors="coerce"
+    )
+    return frame.merge(ex_right_frame, on="date", how="left")
+
+
 def build_returns_series(strategy: bt.Strategy) -> pd.Series:
     """从 Backtrader 策略实例中提取时间序列收益率数据，并返回一个以日期为索引的 Pandas Series。"""
     returns_dict = strategy.analyzers.time_return.get_analysis()
@@ -116,6 +147,11 @@ def build_backtest_report_data(
     
     # 加载标的股票日线数据并进行日期过滤
     df = load_daily_data(config["code"], config["adjust_flag"])
+    df = attach_ex_right_close_column(
+        df,
+        stock_code=config["code"],
+        adjust_flag=config["adjust_flag"],
+    )
     filtered_df = filter_backtest_data(
         df,
         from_date=config.get("from_date"),
@@ -428,6 +464,14 @@ def build_kline_chart_data(
     return {
         "x_axis": chart_df["date"].dt.strftime("%Y-%m-%d").tolist(),
         "candles": chart_df[["open", "close", "low", "high"]].round(4).values.tolist(),
+        "ex_right_closes": (
+            [
+                None if pd.isna(value) else round(float(value), 4)
+                for value in chart_df["ex_right_close"].tolist()
+            ]
+            if "ex_right_close" in chart_df.columns
+            else [None] * len(chart_df)
+        ),
         "volumes": chart_df["volume"].fillna(0).astype(float).round(4).tolist(),
         "buy_points": buy_points or [],
         "sell_points": sell_points or [],
@@ -475,6 +519,8 @@ def _build_optimized_signal_frame(
     work_df[["open", "high", "low", "close", "volume", "turn"]] = filtered_df[
         ["open", "high", "low", "close", "volume", "turn"]
     ].reset_index(drop=True)
+    if "ex_right_close" in filtered_df.columns:
+        work_df["ex_right_close"] = filtered_df["ex_right_close"].reset_index(drop=True)
     return work_df
 
 
@@ -725,6 +771,7 @@ def build_optimized_trade_chart_data(
     for index, row in work_df.iterrows():
         date_text = pd.Timestamp(row["date"]).strftime("%Y-%m-%d")
         close_price = float(row["close"])
+        ex_right_close = row.get("ex_right_close")
         fast_ma = row["fast_ma"]
         slow_ma = row["slow_ma"]
         prev_fast_ma = row["prev_fast_ma"]
@@ -767,6 +814,9 @@ def build_optimized_trade_chart_data(
                     "action": "buy",
                     "title": "优化买入",
                     "price": f"{close_price:.2f}",
+                    "ex_right_price": (
+                        f"{float(ex_right_close):.2f}" if pd.notna(ex_right_close) else "-"
+                    ),
                     "summary": "趋势确认后择机低吸，不追高。",
                     "reason": (
                         f"快线 {float(fast_ma):.2f} 站上慢线 {float(slow_ma):.2f}，"
@@ -820,6 +870,9 @@ def build_optimized_trade_chart_data(
                         "action": "sell",
                         "title": "优化卖出",
                         "price": f"{close_price:.2f}",
+                        "ex_right_price": (
+                            f"{float(ex_right_close):.2f}" if pd.notna(ex_right_close) else "-"
+                        ),
                         "summary": "优先保护利润和回撤，不恋战。",
                         "reason": sell_reason,
                         "is_signal": True,
@@ -832,6 +885,7 @@ def build_optimized_trade_chart_data(
     latest_row = work_df.iloc[-1]
     latest_date = pd.Timestamp(latest_row["date"]).strftime("%Y-%m-%d")
     latest_close = float(latest_row["close"])
+    latest_ex_right_close = latest_row.get("ex_right_close")
     if holding:
         advice_entries.append(
             {
@@ -839,6 +893,9 @@ def build_optimized_trade_chart_data(
                 "action": "hold",
                 "title": "优化持有",
                 "price": f"{latest_close:.2f}",
+                "ex_right_price": (
+                    f"{float(latest_ex_right_close):.2f}" if pd.notna(latest_ex_right_close) else "-"
+                ),
                 "summary": "趋势尚未破坏，继续持有观察。",
                 "reason": "当前优化规则下仍未触发止损、回撤保护或趋势转弱卖点。",
                 "is_signal": False,
@@ -855,6 +912,9 @@ def build_optimized_trade_chart_data(
                 "action": "watch_buy",
                 "title": "优化观察",
                 "price": f"{latest_close:.2f}",
+                "ex_right_price": (
+                    f"{float(latest_ex_right_close):.2f}" if pd.notna(latest_ex_right_close) else "-"
+                ),
                 "summary": "趋势转暖，但仍需等更好的入场点。",
                 "reason": "长线趋势不差，但当前还没同时满足低吸位置与动量确认，先观察。",
                 "is_signal": True,
@@ -867,6 +927,9 @@ def build_optimized_trade_chart_data(
                 "action": "observe",
                 "title": "继续观察",
                 "price": f"{latest_close:.2f}",
+                "ex_right_price": (
+                    f"{float(latest_ex_right_close):.2f}" if pd.notna(latest_ex_right_close) else "-"
+                ),
                 "summary": "当前不主动开仓。",
                 "reason": "趋势与位置尚未形成高质量买点，保持等待更稳妥。",
                 "is_signal": False,

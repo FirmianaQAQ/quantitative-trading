@@ -68,6 +68,7 @@ STORAGE_COLUMNS = [
     "high",
     "low",
     "close",
+    "ex_right_close",
     "preclose",
     "volume",
     "amount",
@@ -1258,12 +1259,144 @@ def normalize_index_history_df(raw_df: pd.DataFrame, full_code: str, adjust_flag
     return finalize_history_df(normalized_df)
 
 
+def merge_ex_right_close_by_date(
+    target_df: pd.DataFrame,
+    source_df: pd.DataFrame | None,
+) -> pd.DataFrame:
+    frame = target_df.copy()
+    if frame.empty:
+        if "ex_right_close" not in frame.columns:
+            frame["ex_right_close"] = pd.Series(dtype=float)
+        return frame
+
+    if "ex_right_close" not in frame.columns:
+        frame["ex_right_close"] = pd.NA
+
+    if source_df is None or source_df.empty:
+        return frame
+
+    ex_right_frame = source_df.copy()
+    required_columns = {"date", "close"}
+    if not required_columns.issubset(ex_right_frame.columns):
+        return frame
+
+    ex_right_frame = ex_right_frame[["date", "close"]].copy()
+    ex_right_frame["date"] = pd.to_datetime(
+        ex_right_frame["date"], errors="coerce"
+    ).dt.strftime("%Y-%m-%d")
+    ex_right_frame["close"] = pd.to_numeric(ex_right_frame["close"], errors="coerce")
+    ex_right_frame = ex_right_frame.dropna(subset=["date"])
+    ex_right_frame = ex_right_frame.drop_duplicates(subset=["date"], keep="last")
+    ex_right_frame = ex_right_frame.rename(columns={"close": "_ex_right_close"})
+
+    frame["date"] = pd.to_datetime(frame["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+    frame = frame.merge(ex_right_frame, on="date", how="left")
+    frame["ex_right_close"] = pd.to_numeric(frame["ex_right_close"], errors="coerce")
+    frame["ex_right_close"] = frame["ex_right_close"].fillna(frame["_ex_right_close"])
+    return frame.drop(columns=["_ex_right_close"])
+
+
+def read_local_ex_right_history(full_code: str) -> pd.DataFrame:
+    csv_path = get_daily_csv_path(full_code, "cq")
+    if not csv_path.exists():
+        return pd.DataFrame(columns=["date", "close"])
+
+    local_df = pd.read_csv(csv_path)
+    if local_df.empty:
+        return pd.DataFrame(columns=["date", "close"])
+    if "date" not in local_df.columns or "close" not in local_df.columns:
+        return pd.DataFrame(columns=["date", "close"])
+    return local_df[["date", "close"]].copy()
+
+
+def attach_ex_right_close_for_sync(
+    history_df: pd.DataFrame,
+    *,
+    full_code: str,
+    start_date: str,
+    end_date: str,
+    adjust_flag: str,
+    source_name: str,
+    is_index: bool = False,
+) -> pd.DataFrame:
+    frame = history_df.copy()
+    if frame.empty:
+        if "ex_right_close" not in frame.columns:
+            frame["ex_right_close"] = pd.Series(dtype=float)
+        return frame
+
+    if is_index or is_unadjusted_flag(adjust_flag):
+        frame["ex_right_close"] = pd.to_numeric(frame["close"], errors="coerce")
+        return frame
+
+    frame = merge_ex_right_close_by_date(frame, read_local_ex_right_history(full_code))
+    missing_mask = pd.isna(frame["ex_right_close"])
+    if not missing_mask.any():
+        return frame
+
+    try:
+        if is_index:
+            ex_right_df = fetch_index_history(
+                full_code=full_code,
+                start_date=start_date,
+                end_date=end_date,
+                adjust_flag="cq",
+                source_name=source_name,
+            )
+        else:
+            ex_right_df = fetch_stock_history(
+                symbol=full_code.split(".", 1)[1],
+                start_date=start_date,
+                end_date=end_date,
+                adjust_flag="cq",
+                source_name=source_name,
+            )
+    except Exception as exc:
+        logger.warning("%s 拉取除权价格失败，保留空值: %s", full_code, exc)
+        return frame
+
+    return merge_ex_right_close_by_date(frame, ex_right_df)
+
+
+def backfill_ex_right_close_from_local_history(history_df: pd.DataFrame) -> pd.DataFrame:
+    frame = history_df.copy()
+    if frame.empty:
+        if "ex_right_close" not in frame.columns:
+            frame["ex_right_close"] = pd.Series(dtype=float)
+        return frame
+
+    if "ex_right_close" not in frame.columns:
+        frame["ex_right_close"] = pd.NA
+
+    adjust_flag = str(frame.get("adjustflag", pd.Series(dtype=str)).iloc[0] or "").strip()
+    if is_unadjusted_flag(adjust_flag):
+        frame["ex_right_close"] = pd.to_numeric(frame["close"], errors="coerce")
+        return frame
+
+    code_series = frame.get("code", pd.Series(dtype=str)).dropna()
+    if code_series.empty:
+        return frame
+
+    full_code = str(code_series.iloc[0]).strip()
+    if not full_code:
+        return frame
+
+    if pd.notna(pd.to_numeric(frame["ex_right_close"], errors="coerce")).all():
+        return frame
+    return merge_ex_right_close_by_date(frame, read_local_ex_right_history(full_code))
+
+
 def finalize_history_df(df: pd.DataFrame) -> pd.DataFrame:
     normalized_df = df.copy()
     normalized_df["open"] = pd.to_numeric(normalized_df["open"], errors="coerce")
     normalized_df["high"] = pd.to_numeric(normalized_df["high"], errors="coerce")
     normalized_df["low"] = pd.to_numeric(normalized_df["low"], errors="coerce")
     normalized_df["close"] = pd.to_numeric(normalized_df["close"], errors="coerce")
+    if "ex_right_close" not in normalized_df.columns:
+        normalized_df["ex_right_close"] = pd.NA
+    normalized_df["ex_right_close"] = pd.to_numeric(
+        normalized_df["ex_right_close"], errors="coerce"
+    )
     normalized_df["preclose"] = pd.to_numeric(normalized_df["preclose"], errors="coerce")
     normalized_df["volume"] = pd.to_numeric(normalized_df["volume"], errors="coerce").fillna(0)
     normalized_df["amount"] = pd.to_numeric(normalized_df["amount"], errors="coerce").fillna(0)
@@ -1329,6 +1462,7 @@ def merge_and_save_history(
         combined_df = pd.concat([existing_df, new_df], ignore_index=True)
     combined_df = combined_df.drop_duplicates(subset=["date", "code"], keep="last")
     combined_df = combined_df.sort_values("date").reset_index(drop=True)
+    combined_df = backfill_ex_right_close_from_local_history(combined_df)
     combined_df["preclose"] = pd.to_numeric(combined_df["close"], errors="coerce").shift(1)
     csv_path.parent.mkdir(parents=True, exist_ok=True)
     combined_df.to_csv(csv_path, index=False, encoding="utf-8")
@@ -1383,6 +1517,16 @@ def sync_one_code(
     if new_df.empty:
         logger.warning("%s 没有拉到数据", full_code)
         return "empty"
+
+    new_df = attach_ex_right_close_for_sync(
+        new_df,
+        full_code=full_code,
+        start_date=request_start_date,
+        end_date=end_date,
+        adjust_flag=adjust_flag,
+        source_name=source_name,
+        is_index=full_code == CONFIG["benchmark_code"],
+    )
 
     write_count = merge_and_save_history(
         csv_path,
