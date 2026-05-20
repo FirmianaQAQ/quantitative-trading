@@ -118,19 +118,17 @@ class BacktestReportAdviceTests(unittest.TestCase):
 
         html = _build_next_trade_plan_card(report_data)
 
-        self.assertIn("策略预判", html)
-        self.assertIn("今日策略", html)
-        self.assertIn("明日策略", html)
-        self.assertIn("都区分空仓和持仓两种执行视角", html)
-        self.assertIn('data-forecast-tab-panel="today"', html)
-        self.assertIn('class="forecast-card-tab is-active"', html)
-        self.assertIn('forecast-scenario-reason is-compact', html)
+        self.assertIn("当前生成时的购买策略", html)
+        self.assertIn("按当前生成结果直接给出空仓与持仓两种执行视角", html)
+        self.assertIn('class="forecast-scenario-reason"', html)
         self.assertIn("如果你当前空仓", html)
         self.assertIn("如果你当前持仓", html)
         self.assertIn("继续观察", html)
         self.assertIn("继续持有", html)
         self.assertIn("预判依据", html)
         self.assertIn("2026-05-19", html)
+        self.assertNotIn("今日策略", html)
+        self.assertNotIn("明日策略", html)
 
     def test_build_enhanced_trade_chart_data_keeps_optimized_plan_when_no_advice_entries(self) -> None:
         filtered_df = pd.DataFrame(
@@ -497,9 +495,7 @@ class BacktestReportAdviceTests(unittest.TestCase):
             )
             html = output_path.read_text(encoding="utf-8")
 
-        self.assertIn("策略预判", html)
-        self.assertIn("今日策略", html)
-        self.assertIn("明日策略", html)
+        self.assertIn("当前生成时的购买策略", html)
         self.assertIn("当日股价：10.20", html)
         self.assertIn("如果你当前空仓", html)
         self.assertIn("如果你当前持仓", html)

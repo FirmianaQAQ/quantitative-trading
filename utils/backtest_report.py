@@ -1004,8 +1004,6 @@ def _extract_position_forecast_preview(
 
 def _build_forecast_scenario_html(
     preview: dict[str, Any],
-    *,
-    compact: bool = False,
 ) -> str:
     as_of_text = ""
     if preview.get("as_of_date"):
@@ -1016,19 +1014,12 @@ def _build_forecast_scenario_html(
 
     reason_html = ""
     if preview.get("reason"):
-        if compact:
-            reason_html = (
-                '<div class="forecast-scenario-reason is-compact">'
-                f'<p>{html_escape(str(preview["reason"]))}</p>'
-                "</div>"
-            )
-        else:
-            reason_html = (
-                '<div class="forecast-scenario-reason">'
-                f'<span class="forecast-card-label">预判依据</span>'
-                f'<p>{html_escape(str(preview["reason"]))}</p>'
-                "</div>"
-            )
+        reason_html = (
+            '<div class="forecast-scenario-reason">'
+            f'<span class="forecast-card-label">预判依据</span>'
+            f'<p>{html_escape(str(preview["reason"]))}</p>'
+            "</div>"
+        )
 
     scenario_label_html = ""
     if preview.get("position_label"):
@@ -1045,9 +1036,8 @@ def _build_forecast_scenario_html(
             "</div>"
         )
 
-    compact_class = " is-compact" if compact else ""
     return f"""
-    <article class="forecast-scenario is-{html_escape(str(preview.get("tone", "neutral")))}{compact_class}">
+    <article class="forecast-scenario is-{html_escape(str(preview.get("tone", "neutral")))}">
       {scenario_label_html}
       <div class="forecast-scenario-head">
         <div class="forecast-scenario-meta">{as_of_text or "基于最新收盘后的趋势结构"}</div>
@@ -1061,86 +1051,34 @@ def _build_forecast_scenario_html(
 
 
 def _build_next_trade_plan_card(report_data: list[dict[str, Any]]) -> str:
-    today_previews = _extract_today_trade_plan_preview(report_data)
-    tomorrow_previews = [
+    current_previews = _extract_today_trade_plan_preview(report_data)
+    if not current_previews:
+        current_previews = [
         preview
         for preview in [
             _extract_position_forecast_preview(report_data, CURRENT_POSITION_EMPTY),
             _extract_position_forecast_preview(report_data, CURRENT_POSITION_HOLD),
         ]
         if preview
-    ]
-    if not today_previews and not tomorrow_previews:
+        ]
+    if not current_previews:
         single_preview = _extract_next_trade_plan_preview(report_data)
         if not single_preview:
             return ""
-        tomorrow_previews = [single_preview]
-
-    today_tab_html = ""
-    if today_previews:
-        today_tab_html = """
-        <button
-          type="button"
-          class="forecast-card-tab is-active"
-          data-forecast-tab-target="today"
-          aria-selected="true"
-        >今日策略</button>
-        """
-
-    tomorrow_active_class = ""
-    tomorrow_active_selected = "false"
-    if tomorrow_previews and not today_previews:
-        tomorrow_active_class = " is-active"
-        tomorrow_active_selected = "true"
-    tomorrow_tab_html = ""
-    if tomorrow_previews:
-        tomorrow_tab_html = f"""
-        <button
-          type="button"
-          class="forecast-card-tab{tomorrow_active_class}"
-          data-forecast-tab-target="tomorrow"
-          aria-selected="{tomorrow_active_selected}"
-        >明日策略</button>
-        """
-
-    today_panel_html = ""
-    if today_previews:
-        today_panel_html = f"""
-        <div class="forecast-tab-panel is-active" data-forecast-tab-panel="today">
-          <div class="forecast-scenario-grid">
-            {"".join(_build_forecast_scenario_html(preview, compact=True) for preview in today_previews)}
-          </div>
-        </div>
-        """
-
-    tomorrow_panel_html = ""
-    if tomorrow_previews:
-        tomorrow_panel_class = "forecast-tab-panel"
-        if not today_previews:
-            tomorrow_panel_class += " is-active"
-        tomorrow_panel_html = f"""
-        <div class="{tomorrow_panel_class}" data-forecast-tab-panel="tomorrow">
-          <div class="forecast-scenario-grid">
-            {"".join(_build_forecast_scenario_html(preview) for preview in tomorrow_previews)}
-          </div>
-        </div>
-        """
+        current_previews = [single_preview]
 
     return f"""
     <section class="forecast-card">
       <div class="forecast-card-head">
         <div>
           <div class="forecast-card-kicker">Strategy Outlook</div>
-          <h2>策略预判</h2>
-          <p class="forecast-card-intro">今日与明日页签都区分空仓和持仓两种执行视角，便于直接落地操作。</p>
-        </div>
-        <div class="forecast-card-tabs" role="tablist" aria-label="策略预判切换">
-          {today_tab_html}
-          {tomorrow_tab_html}
+          <h2>当前生成时的购买策略</h2>
+          <p class="forecast-card-intro">按当前生成结果直接给出空仓与持仓两种执行视角，便于落地操作。</p>
         </div>
       </div>
-      {today_panel_html}
-      {tomorrow_panel_html}
+      <div class="forecast-scenario-grid">
+        {"".join(_build_forecast_scenario_html(preview) for preview in current_previews)}
+      </div>
     </section>
     """
 
@@ -2519,20 +2457,6 @@ def _build_report_bootstrap_script() -> str:
         }
       }
 
-      function updateForecastTabs(nextTarget) {
-        document.querySelectorAll('.forecast-card-tab').forEach((item) => {
-          const isActive = item.dataset.forecastTabTarget === nextTarget;
-          item.classList.toggle('is-active', isActive);
-          item.setAttribute('aria-selected', isActive ? 'true' : 'false');
-        });
-        document.querySelectorAll('.forecast-tab-panel').forEach((item) => {
-          item.classList.toggle(
-            'is-active',
-            item.dataset.forecastTabPanel === nextTarget
-          );
-        });
-      }
-
       function applyFilter() {
         updateFilterControls();
         registry.forEach(renderChart);
@@ -2586,11 +2510,6 @@ def _build_report_bootstrap_script() -> str:
             updateAdviceVisibility();
           });
         });
-        document.querySelectorAll('.forecast-card-tab').forEach((item) => {
-          item.addEventListener('click', () => {
-            updateForecastTabs(item.dataset.forecastTabTarget || 'today');
-          });
-        });
       }
 
       return {
@@ -2605,12 +2524,6 @@ def _build_report_bootstrap_script() -> str:
             currentAdviceSource = advicePanel.dataset.defaultAdviceSource;
           }
           bindFilterEvents();
-          const defaultForecastTab =
-            document.querySelector('.forecast-card-tab.is-active')?.dataset.forecastTabTarget
-            || document.querySelector('.forecast-card-tab')?.dataset.forecastTabTarget;
-          if (defaultForecastTab) {
-            updateForecastTabs(defaultForecastTab);
-          }
           applyFilter();
         },
       };
@@ -3019,51 +2932,23 @@ def html(
       font-size: 14px;
       line-height: 1.8;
     }}
-    .forecast-card-tabs {{
-      display: inline-flex;
-      align-items: center;
-      gap: 8px;
-      padding: 6px;
-      border: 1px solid rgba(148, 163, 184, 0.18);
-      border-radius: 999px;
-      background: rgba(255, 255, 255, 0.72);
-      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
-    }}
-    .forecast-card-tab {{
-      appearance: none;
-      border: 0;
-      border-radius: 999px;
-      background: transparent;
-      color: #607086;
-      font-size: 13px;
-      font-weight: 700;
-      padding: 9px 16px;
-      cursor: pointer;
-      transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
-    }}
-    .forecast-card-tab.is-active {{
-      background: linear-gradient(180deg, #ffffff, #f7fafc);
-      color: var(--heading);
-      box-shadow: 0 10px 22px -18px rgba(15, 23, 42, 0.45);
-    }}
-    .forecast-tab-panel {{
-      display: none;
-    }}
-    .forecast-tab-panel.is-active {{
-      display: block;
-    }}
     .forecast-scenario-grid {{
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 18px;
       padding: 0 22px 22px;
+      align-items: stretch;
     }}
     .forecast-scenario-grid.is-single {{
       grid-template-columns: minmax(0, 1fr);
     }}
     .forecast-scenario {{
       position: relative;
+      display: flex;
+      flex-direction: column;
       min-width: 0;
+      min-height: 304px;
+      height: 100%;
       padding: 18px 18px 18px;
       border: 1px solid rgba(17, 24, 39, 0.08);
       border-radius: 12px;
@@ -3176,23 +3061,6 @@ def html(
       font-size: 15px;
       line-height: 1.8;
     }}
-    .forecast-scenario.is-compact {{
-      padding: 20px 20px 18px;
-    }}
-    .forecast-scenario.is-compact .forecast-scenario-meta {{
-      font-size: 13px;
-      color: #526276;
-    }}
-    .forecast-scenario.is-compact .forecast-scenario-action {{
-      min-height: 46px;
-      padding: 0 18px;
-      font-size: 20px;
-    }}
-    .forecast-scenario.is-compact .forecast-scenario-summary {{
-      margin-top: 16px;
-      font-size: 16px;
-      line-height: 1.85;
-    }}
     .forecast-scenario-timing {{
       margin-top: 16px;
       padding: 14px 14px 12px;
@@ -3213,7 +3081,7 @@ def html(
       line-height: 1.8;
     }}
     .forecast-scenario-reason {{
-      margin-top: 16px;
+      margin-top: auto;
       display: flex;
       gap: 12px;
       align-items: flex-start;
@@ -3234,14 +3102,6 @@ def html(
       color: var(--text);
       font-size: 14px;
       line-height: 1.8;
-    }}
-    .forecast-scenario-reason.is-compact {{
-      margin-top: 14px;
-      display: block;
-      padding: 12px 14px;
-      border: 1px dashed rgba(148, 163, 184, 0.42);
-      border-radius: 10px;
-      background: rgba(248, 250, 252, 0.88);
     }}
     .filter-toolbar-title {{
       width: 100%;
@@ -3706,10 +3566,6 @@ def html(
         padding: 18px 16px 14px;
         flex-direction: column;
         align-items: stretch;
-      }}
-      .forecast-card-tabs {{
-        width: 100%;
-        justify-content: flex-start;
       }}
       .forecast-scenario-grid {{
         grid-template-columns: 1fr;
