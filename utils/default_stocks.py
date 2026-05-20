@@ -3,7 +3,6 @@ from __future__ import annotations
 DEFAULT_STOCK_NAMES = {
     "sh.002624": "完美世界",
     "sh.600690": "海尔智家",
-    "sh.600690": "海尔智家",
     "sh.600406": "国电南瑞",
     "sh.600580": "卧龙电驱",
     "sz.000100": "TCL科技",
