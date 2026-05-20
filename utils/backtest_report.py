@@ -108,6 +108,23 @@ ACTION_TITLE_MAP = {key: label for key, label, _ in ACTION_SPECS}
 ACTION_SUMMARY_MAP = {key: desc for key, _label, desc in ACTION_SPECS}
 
 
+def _build_reason_lines_html(reason: Any, item_class: str) -> str:
+    raw_text = str(reason or "").strip()
+    if not raw_text:
+        return ""
+    parts = [
+        item.strip()
+        for item in re.split(r"[；;]\s*|\n+", raw_text)
+        if item and item.strip()
+    ]
+    if not parts:
+        return html_escape(raw_text)
+    return "".join(
+        f'<div class="{item_class}">{html_escape(part)}</div>'
+        for part in parts
+    )
+
+
 def _rewrite_latest_action_for_position(
     action: str,
     reason: str,
@@ -506,7 +523,7 @@ def _build_advice_panel(
                       </div>
                       <div class="advice-price">参考价格：{html_escape(entry['price'])}</div>
                       <div class="advice-summary">{html_escape(entry['summary'])}</div>
-                      <div class="advice-reason">{html_escape(entry['reason'])}</div>
+                      <div class="advice-reason">{_build_reason_lines_html(entry['reason'], 'advice-reason-line')}</div>
                     </article>
                     """
                 )
@@ -1017,7 +1034,7 @@ def _build_forecast_scenario_html(
         reason_html = (
             '<div class="forecast-scenario-reason">'
             f'<span class="forecast-card-label">预判依据</span>'
-            f'<p>{html_escape(str(preview["reason"]))}</p>'
+            f'<div>{_build_reason_lines_html(preview["reason"], "forecast-scenario-reason-line")}</div>'
             "</div>"
         )
 
@@ -3103,6 +3120,9 @@ def html(
       font-size: 14px;
       line-height: 1.8;
     }}
+    .forecast-scenario-reason-line + .forecast-scenario-reason-line {{
+      margin-top: 4px;
+    }}
     .filter-toolbar-title {{
       width: 100%;
     }}
@@ -3430,6 +3450,9 @@ def html(
       line-height: 1.7;
       white-space: pre-wrap;
       word-break: break-word;
+    }}
+    .advice-reason-line + .advice-reason-line {{
+      margin-top: 4px;
     }}
     .advice-empty {{
       padding: 20px;

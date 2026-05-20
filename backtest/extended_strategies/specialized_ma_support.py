@@ -21,7 +21,7 @@ from utils.backtest_report_builder import (
     summarize_result,
 )
 
-TCL_SPECIALIZED_TEMPLATE: dict[str, Any] = {
+SPECIALIZED_BASE_TEMPLATE: dict[str, Any] = {
     "fast": 10,
     "slow": 250,
     "buy_trigger_multiplier": 1.03,
@@ -35,6 +35,154 @@ TCL_SPECIALIZED_TEMPLATE: dict[str, Any] = {
     "benchmark_code": "",
 }
 
+SPECIALIZED_PROFILE_OVERRIDES: dict[str, dict[str, Any]] = {
+    # 面板双雄：低价大盘、趋势持续性一般，优先低吸，不追强突破。
+    "sz.000100": {
+        "fast": 10,
+        "slow": 250,
+        "buy_trigger_multiplier": 1.03,
+        "buy_trigger_window": 8,
+        "sell_trigger_multiplier": 0.93,
+        "stop_loss_pct": 0.08,
+        "breakout_power_threshold": 0.55,
+        "breakout_buy_limit_multiplier": 1.00,
+    },
+    "sz.000725": {
+        "fast": 9,
+        "slow": 233,
+        "buy_trigger_multiplier": 1.025,
+        "buy_trigger_window": 9,
+        "sell_trigger_multiplier": 0.94,
+        "stop_loss_pct": 0.075,
+        "breakout_power_threshold": 0.52,
+        "breakout_buy_limit_multiplier": 0.995,
+    },
+    # 高波动成长：允许更强趋势确认，但不放松风险控制。
+    "sz.002594": {
+        "fast": 12,
+        "slow": 220,
+        "buy_trigger_multiplier": 1.045,
+        "buy_trigger_window": 7,
+        "buy_rise_days_required": 2,
+        "sell_trigger_multiplier": 0.96,
+        "stop_loss_pct": 0.09,
+        "breakout_power_threshold": 0.68,
+        "breakout_buy_limit_multiplier": 1.03,
+    },
+    "sz.001308": {
+        "fast": 11,
+        "slow": 210,
+        "buy_trigger_multiplier": 1.04,
+        "buy_trigger_window": 7,
+        "buy_rise_days_required": 2,
+        "sell_trigger_multiplier": 0.95,
+        "stop_loss_pct": 0.085,
+        "breakout_power_threshold": 0.64,
+        "breakout_buy_limit_multiplier": 1.02,
+    },
+    "sz.002624": {
+        "fast": 12,
+        "slow": 205,
+        "buy_trigger_multiplier": 1.05,
+        "buy_trigger_window": 6,
+        "buy_rise_days_required": 2,
+        "sell_trigger_multiplier": 0.96,
+        "stop_loss_pct": 0.10,
+        "breakout_power_threshold": 0.70,
+        "breakout_buy_limit_multiplier": 1.035,
+    },
+    # 稳健权重/公用事业：更看重低位触发与回撤约束。
+    "sh.600036": {
+        "fast": 8,
+        "slow": 260,
+        "buy_trigger_multiplier": 1.02,
+        "buy_trigger_window": 10,
+        "sell_trigger_multiplier": 0.95,
+        "stop_loss_pct": 0.06,
+        "breakout_power_threshold": 0.48,
+        "breakout_buy_limit_multiplier": 0.99,
+    },
+    "sh.600236": {
+        "fast": 8,
+        "slow": 245,
+        "buy_trigger_multiplier": 1.02,
+        "buy_trigger_window": 10,
+        "sell_trigger_multiplier": 0.955,
+        "stop_loss_pct": 0.06,
+        "breakout_power_threshold": 0.46,
+        "breakout_buy_limit_multiplier": 0.99,
+    },
+    "sh.600406": {
+        "fast": 9,
+        "slow": 240,
+        "buy_trigger_multiplier": 1.025,
+        "buy_trigger_window": 9,
+        "sell_trigger_multiplier": 0.95,
+        "stop_loss_pct": 0.065,
+        "breakout_power_threshold": 0.50,
+        "breakout_buy_limit_multiplier": 0.995,
+    },
+    "sh.600690": {
+        "fast": 9,
+        "slow": 238,
+        "buy_trigger_multiplier": 1.03,
+        "buy_trigger_window": 8,
+        "sell_trigger_multiplier": 0.945,
+        "stop_loss_pct": 0.07,
+        "breakout_power_threshold": 0.54,
+        "breakout_buy_limit_multiplier": 1.00,
+    },
+    # 强周期/高弹性：给更宽止损和更强突破确认。
+    "sh.601991": {
+        "fast": 11,
+        "slow": 225,
+        "buy_trigger_multiplier": 1.04,
+        "buy_trigger_window": 7,
+        "buy_rise_days_required": 2,
+        "sell_trigger_multiplier": 0.965,
+        "stop_loss_pct": 0.095,
+        "breakout_power_threshold": 0.66,
+        "breakout_buy_limit_multiplier": 1.03,
+    },
+    "sh.600029": {
+        "fast": 11,
+        "slow": 230,
+        "buy_trigger_multiplier": 1.04,
+        "buy_trigger_window": 7,
+        "buy_rise_days_required": 2,
+        "sell_trigger_multiplier": 0.965,
+        "stop_loss_pct": 0.09,
+        "breakout_power_threshold": 0.64,
+        "breakout_buy_limit_multiplier": 1.025,
+    },
+    "sh.600580": {
+        "fast": 10,
+        "slow": 220,
+        "buy_trigger_multiplier": 1.035,
+        "buy_trigger_window": 8,
+        "sell_trigger_multiplier": 0.955,
+        "stop_loss_pct": 0.08,
+        "breakout_power_threshold": 0.60,
+        "breakout_buy_limit_multiplier": 1.015,
+    },
+    "sh.605006": {
+        "fast": 11,
+        "slow": 215,
+        "buy_trigger_multiplier": 1.04,
+        "buy_trigger_window": 7,
+        "buy_rise_days_required": 2,
+        "sell_trigger_multiplier": 0.96,
+        "stop_loss_pct": 0.09,
+        "breakout_power_threshold": 0.63,
+        "breakout_buy_limit_multiplier": 1.02,
+    },
+}
+
+
+def resolve_specialized_profile(code: str) -> dict[str, Any]:
+    normalized_code = str(code or "").strip().lower()
+    return dict(SPECIALIZED_PROFILE_OVERRIDES.get(normalized_code, {}))
+
 
 def build_specialized_config(
     base_config: dict[str, Any],
@@ -45,7 +193,8 @@ def build_specialized_config(
     strategy_brief: str,
 ) -> dict[str, Any]:
     config = dict(base_config)
-    config.update(TCL_SPECIALIZED_TEMPLATE)
+    config.update(SPECIALIZED_BASE_TEMPLATE)
+    config.update(resolve_specialized_profile(code))
     config.update(
         {
             "code": code,

@@ -2,6 +2,10 @@ import unittest
 from importlib import import_module
 
 from backtest.strategy_registry import list_strategy_specs
+from backtest.extended_strategies.specialized_ma_support import (
+    SPECIALIZED_BASE_TEMPLATE,
+    resolve_specialized_profile,
+)
 from utils.default_stocks import DEFAULT_STOCK_CODES
 
 
@@ -46,6 +50,37 @@ class SpecializedDefaultBacktestsTests(unittest.TestCase):
         for code in DEFAULT_STOCK_CODES:
             with self.subTest(code=code):
                 self.assertIn(code, specialized_codes)
+
+    def test_specialized_profiles_are_no_longer_tcl_one_size_fits_all(self) -> None:
+        tcl_profile = resolve_specialized_profile("sz.000100")
+        boe_profile = resolve_specialized_profile("sz.000725")
+        cmb_profile = resolve_specialized_profile("sh.600036")
+        byd_profile = resolve_specialized_profile("sz.002594")
+
+        self.assertNotEqual(boe_profile, tcl_profile)
+        self.assertNotEqual(cmb_profile, tcl_profile)
+        self.assertNotEqual(byd_profile, tcl_profile)
+        self.assertNotEqual(cmb_profile, byd_profile)
+
+    def test_specialized_configs_apply_stock_specific_overrides(self) -> None:
+        specs = {spec.strategy_id: spec for spec in list_strategy_specs()}
+
+        self.assertEqual(specs["tcl_simple_ma_backtest"].config["fast"], 10)
+        self.assertEqual(specs["boe_simple_ma_backtest"].config["fast"], 9)
+        self.assertEqual(specs["cmb_simple_ma_backtest"].config["stop_loss_pct"], 0.06)
+        self.assertEqual(specs["byd_simple_ma_backtest"].config["breakout_power_threshold"], 0.68)
+
+        for strategy_id in (
+            "tcl_simple_ma_backtest",
+            "boe_simple_ma_backtest",
+            "cmb_simple_ma_backtest",
+            "byd_simple_ma_backtest",
+        ):
+            with self.subTest(strategy_id=strategy_id):
+                self.assertEqual(
+                    specs[strategy_id].config["benchmark_code"],
+                    SPECIALIZED_BASE_TEMPLATE["benchmark_code"],
+                )
 
 
 if __name__ == "__main__":
