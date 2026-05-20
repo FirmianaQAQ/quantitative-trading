@@ -66,6 +66,7 @@ def build_single_stock_analysis_payload(
     config: dict[str, Any],
     summary: dict[str, Any],
     df: pd.DataFrame,
+    external_context: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     filtered_df = _filter_df(df, config.get("from_date"), config.get("to_date"))
     if filtered_df.empty:
@@ -132,6 +133,8 @@ def build_single_stock_analysis_payload(
             "price_position_60d_pct": _build_price_position_pct(close_series, 60),
         },
     }
+    if external_context:
+        payload["external_context"] = external_context
     return _to_builtin(payload)
 
 
@@ -272,4 +275,3 @@ def _round_or_none(value: Any, digits: int) -> float | None:
     if value is None or pd.isna(value):
         return None
     return round(float(value), digits)
-

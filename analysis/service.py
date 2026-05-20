@@ -9,6 +9,7 @@ from urllib import error, request
 import pandas as pd
 
 from analysis.config import load_llm_analysis_settings
+from analysis.context_enricher import enrich_single_stock_context
 from analysis.payload_builder import (
     build_batch_analysis_payload,
     build_pair_analysis_payload,
@@ -40,7 +41,13 @@ def maybe_generate_single_stock_analysis(
     output_path = _build_single_report_path(config)
     title = f"{config.get('strategy_name', '策略')} {config.get('code')} 大模型分析报告"
     try:
-        payload = build_single_stock_analysis_payload(config, summary, df)
+        external_context = enrich_single_stock_context(config, df)
+        payload = build_single_stock_analysis_payload(
+            config,
+            summary,
+            df,
+            external_context=external_context,
+        )
         settings, result = _request_analysis_result(
             payload=payload,
             task_title="单策略回测分析",
@@ -205,11 +212,12 @@ def _request_analysis_result(
 def _build_system_prompt() -> str:
     return (
         "你是资深量化研究员。"
-        "你只能基于用户提供的结构化回测数据做分析，不允许编造不存在的行情、财务或新闻信息。"
+        "你只能基于用户提供的结构化回测数据和补充上下文做分析，不允许编造不存在的行情、财务、新闻或资金流信息。"
         "你必须输出 JSON 对象，字段固定为："
         "score, conclusion, strengths, risks, regime_fit, next_action, confidence。"
         "其中 strengths 和 risks 必须是字符串数组，score 和 confidence 是 0 到 100 的整数。"
         "结论必须聚焦策略表现、风险来源、适用行情和下一步研究建议，不能给出直接实盘买卖指令。"
+        "如果输入里包含新闻、财报或资金流，它们只能作为解释和补强线索，不能覆盖回测事实本身。"
     )
 
 
@@ -218,6 +226,8 @@ def _build_user_prompt(task_title: str, payload: dict[str, Any]) -> str:
         f"任务：{task_title}\n"
         "请严格基于下面的 JSON 数据输出分析结果。\n"
         "如果数据不足以支撑强结论，请在 risks 和 next_action 里明确指出。\n"
+        "若 external_context 中部分字段缺失、为空或标记为 unavailable，只能如实说明，不能脑补。\n"
+        "若 external_context 提供了新闻、财报或资金流，请把它们当作对策略表现的辅助解释，而不是确定性因果。\n"
         "输入 JSON：\n"
         f"{json.dumps(payload, ensure_ascii=False, indent=2)}"
     )

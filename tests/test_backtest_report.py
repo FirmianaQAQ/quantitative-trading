@@ -60,6 +60,7 @@ class BacktestReportAdviceTests(unittest.TestCase):
                     "chart_data": {
                         "股票代码": "sh.600236",
                         "策略名称": "普通双均线",
+                        "复权口径": "Dypre 动态前复权",
                         "均线说明": "快线看短期节奏，慢线看中期趋势。",
                         "总收益率": "41.20%",
                         "空仓-下一交易日策略": "观察买点",
@@ -73,9 +74,10 @@ class BacktestReportAdviceTests(unittest.TestCase):
             ]
         )
 
-        self.assertIn("股票代码", html)
         self.assertIn("总收益率", html)
+        self.assertNotIn('data-metric-label="股票代码"', html)
         self.assertNotIn("策略名称", html)
+        self.assertNotIn("复权口径", html)
         self.assertNotIn("均线说明", html)
         self.assertNotIn("空仓-下一交易日策略", html)
         self.assertNotIn("空仓-建仓提示", html)
@@ -285,7 +287,6 @@ class BacktestReportAdviceTests(unittest.TestCase):
             html,
         )
         self.assertIn("当前实际持仓", html)
-        self.assertIn("除权价格：10.60", html)
 
     def test_advice_panel_contains_optimized_strategy_source(self) -> None:
         report_data = build_buy_sell_report(
@@ -327,7 +328,6 @@ class BacktestReportAdviceTests(unittest.TestCase):
         self.assertIn('data-default-advice-source="optimized"', html)
         self.assertIn("优化策略", html)
         self.assertIn("优化观察", html)
-        self.assertIn("除权价格：10.60", html)
 
     def test_html_report_title_can_include_ai_link(self) -> None:
         report_data = build_buy_sell_report(

@@ -505,7 +505,6 @@ def _build_advice_panel(
                         <span class="advice-badge is-{html_escape(entry['action'])}">{html_escape(entry['title'])}</span>
                       </div>
                       <div class="advice-price">参考价格：{html_escape(entry['price'])}</div>
-                      <div class="advice-price">除权价格：{html_escape(str(entry.get('ex_right_price', '-')))}</div>
                       <div class="advice-summary">{html_escape(entry['summary'])}</div>
                       <div class="advice-reason">{html_escape(entry['reason'])}</div>
                     </article>
@@ -792,7 +791,9 @@ def _resolve_metric_card_tone(label: str) -> str:
 
 
 HIDDEN_METRIC_CARD_LABELS = {
+    "股票代码",
     "策略名称",
+    "复权口径",
     "均线说明",
     "空仓-下一交易日策略",
     "空仓-预判摘要",

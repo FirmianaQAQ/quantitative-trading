@@ -21,6 +21,41 @@ from utils.backtest_report_builder import (
     summarize_result,
 )
 
+TCL_SPECIALIZED_TEMPLATE: dict[str, Any] = {
+    "fast": 10,
+    "slow": 250,
+    "buy_trigger_multiplier": 1.03,
+    "buy_trigger_window": 8,
+    "buy_rise_window": 4,
+    "buy_rise_days_required": 1,
+    "sell_trigger_multiplier": 0.93,
+    "stop_loss_pct": 0.08,
+    "breakout_power_threshold": 0.55,
+    "breakout_buy_limit_multiplier": 1.0,
+    "benchmark_code": "",
+}
+
+
+def build_specialized_config(
+    base_config: dict[str, Any],
+    *,
+    code: str,
+    report_name: str,
+    strategy_name: str,
+    strategy_brief: str,
+) -> dict[str, Any]:
+    config = dict(base_config)
+    config.update(TCL_SPECIALIZED_TEMPLATE)
+    config.update(
+        {
+            "code": code,
+            "report_name": report_name,
+            "strategy_name": strategy_name,
+            "strategy_brief": strategy_brief,
+        }
+    )
+    return config
+
 
 def validate_specialized_code(
     config: dict[str, Any],

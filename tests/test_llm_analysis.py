@@ -13,6 +13,7 @@ from analysis.payload_builder import (
     build_batch_analysis_payload,
     build_single_stock_analysis_payload,
 )
+from analysis.context_enricher import enrich_single_stock_context
 from analysis.service import (
     maybe_generate_batch_analysis,
     maybe_generate_single_stock_analysis,
@@ -107,6 +108,127 @@ class LLMAnalysisTests(unittest.TestCase):
             "watch_buy",
         )
 
+    def test_build_single_stock_analysis_payload_can_include_external_context(self) -> None:
+        payload = build_single_stock_analysis_payload(
+            config={
+                "code": "sz.000725",
+                "report_name": "base_backtest",
+                "strategy_name": "普通双均线",
+                "strategy_brief": "基础版",
+                "adjust_flag": DEFAULT_A_SHARE_ADJUST,
+                "from_date": "2024-01-01",
+                "to_date": "2024-03-30",
+                "fast": 8,
+                "slow": 250,
+                "cash": 100000.0,
+            },
+            summary={
+                "annual_return_pct": 18.3,
+                "max_drawdown_pct": 9.5,
+                "sharpe_ratio": 1.2,
+            },
+            df=_build_sample_price_df(),
+            external_context={
+                "news": {"status": "ok", "items": [{"title": "面板价格回升"}]},
+                "fund_flow": {"status": "ok", "main_net_inflow_5d": 123.4},
+            },
+        )
+
+        self.assertIn("external_context", payload)
+        self.assertEqual(payload["external_context"]["news"]["status"], "ok")
+        self.assertEqual(
+            payload["external_context"]["fund_flow"]["main_net_inflow_5d"],
+            123.4,
+        )
+
+    def test_enrich_single_stock_context_filters_future_news_and_summarizes_sources(self) -> None:
+        sample_df = _build_sample_price_df()
+        sample_df = sample_df[sample_df["date"] <= "2024-03-30"].reset_index(drop=True)
+
+        news_df = pd.DataFrame(
+            [
+                {
+                    "发布时间": "2024-03-29 10:00:00",
+                    "文章来源": "东方财富",
+                    "新闻标题": "公司发布新产品",
+                    "新闻链接": "https://example.com/news-1",
+                },
+                {
+                    "发布时间": "2024-04-02 09:00:00",
+                    "文章来源": "东方财富",
+                    "新闻标题": "回测结束后的新闻",
+                    "新闻链接": "https://example.com/news-2",
+                },
+            ]
+        )
+        fund_flow_df = pd.DataFrame(
+            [
+                {
+                    "日期": "2024-03-28",
+                    "主力净流入-净额": "1000",
+                    "主力净流入-净占比": "1.2",
+                    "超大单净流入-净占比": "0.8",
+                    "大单净流入-净占比": "0.4",
+                },
+                {
+                    "日期": "2024-03-29",
+                    "主力净流入-净额": "2000",
+                    "主力净流入-净占比": "2.3",
+                    "超大单净流入-净占比": "1.1",
+                    "大单净流入-净占比": "0.6",
+                },
+            ]
+        )
+        abstract_df = pd.DataFrame(
+            [
+                {
+                    "报告期": "2023-12-31",
+                    "营业总收入同比": "12.5",
+                    "净利润同比": "-5.2",
+                    "净利润": "321000000",
+                }
+            ]
+        )
+        indicator_df = pd.DataFrame(
+            [
+                {
+                    "日期": "2023-12-31",
+                    "净资产收益率(%)": "9.8",
+                    "销售毛利率(%)": "18.6",
+                    "资产负债率(%)": "42.1",
+                    "每股经营性现金流(元)": "0.56",
+                }
+            ]
+        )
+
+        with patch("analysis.context_enricher.ak.stock_news_em", return_value=news_df):
+            with patch(
+                "analysis.context_enricher.ak.stock_individual_fund_flow",
+                return_value=fund_flow_df,
+            ):
+                with patch(
+                    "analysis.context_enricher.ak.stock_financial_abstract",
+                    return_value=abstract_df,
+                ):
+                    with patch(
+                        "analysis.context_enricher.ak.stock_financial_analysis_indicator",
+                        return_value=indicator_df,
+                    ):
+                        context = enrich_single_stock_context(
+                            {"code": "sz.000725", "to_date": "2024-03-30"},
+                            sample_df,
+                        )
+
+        self.assertEqual(context["as_of_date"], "2024-03-30")
+        self.assertEqual(context["news"]["status"], "ok")
+        self.assertEqual(len(context["news"]["items"]), 1)
+        self.assertEqual(context["news"]["items"][0]["title"], "公司发布新产品")
+        self.assertEqual(context["fund_flow"]["main_net_inflow_3d"], 3000.0)
+        self.assertEqual(context["fund_flow"]["main_net_inflow_5d"], 3000.0)
+        self.assertEqual(context["financials"]["report_date"], "2023-12-31")
+        self.assertEqual(context["financials"]["revenue_yoy_pct"], 12.5)
+        self.assertEqual(context["financials"]["roe_pct"], 9.8)
+
     def test_build_batch_analysis_payload_ranks_best_candidate_first(self) -> None:
         payload = build_batch_analysis_payload(
             strategy_id="base_backtest",
@@ -183,12 +305,19 @@ class LLMAnalysisTests(unittest.TestCase):
                 "analysis.service._request_analysis_result",
                 return_value=(fake_settings, fake_result),
             ):
-                with patch("analysis.service._build_single_report_path", return_value=output_path):
-                    report_path = maybe_generate_single_stock_analysis(
-                        config=config,
-                        summary=summary,
-                        df=_build_sample_price_df(),
-                    )
+                with patch(
+                    "analysis.service.enrich_single_stock_context",
+                    return_value={
+                        "news": {"status": "ok", "items": [{"title": "面板价格回升"}]},
+                        "fund_flow": {"status": "ok", "main_net_inflow_5d": 12345.6},
+                    },
+                ):
+                    with patch("analysis.service._build_single_report_path", return_value=output_path):
+                        report_path = maybe_generate_single_stock_analysis(
+                            config=config,
+                            summary=summary,
+                            df=_build_sample_price_df(),
+                        )
 
             self.assertEqual(report_path, output_path)
             self.assertTrue(output_path.exists())
@@ -199,6 +328,77 @@ class LLMAnalysisTests(unittest.TestCase):
             self.assertIn("模型名称：deepseek-chat", content)
             self.assertIn("策略表现较稳健", content)
             self.assertIn("收益风险比尚可", content)
+
+    def test_single_analysis_passes_external_context_into_request_payload(self) -> None:
+        config = {
+            "code": "sz.000725",
+            "report_name": "base_backtest",
+            "strategy_name": "普通双均线",
+            "strategy_brief": "基础版",
+            "adjust_flag": DEFAULT_A_SHARE_ADJUST,
+            "from_date": "2024-01-01",
+            "to_date": "2024-03-30",
+            "fast": 8,
+            "slow": 250,
+            "cash": 100000.0,
+            "enable_llm_analysis": True,
+        }
+        summary = {
+            "annual_return_pct": 18.3,
+            "max_drawdown_pct": 9.5,
+            "sharpe_ratio": 1.2,
+        }
+        fake_result = {
+            "score": 82,
+            "conclusion": "策略表现较稳健，但趋势依赖较强。",
+            "strengths": ["收益风险比尚可", "回撤可控"],
+            "risks": ["样本数量有限", "震荡市可能失效"],
+            "regime_fit": "更适合中期趋势缓慢抬升的行情。",
+            "next_action": "继续扩大样本并做滚动窗口验证。",
+            "confidence": 74,
+        }
+        fake_settings = LLMAnalysisSettings(
+            enabled=True,
+            provider="deepseek",
+            api_key="test-key",
+            base_url="https://api.deepseek.com",
+            model="deepseek-chat",
+            timeout_seconds=60,
+            temperature=0.2,
+        )
+        captured_payloads: list[dict] = []
+
+        def _fake_request_analysis_result(*, payload: dict, task_title: str):
+            captured_payloads.append(payload)
+            return fake_settings, fake_result
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "single.html"
+            with patch(
+                "analysis.service.enrich_single_stock_context",
+                return_value={
+                    "news": {"status": "ok", "items": [{"title": "面板价格回升"}]},
+                    "fund_flow": {"status": "ok", "main_net_inflow_5d": 12345.6},
+                    "financials": {"status": "ok", "report_date": "2023-12-31"},
+                },
+            ):
+                with patch(
+                    "analysis.service._request_analysis_result",
+                    side_effect=_fake_request_analysis_result,
+                ):
+                    with patch("analysis.service._build_single_report_path", return_value=output_path):
+                        maybe_generate_single_stock_analysis(
+                            config=config,
+                            summary=summary,
+                            df=_build_sample_price_df(),
+                        )
+
+        self.assertEqual(len(captured_payloads), 1)
+        self.assertIn("external_context", captured_payloads[0])
+        self.assertEqual(
+            captured_payloads[0]["external_context"]["financials"]["report_date"],
+            "2023-12-31",
+        )
 
     def test_batch_analysis_skips_when_disabled(self) -> None:
         report_path = maybe_generate_batch_analysis(

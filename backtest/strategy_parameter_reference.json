@@ -151,6 +151,40 @@
       "breakout_power_threshold": 0.6,
       "breakout_buy_limit_multiplier": 1.0
     },
+    "specialized_ma_tcl_template": {
+      "code": "sz.000100",
+      "adjust_flag": "cq",
+      "from_date": "2020-01-01",
+      "to_date": null,
+      "data_from_date": "2018-01-01",
+      "cash": 100000.0,
+      "commission": 0.0001,
+      "stamp_duty": 0.0005,
+      "transfer_fee": 1e-05,
+      "min_commission": 5.0,
+      "buy_cash_ratio": 0.99,
+      "buy_price_buffer": 1.01,
+      "lot_size": 100,
+      "buy_trigger_multiplier": 1.03,
+      "buy_trigger_window": 8,
+      "buy_rise_window": 4,
+      "buy_rise_days_required": 1,
+      "sell_trigger_multiplier": 0.93,
+      "stop_loss_pct": 0.08,
+      "print_log": true,
+      "fast": 10,
+      "slow": 250,
+      "plot": true,
+      "benchmark_code": "",
+      "report_dir": "logs/backtest",
+      "report_name": "tcl_simple_ma_backtest",
+      "strategy_name": "TCL双均线专版",
+      "strategy_brief": "sz.000100",
+      "current_position": "auto",
+      "enable_llm_analysis": false,
+      "breakout_power_threshold": 0.55,
+      "breakout_buy_limit_multiplier": 1.0
+    },
     "simple_ma_v3_base": {
       "code": "sh.601991",
       "adjust_flag": "cq",
@@ -325,212 +359,156 @@
       "display_name": "京东方双均线专版",
       "family_id": "specialized_ma_backtest",
       "menu_enabled": true,
-      "template": "simple_ma_v2_base",
+      "template": "specialized_ma_tcl_template",
       "overrides": {
         "code": "sz.000725",
-        "slow": 250,
         "report_name": "boe_simple_ma_backtest",
         "strategy_name": "京东方双均线专版",
-        "strategy_brief": "sz.000725稳健增强版"
+        "strategy_brief": "sz.000725"
       }
     },
     "byd_simple_ma_backtest": {
       "display_name": "比亚迪双均线专版",
       "family_id": "specialized_ma_backtest",
       "menu_enabled": true,
-      "template": "simple_ma_v2_base",
+      "template": "specialized_ma_tcl_template",
       "overrides": {
         "code": "sz.002594",
-        "buy_trigger_multiplier": 1.03,
-        "buy_rise_window": 5,
-        "slow": 220,
         "report_name": "byd_simple_ma_backtest",
         "strategy_name": "比亚迪双均线专版",
-        "strategy_brief": "sz.002594历史节奏增强版",
-        "breakout_power_threshold": 0.55
+        "strategy_brief": "sz.002594"
       }
     },
     "cmb_simple_ma_backtest": {
       "display_name": "招商银行双均线专版",
       "family_id": "specialized_ma_backtest",
       "menu_enabled": true,
-      "template": "simple_ma_v2_base",
+      "template": "specialized_ma_tcl_template",
       "overrides": {
         "code": "sh.600036",
-        "buy_rise_window": 5,
-        "stop_loss_pct": 0.08,
-        "slow": 250,
         "report_name": "cmb_simple_ma_backtest",
         "strategy_name": "招商银行双均线专版",
-        "strategy_brief": "sh.600036历史节奏增强版",
-        "breakout_power_threshold": 0.55
+        "strategy_brief": "sh.600036"
       }
     },
     "datang_simple_ma_backtest": {
       "display_name": "大唐发电双均线专版",
       "family_id": "specialized_ma_backtest",
       "menu_enabled": true,
-      "template": "simple_ma_v2_base",
+      "template": "specialized_ma_tcl_template",
       "overrides": {
-        "buy_trigger_multiplier": 1.03,
-        "buy_rise_window": 5,
-        "buy_rise_days_required": 2,
-        "stop_loss_pct": 0.08,
+        "code": "sh.601991",
         "report_name": "datang_simple_ma_backtest",
         "strategy_name": "大唐发电双均线专版",
-        "strategy_brief": "sh.601991历史节奏增强版"
+        "strategy_brief": "sh.601991"
       }
     },
     "guiguan_simple_ma_backtest": {
       "display_name": "桂冠电力双均线专版",
       "family_id": "specialized_ma_backtest",
       "menu_enabled": true,
-      "template": "simple_ma_v2_base",
+      "template": "specialized_ma_tcl_template",
       "overrides": {
         "code": "sh.600236",
-        "buy_trigger_multiplier": 1.03,
-        "buy_rise_window": 5,
-        "buy_rise_days_required": 2,
-        "stop_loss_pct": 0.08,
-        "slow": 220,
         "report_name": "guiguan_simple_ma_backtest",
         "strategy_name": "桂冠电力双均线专版",
-        "strategy_brief": "sh.600236历史节奏增强版",
-        "breakout_power_threshold": 0.55
+        "strategy_brief": "sh.600236"
       }
     },
     "haier_simple_ma_backtest": {
       "display_name": "海尔智家双均线专版",
       "family_id": "specialized_ma_backtest",
       "menu_enabled": true,
-      "template": "simple_ma_v2_base",
+      "template": "specialized_ma_tcl_template",
       "overrides": {
         "code": "sh.600690",
-        "buy_trigger_multiplier": 1.03,
-        "buy_rise_window": 5,
-        "stop_loss_pct": 0.08,
         "report_name": "haier_simple_ma_backtest",
         "strategy_name": "海尔智家双均线专版",
-        "strategy_brief": "sh.600690历史节奏增强版",
-        "breakout_power_threshold": 0.55
+        "strategy_brief": "sh.600690"
       }
     },
     "kangguan_simple_ma_backtest": {
       "display_name": "康冠科技双均线专版",
       "family_id": "specialized_ma_backtest",
       "menu_enabled": true,
-      "template": "simple_ma_v2_base",
+      "template": "specialized_ma_tcl_template",
       "overrides": {
         "code": "sz.001308",
-        "buy_trigger_multiplier": 1.03,
-        "buy_rise_window": 5,
-        "stop_loss_pct": 0.08,
-        "fast": 10,
         "report_name": "kangguan_simple_ma_backtest",
         "strategy_name": "康冠科技双均线专版",
-        "strategy_brief": "sz.001308历史节奏增强版",
-        "breakout_power_threshold": 0.55
+        "strategy_brief": "sz.001308"
       }
     },
     "nari_simple_ma_backtest": {
       "display_name": "国电南瑞双均线专版",
       "family_id": "specialized_ma_backtest",
       "menu_enabled": true,
-      "template": "simple_ma_v2_base",
+      "template": "specialized_ma_tcl_template",
       "overrides": {
         "code": "sh.600406",
-        "buy_trigger_multiplier": 1.03,
-        "buy_rise_window": 5,
-        "stop_loss_pct": 0.08,
-        "fast": 10,
-        "slow": 220,
         "report_name": "nari_simple_ma_backtest",
         "strategy_name": "国电南瑞双均线专版",
-        "strategy_brief": "sh.600406历史节奏增强版",
-        "breakout_power_threshold": 0.55
+        "strategy_brief": "sh.600406"
       }
     },
     "perfect_world_simple_ma_backtest": {
       "display_name": "完美世界双均线专版",
       "family_id": "specialized_ma_backtest",
       "menu_enabled": true,
-      "template": "simple_ma_v2_base",
+      "template": "specialized_ma_tcl_template",
       "overrides": {
         "code": "sh.002624",
-        "buy_trigger_multiplier": 1.03,
-        "buy_rise_window": 5,
-        "slow": 250,
         "report_name": "perfect_world_simple_ma_backtest",
         "strategy_name": "完美世界双均线专版",
-        "strategy_brief": "sh.002624历史节奏增强版",
-        "breakout_power_threshold": 0.55
+        "strategy_brief": "sh.002624"
       }
     },
     "shandong_fiberglass_simple_ma_backtest": {
       "display_name": "山东玻纤双均线专版",
       "family_id": "specialized_ma_backtest",
       "menu_enabled": true,
-      "template": "simple_ma_v2_base",
+      "template": "specialized_ma_tcl_template",
       "overrides": {
         "code": "sh.605006",
-        "buy_trigger_multiplier": 1.03,
-        "buy_rise_window": 5,
-        "slow": 250,
         "report_name": "shandong_fiberglass_simple_ma_backtest",
         "strategy_name": "山东玻纤双均线专版",
-        "strategy_brief": "sh.605006历史节奏增强版",
-        "breakout_power_threshold": 0.55
+        "strategy_brief": "sh.605006"
       }
     },
     "southern_air_simple_ma_backtest": {
       "display_name": "南方航空双均线专版",
       "family_id": "specialized_ma_backtest",
       "menu_enabled": true,
-      "template": "simple_ma_v2_base",
+      "template": "specialized_ma_tcl_template",
       "overrides": {
         "code": "sh.600029",
-        "buy_rise_window": 5,
-        "buy_rise_days_required": 2,
         "report_name": "southern_air_simple_ma_backtest",
         "strategy_name": "南方航空双均线专版",
-        "strategy_brief": "sh.600029历史节奏增强版",
-        "breakout_power_threshold": 0.55
+        "strategy_brief": "sh.600029"
       }
     },
     "tcl_simple_ma_backtest": {
       "display_name": "TCL双均线专版",
       "family_id": "specialized_ma_backtest",
       "menu_enabled": true,
-      "template": "simple_ma_v2_base",
+      "template": "specialized_ma_tcl_template",
       "overrides": {
         "code": "sz.000100",
-        "buy_trigger_multiplier": 1.03,
-        "sell_trigger_multiplier": 0.93,
-        "stop_loss_pct": 0.08,
-        "fast": 10,
-        "slow": 250,
         "report_name": "tcl_simple_ma_backtest",
         "strategy_name": "TCL双均线专版",
-        "strategy_brief": "sz.000100收益稳健增强版",
-        "breakout_power_threshold": 0.55
+        "strategy_brief": "sz.000100"
       }
     },
     "wolong_simple_ma_backtest": {
       "display_name": "卧龙电驱双均线专版",
       "family_id": "specialized_ma_backtest",
       "menu_enabled": true,
-      "template": "simple_ma_v2_base",
+      "template": "specialized_ma_tcl_template",
       "overrides": {
         "code": "sh.600580",
-        "buy_trigger_multiplier": 1.03,
-        "buy_rise_window": 5,
-        "buy_rise_days_required": 2,
-        "fast": 10,
-        "slow": 220,
         "report_name": "wolong_simple_ma_backtest",
         "strategy_name": "卧龙电驱双均线专版",
-        "strategy_brief": "sh.600580历史节奏增强版",
-        "breakout_power_threshold": 0.55
+        "strategy_brief": "sh.600580"
       }
     },
     "pair_trade_backtest": {
