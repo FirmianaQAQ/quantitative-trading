@@ -6,6 +6,10 @@ from typing import Any
 import pandas as pd
 import backtrader as bt
 
+from analysis.context_enricher import (
+    build_strategy_enhancement_patch,
+    enrich_single_stock_context,
+)
 from utils.dict_utils import get_nested_value
 from utils.float_int_utils import safe_round
 from utils.project_utils import load_daily_data
@@ -171,6 +175,7 @@ def build_backtest_report_data(
         to_date=config.get("to_date"),
     )
     filtered_df = filtered_df.copy()
+    external_context = enrich_single_stock_context(config, filtered_df)
     
     # 计算均线数据并添加到指标线列表中
     indicator_lines = []
@@ -201,6 +206,11 @@ def build_backtest_report_data(
         config=config,
         indicator_lines=indicator_lines,
         ma_periods=ma,
+    )
+    optimized_chart_data = build_enhanced_trade_chart_data(
+        filtered_df=filtered_df,
+        optimized_chart_data=optimized_chart_data,
+        external_context=external_context,
     )
     next_trade_plan_by_position = {
         "empty": extract_next_trade_plan_from_chart_data(
@@ -267,6 +277,9 @@ def build_backtest_report_data(
         {"label": "资金空闲天数", "value": summary["idle_cash_days_total"]},
         {"label": "资金空闲天数占比", "value": (summary["idle_cash_days_total"] / total_days * 100) if total_days > 0 else 0, "kind": "percent"},
     ]
+    summary_items.extend(
+        _build_external_context_summary_items(external_context)
+    )
     empty_plan = next_trade_plan_by_position.get("empty")
     hold_plan = next_trade_plan_by_position.get("hold")
     if empty_plan:
@@ -291,7 +304,6 @@ def build_backtest_report_data(
                 {"label": "持仓-预判摘要", "value": hold_plan["summary"]},
             ]
         )
-
     summary_metrics = format_summary_metrics(summary_items)
 
     # 计算基准收益率序列
@@ -322,7 +334,7 @@ def build_backtest_report_data(
         report_data.append(
             {
                 "chart_name": "优化买卖点",
-                "subtitle": "基于原策略增加趋势确认、回撤保护和不追高过滤后的优化建议",
+                "subtitle": "基于原策略增加趋势确认、回撤保护、不追高过滤，并结合新闻、资金流和财报约束修正后的统一优化建议。",
                 "chart_data": optimized_chart_data,
             }
         )
@@ -706,10 +718,14 @@ def build_empty_entry_timing_plan(
         reference_parts.append(f"快线参考位 {float(fast_ma):.2f}")
     if pd.notna(slow_ma):
         reference_parts.append(f"慢线防守位 {float(slow_ma):.2f}")
+    fast_value_text = f"{float(fast_ma):.2f}" if pd.notna(fast_ma) else "N/A"
+    slow_value_text = f"{float(slow_ma):.2f}" if pd.notna(slow_ma) else "N/A"
+    ma_status_text = f"当日快线={fast_value_text}、慢线={slow_value_text}。"
 
     if bullish_trend and momentum_ok and liquidity_ok and pullback_ok and not chase_too_far:
         label = "可考虑试探建仓"
         summary = (
+            f"{ma_status_text}"
             f"明日若价格继续站在慢线 {float(slow_ma):.2f} 上方，"
             f"且没有明显高开脱离快线 {float(fast_ma):.2f}，可考虑分批试探建仓。"
         )
@@ -723,12 +739,14 @@ def build_empty_entry_timing_plan(
             pullback_price = min(pullback_price, candidate) if pullback_price else candidate
         pullback_text = f"{pullback_price:.2f}" if pullback_price else "快线附近"
         summary = (
+            f"{ma_status_text}"
             "趋势和动能都不差，但当前位置偏高。"
             f"明日优先等回踩到 {pullback_text} 一带，再考虑建仓，不追高。"
         )
     elif bullish_trend and not momentum_ok:
         label = "等待动能确认"
         summary = (
+            f"{ma_status_text}"
             "长线趋势已转暖，但短线动能还不够。"
             "明日优先等近 4 日上涨天数达到 3 天以上，或 3 日动能转正到 1% 附近后，再考虑建仓。"
         )
@@ -737,6 +755,7 @@ def build_empty_entry_timing_plan(
         turn_reference = float(turn_ma20) * 0.8 if pd.notna(turn_ma20) else None
         turn_text = f"{turn_reference:.2f}" if turn_reference is not None else "20 日均量附近"
         summary = (
+            f"{ma_status_text}"
             "趋势条件接近满足，但量能/换手偏弱。"
             f"明日优先等换手回到 {turn_text} 以上，再考虑建仓。"
         )
@@ -745,6 +764,7 @@ def build_empty_entry_timing_plan(
         slow_text = f"{float(slow_ma):.2f}" if pd.notna(slow_ma) else "慢线之上"
         summary = (
             "当前均线结构还没完全转强。"
+            f"{ma_status_text}"
             f"明日优先观察收盘重新站上 {slow_text}，且快线不弱于慢线后，再考虑建仓。"
         )
 
@@ -957,6 +977,117 @@ def build_optimized_trade_chart_data(
         indicator_lines=indicator_lines,
         advice_entries=advice_entries,
     )
+
+
+def build_enhanced_trade_chart_data(
+    filtered_df: pd.DataFrame,
+    optimized_chart_data: dict[str, Any] | None,
+    external_context: dict[str, Any] | None,
+) -> dict[str, Any]:
+    if not isinstance(optimized_chart_data, dict):
+        return {}
+    if filtered_df.empty:
+        return optimized_chart_data
+
+    advice_entries = list(optimized_chart_data.get("advice_entries") or [])
+    if not advice_entries:
+        return optimized_chart_data
+
+    latest_entry = dict(advice_entries[-1])
+    base_plan = extract_next_trade_plan_from_chart_data(
+        {"advice_entries": [latest_entry]},
+        current_position="auto",
+    )
+    enhancement_patch = build_strategy_enhancement_patch(
+        base_plan=base_plan,
+        external_context=external_context,
+    )
+    if not enhancement_patch:
+        return optimized_chart_data
+
+    latest_entry["action"] = enhancement_patch["action"]
+    latest_entry["title"] = enhancement_patch["title"]
+    latest_entry["summary"] = enhancement_patch["summary"]
+    latest_entry["reason"] = enhancement_patch["reason"]
+    latest_entry["is_signal"] = enhancement_patch["action"] in {"buy", "sell", "watch_buy"}
+    latest_entry["enhancement_score"] = enhancement_patch.get("enhancement_score")
+    latest_entry["enhancement_label"] = enhancement_patch.get("enhancement_label")
+    latest_entry["news_sentiment_label"] = enhancement_patch.get("news_sentiment_label")
+    latest_entry["fund_flow_label"] = enhancement_patch.get("fund_flow_label")
+    latest_entry["financial_label"] = enhancement_patch.get("financial_label")
+    advice_entries[-1] = latest_entry
+
+    return {
+        **optimized_chart_data,
+        "advice_entries": advice_entries,
+    }
+
+
+def _build_external_context_summary_items(
+    external_context: dict[str, Any] | None,
+) -> list[dict[str, Any]]:
+    if not isinstance(external_context, dict):
+        return []
+
+    items: list[dict[str, Any]] = []
+    news_context = external_context.get("news", {})
+    fund_context = external_context.get("fund_flow", {})
+    financial_context = external_context.get("financials", {})
+
+    if isinstance(news_context, dict) and news_context.get("status") == "ok":
+        items.append(
+            {
+                "label": "新闻情绪",
+                "value": news_context.get("aggregate_sentiment_label", "中性"),
+            }
+        )
+        theme_tags = news_context.get("theme_tags") or []
+        if theme_tags:
+            items.append(
+                {
+                    "label": "新闻主题",
+                    "value": "、".join(str(item) for item in theme_tags[:3]),
+                }
+            )
+
+    if isinstance(fund_context, dict) and fund_context.get("status") == "ok":
+        items.append(
+            {
+                "label": "资金面判断",
+                "value": _describe_external_flow_label(fund_context),
+            }
+        )
+
+    if isinstance(financial_context, dict) and financial_context.get("status") == "ok":
+        items.append(
+            {
+                "label": "财报面判断",
+                "value": financial_context.get("bias_label") or "中性",
+            }
+        )
+
+    return items
+
+
+def _describe_external_flow_label(fund_context: dict[str, Any]) -> str:
+    main_inflow_5d = fund_context.get("main_net_inflow_5d")
+    main_ratio_today = fund_context.get("main_net_inflow_ratio_today_pct")
+    try:
+        main_inflow_5d = float(main_inflow_5d) if main_inflow_5d is not None else None
+    except (TypeError, ValueError):
+        main_inflow_5d = None
+    try:
+        main_ratio_today = float(main_ratio_today) if main_ratio_today is not None else None
+    except (TypeError, ValueError):
+        main_ratio_today = None
+
+    if main_inflow_5d is None and main_ratio_today is None:
+        return "中性"
+    if (main_inflow_5d or 0) > 0 and (main_ratio_today or 0) >= 0:
+        return "偏流入"
+    if (main_inflow_5d or 0) < 0 and (main_ratio_today or 0) <= 0:
+        return "偏流出"
+    return "分化"
 
 
 def build_next_trade_plan(

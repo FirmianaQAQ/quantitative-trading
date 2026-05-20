@@ -795,6 +795,10 @@ HIDDEN_METRIC_CARD_LABELS = {
     "策略名称",
     "复权口径",
     "均线说明",
+    "新闻情绪",
+    "新闻主题",
+    "资金面判断",
+    "财报面判断",
     "空仓-下一交易日策略",
     "空仓-预判摘要",
     "空仓-建仓时机",
@@ -853,6 +857,49 @@ def _resolve_forecast_tone(action: str) -> str:
         "observe": "neutral",
     }
     return tone_map.get(str(action or "").strip().lower(), "neutral")
+
+
+def _extract_latest_price_snapshot(report_data: list[dict[str, Any]]) -> dict[str, str]:
+    for target_chart_name in ("优化买卖点", "买卖点"):
+        for item in report_data:
+            if not isinstance(item, dict):
+                continue
+            if str(item.get("chart_name", "")).strip() != target_chart_name:
+                continue
+            payload = _normalize_kline_payload(item.get("chart_data"))
+            dates = payload.get("x_axis", []) or []
+            candles = payload.get("candles", []) or []
+            if not dates or not candles:
+                continue
+            latest_index = min(len(dates), len(candles)) - 1
+            if latest_index < 0:
+                continue
+            latest_candle = candles[latest_index]
+            if not isinstance(latest_candle, (list, tuple)) or len(latest_candle) < 2:
+                continue
+            try:
+                latest_close = float(latest_candle[1])
+            except (TypeError, ValueError):
+                continue
+            return {
+                "date": str(dates[latest_index]),
+                "price": f"{latest_close:.2f}",
+            }
+    return {}
+
+
+def _extract_today_trade_plan_preview(
+    report_data: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    previews = [
+        preview
+        for preview in [
+            _extract_position_forecast_preview(report_data, CURRENT_POSITION_EMPTY),
+            _extract_position_forecast_preview(report_data, CURRENT_POSITION_HOLD),
+        ]
+        if preview
+    ]
+    return previews
 
 
 def _extract_next_trade_plan_preview(report_data: list[dict[str, Any]]) -> dict[str, Any]:
@@ -935,8 +982,10 @@ def _extract_position_forecast_preview(
     return {
         "position_mode": position_mode,
         "position_label": "如果你当前空仓" if position_mode == CURRENT_POSITION_EMPTY else "如果你当前持仓",
-        "display_action": ACTION_TITLE_MAP.get(str(latest_entry.get("action", "")), str(latest_entry.get("action", "-"))),
-        "summary": ACTION_SUMMARY_MAP.get(str(latest_entry.get("action", "")), str(latest_entry.get("summary", "-"))),
+        "display_action": str(latest_entry.get("title", "")).strip()
+        or ACTION_TITLE_MAP.get(str(latest_entry.get("action", "")), str(latest_entry.get("action", "-"))),
+        "summary": str(latest_entry.get("summary", "")).strip()
+        or ACTION_SUMMARY_MAP.get(str(latest_entry.get("action", "")), "-"),
         "reason": str(latest_entry.get("reason", "")).strip(),
         "as_of_date": str(latest_entry.get("date", "")).strip(),
         "tone": _resolve_forecast_tone(str(latest_entry.get("action", ""))),
@@ -953,29 +1002,27 @@ def _extract_position_forecast_preview(
     }
 
 
-def _build_next_trade_plan_card(report_data: list[dict[str, Any]]) -> str:
-    previews = [
-        preview
-        for preview in [
-            _extract_position_forecast_preview(report_data, CURRENT_POSITION_EMPTY),
-            _extract_position_forecast_preview(report_data, CURRENT_POSITION_HOLD),
-        ]
-        if preview
-    ]
-    if not previews:
-        single_preview = _extract_next_trade_plan_preview(report_data)
-        if not single_preview:
-            return ""
-        previews = [single_preview]
+def _build_forecast_scenario_html(
+    preview: dict[str, Any],
+    *,
+    compact: bool = False,
+) -> str:
+    as_of_text = ""
+    if preview.get("as_of_date"):
+        as_of_text = f"{html_escape(str(preview['as_of_date']))} 收盘后推演"
+    if preview.get("price"):
+        price_prefix = f"收盘价 {html_escape(str(preview['price']))}"
+        as_of_text = f"{price_prefix} · {as_of_text}" if as_of_text else price_prefix
 
-    cards_html = []
-    for preview in previews:
-        as_of_text = ""
-        if preview.get("as_of_date"):
-            as_of_text = f"{html_escape(str(preview['as_of_date']))} 收盘后推演"
-
-        reason_html = ""
-        if preview.get("reason"):
+    reason_html = ""
+    if preview.get("reason"):
+        if compact:
+            reason_html = (
+                '<div class="forecast-scenario-reason is-compact">'
+                f'<p>{html_escape(str(preview["reason"]))}</p>'
+                "</div>"
+            )
+        else:
             reason_html = (
                 '<div class="forecast-scenario-reason">'
                 f'<span class="forecast-card-label">预判依据</span>'
@@ -983,47 +1030,117 @@ def _build_next_trade_plan_card(report_data: list[dict[str, Any]]) -> str:
                 "</div>"
             )
 
-        scenario_label_html = ""
-        if preview.get("position_label"):
-            scenario_label_html = (
-                f'<div class="forecast-scenario-label">{html_escape(str(preview["position_label"]))}</div>'
-            )
-
-        entry_timing_html = ""
-        if preview.get("entry_timing_label") or preview.get("entry_timing_summary"):
-            entry_timing_html = (
-                '<div class="forecast-scenario-timing">'
-                f'<div class="forecast-scenario-timing-title">{html_escape(str(preview.get("entry_timing_label", "建仓时机")))}</div>'
-                f'<p>{html_escape(str(preview.get("entry_timing_summary", "")))}</p>'
-                "</div>"
-            )
-
-        cards_html.append(
-            f"""
-            <article class="forecast-scenario is-{html_escape(str(preview.get("tone", "neutral")))}">
-              {scenario_label_html}
-              <div class="forecast-scenario-head">
-                <div class="forecast-scenario-action">{html_escape(str(preview.get("display_action", "-")))}</div>
-                <div class="forecast-scenario-meta">{as_of_text or "基于最新收盘后的趋势结构"}</div>
-              </div>
-              <p class="forecast-scenario-summary">{html_escape(str(preview.get("summary", "-")))}</p>
-              {entry_timing_html}
-              {reason_html}
-            </article>
-            """
+    scenario_label_html = ""
+    if preview.get("position_label"):
+        scenario_label_html = (
+            f'<div class="forecast-scenario-label">{html_escape(str(preview["position_label"]))}</div>'
         )
+
+    entry_timing_html = ""
+    if preview.get("entry_timing_label") or preview.get("entry_timing_summary"):
+        entry_timing_html = (
+            '<div class="forecast-scenario-timing">'
+            f'<div class="forecast-scenario-timing-title">{html_escape(str(preview.get("entry_timing_label", "建仓时机")))}</div>'
+            f'<p>{html_escape(str(preview.get("entry_timing_summary", "")))}</p>'
+            "</div>"
+        )
+
+    compact_class = " is-compact" if compact else ""
+    return f"""
+    <article class="forecast-scenario is-{html_escape(str(preview.get("tone", "neutral")))}{compact_class}">
+      {scenario_label_html}
+      <div class="forecast-scenario-head">
+        <div class="forecast-scenario-meta">{as_of_text or "基于最新收盘后的趋势结构"}</div>
+        <div class="forecast-scenario-action">{html_escape(str(preview.get("display_action", "-")))}</div>
+      </div>
+      <p class="forecast-scenario-summary">{html_escape(str(preview.get("summary", "-")))}</p>
+      {entry_timing_html}
+      {reason_html}
+    </article>
+    """
+
+
+def _build_next_trade_plan_card(report_data: list[dict[str, Any]]) -> str:
+    today_previews = _extract_today_trade_plan_preview(report_data)
+    tomorrow_previews = [
+        preview
+        for preview in [
+            _extract_position_forecast_preview(report_data, CURRENT_POSITION_EMPTY),
+            _extract_position_forecast_preview(report_data, CURRENT_POSITION_HOLD),
+        ]
+        if preview
+    ]
+    if not today_previews and not tomorrow_previews:
+        single_preview = _extract_next_trade_plan_preview(report_data)
+        if not single_preview:
+            return ""
+        tomorrow_previews = [single_preview]
+
+    today_tab_html = ""
+    if today_previews:
+        today_tab_html = """
+        <button
+          type="button"
+          class="forecast-card-tab is-active"
+          data-forecast-tab-target="today"
+          aria-selected="true"
+        >今日策略</button>
+        """
+
+    tomorrow_active_class = ""
+    tomorrow_active_selected = "false"
+    if tomorrow_previews and not today_previews:
+        tomorrow_active_class = " is-active"
+        tomorrow_active_selected = "true"
+    tomorrow_tab_html = ""
+    if tomorrow_previews:
+        tomorrow_tab_html = f"""
+        <button
+          type="button"
+          class="forecast-card-tab{tomorrow_active_class}"
+          data-forecast-tab-target="tomorrow"
+          aria-selected="{tomorrow_active_selected}"
+        >明日策略</button>
+        """
+
+    today_panel_html = ""
+    if today_previews:
+        today_panel_html = f"""
+        <div class="forecast-tab-panel is-active" data-forecast-tab-panel="today">
+          <div class="forecast-scenario-grid">
+            {"".join(_build_forecast_scenario_html(preview, compact=True) for preview in today_previews)}
+          </div>
+        </div>
+        """
+
+    tomorrow_panel_html = ""
+    if tomorrow_previews:
+        tomorrow_panel_class = "forecast-tab-panel"
+        if not today_previews:
+            tomorrow_panel_class += " is-active"
+        tomorrow_panel_html = f"""
+        <div class="{tomorrow_panel_class}" data-forecast-tab-panel="tomorrow">
+          <div class="forecast-scenario-grid">
+            {"".join(_build_forecast_scenario_html(preview) for preview in tomorrow_previews)}
+          </div>
+        </div>
+        """
 
     return f"""
     <section class="forecast-card">
       <div class="forecast-card-head">
         <div>
-          <div class="forecast-card-kicker">Tomorrow Bias</div>
-          <h2>明日策略预判</h2>
+          <div class="forecast-card-kicker">Strategy Outlook</div>
+          <h2>策略预判</h2>
+          <p class="forecast-card-intro">今日与明日页签都区分空仓和持仓两种执行视角，便于直接落地操作。</p>
+        </div>
+        <div class="forecast-card-tabs" role="tablist" aria-label="策略预判切换">
+          {today_tab_html}
+          {tomorrow_tab_html}
         </div>
       </div>
-      <div class="forecast-scenario-grid">
-        {"".join(cards_html)}
-      </div>
+      {today_panel_html}
+      {tomorrow_panel_html}
     </section>
     """
 
@@ -2402,6 +2519,20 @@ def _build_report_bootstrap_script() -> str:
         }
       }
 
+      function updateForecastTabs(nextTarget) {
+        document.querySelectorAll('.forecast-card-tab').forEach((item) => {
+          const isActive = item.dataset.forecastTabTarget === nextTarget;
+          item.classList.toggle('is-active', isActive);
+          item.setAttribute('aria-selected', isActive ? 'true' : 'false');
+        });
+        document.querySelectorAll('.forecast-tab-panel').forEach((item) => {
+          item.classList.toggle(
+            'is-active',
+            item.dataset.forecastTabPanel === nextTarget
+          );
+        });
+      }
+
       function applyFilter() {
         updateFilterControls();
         registry.forEach(renderChart);
@@ -2455,6 +2586,11 @@ def _build_report_bootstrap_script() -> str:
             updateAdviceVisibility();
           });
         });
+        document.querySelectorAll('.forecast-card-tab').forEach((item) => {
+          item.addEventListener('click', () => {
+            updateForecastTabs(item.dataset.forecastTabTarget || 'today');
+          });
+        });
       }
 
       return {
@@ -2469,6 +2605,12 @@ def _build_report_bootstrap_script() -> str:
             currentAdviceSource = advicePanel.dataset.defaultAdviceSource;
           }
           bindFilterEvents();
+          const defaultForecastTab =
+            document.querySelector('.forecast-card-tab.is-active')?.dataset.forecastTabTarget
+            || document.querySelector('.forecast-card-tab')?.dataset.forecastTabTarget;
+          if (defaultForecastTab) {
+            updateForecastTabs(defaultForecastTab);
+          }
           applyFilter();
         },
       };
@@ -2545,6 +2687,15 @@ def html(
     log_panel_html = _build_log_panel(log_lines)
     bootstrap_script = _build_report_bootstrap_script()
     generated_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    latest_price_snapshot = _extract_latest_price_snapshot(report_items)
+    page_header_price_html = ""
+    if latest_price_snapshot:
+        page_header_price_html = (
+            '<div class="page-header-price">'
+            f'当日股价：{html_escape(latest_price_snapshot.get("price", "-"))}'
+            f' <span>{html_escape(latest_price_snapshot.get("date", ""))}</span>'
+            "</div>"
+        )
 
     for item in report_items:
         if not isinstance(item, dict):
@@ -2638,7 +2789,7 @@ def html(
     if advice_panel_html:
         report_badges.append("含买卖建议")
     if next_trade_plan_html:
-        report_badges.append("含明日预判")
+        report_badges.append("含策略预判")
     if embedded_ai_report_html:
         report_badges.append("已内嵌 AI 分析")
     elif ai_report_link:
@@ -2725,6 +2876,19 @@ def html(
       align-items: center;
       flex-wrap: wrap;
       gap: 14px;
+    }}
+    .page-header-price {{
+      margin-top: 14px;
+      color: var(--heading);
+      font-size: 20px;
+      font-weight: 500;
+      letter-spacing: -0.02em;
+    }}
+    .page-header-price span {{
+      color: var(--muted);
+      font-size: 14px;
+      font-weight: 500;
+      letter-spacing: 0;
     }}
     .page-header-ai-link,
     .embedded-ai-link {{
@@ -2855,11 +3019,47 @@ def html(
       font-size: 14px;
       line-height: 1.8;
     }}
+    .forecast-card-tabs {{
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px;
+      border: 1px solid rgba(148, 163, 184, 0.18);
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.72);
+      box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.6);
+    }}
+    .forecast-card-tab {{
+      appearance: none;
+      border: 0;
+      border-radius: 999px;
+      background: transparent;
+      color: #607086;
+      font-size: 13px;
+      font-weight: 700;
+      padding: 9px 16px;
+      cursor: pointer;
+      transition: background 0.18s ease, color 0.18s ease, box-shadow 0.18s ease;
+    }}
+    .forecast-card-tab.is-active {{
+      background: linear-gradient(180deg, #ffffff, #f7fafc);
+      color: var(--heading);
+      box-shadow: 0 10px 22px -18px rgba(15, 23, 42, 0.45);
+    }}
+    .forecast-tab-panel {{
+      display: none;
+    }}
+    .forecast-tab-panel.is-active {{
+      display: block;
+    }}
     .forecast-scenario-grid {{
       display: grid;
       grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 18px;
       padding: 0 22px 22px;
+    }}
+    .forecast-scenario-grid.is-single {{
+      grid-template-columns: minmax(0, 1fr);
     }}
     .forecast-scenario {{
       position: relative;
@@ -2916,13 +3116,12 @@ def html(
       color: #64748b;
       font-size: 12px;
       line-height: 1.8;
-      text-align: right;
     }}
     .forecast-scenario-head {{
       display: flex;
       flex-direction: column;
       align-items: flex-start;
-      gap: 8px;
+      gap: 0;
     }}
     .forecast-scenario-caption {{
       color: #64748b;
@@ -2936,6 +3135,7 @@ def html(
       align-items: center;
       min-height: 42px;
       padding: 0 15px;
+      margin-top: 8px;
       border-radius: 10px;
       border: 1px solid rgba(15, 23, 42, 0.08);
       background: linear-gradient(180deg, #ffffff, #f8fafc);
@@ -2945,11 +3145,53 @@ def html(
       letter-spacing: -0.02em;
       box-shadow: 0 12px 24px -24px rgba(15, 23, 42, 0.38);
     }}
+    .forecast-scenario.is-buy .forecast-scenario-action {{
+      border-color: rgba(5, 150, 105, 0.18);
+      background: linear-gradient(180deg, #f0fdf4, #dcfce7);
+      color: #047857;
+    }}
+    .forecast-scenario.is-watch .forecast-scenario-action {{
+      border-color: rgba(29, 78, 216, 0.16);
+      background: linear-gradient(180deg, #eff6ff, #dbeafe);
+      color: #1d4ed8;
+    }}
+    .forecast-scenario.is-hold .forecast-scenario-action {{
+      border-color: rgba(13, 148, 136, 0.16);
+      background: linear-gradient(180deg, #f0fdfa, #ccfbf1);
+      color: #0f766e;
+    }}
+    .forecast-scenario.is-sell .forecast-scenario-action {{
+      border-color: rgba(220, 38, 38, 0.16);
+      background: linear-gradient(180deg, #fef2f2, #fee2e2);
+      color: #dc2626;
+    }}
+    .forecast-scenario.is-neutral .forecast-scenario-action {{
+      border-color: rgba(100, 116, 139, 0.16);
+      background: linear-gradient(180deg, #f8fafc, #eef2f7);
+      color: #475569;
+    }}
     .forecast-scenario-summary {{
       margin: 14px 0 0;
       color: #0f172a;
       font-size: 15px;
       line-height: 1.8;
+    }}
+    .forecast-scenario.is-compact {{
+      padding: 20px 20px 18px;
+    }}
+    .forecast-scenario.is-compact .forecast-scenario-meta {{
+      font-size: 13px;
+      color: #526276;
+    }}
+    .forecast-scenario.is-compact .forecast-scenario-action {{
+      min-height: 46px;
+      padding: 0 18px;
+      font-size: 20px;
+    }}
+    .forecast-scenario.is-compact .forecast-scenario-summary {{
+      margin-top: 16px;
+      font-size: 16px;
+      line-height: 1.85;
     }}
     .forecast-scenario-timing {{
       margin-top: 16px;
@@ -2992,6 +3234,14 @@ def html(
       color: var(--text);
       font-size: 14px;
       line-height: 1.8;
+    }}
+    .forecast-scenario-reason.is-compact {{
+      margin-top: 14px;
+      display: block;
+      padding: 12px 14px;
+      border: 1px dashed rgba(148, 163, 184, 0.42);
+      border-radius: 10px;
+      background: rgba(248, 250, 252, 0.88);
     }}
     .filter-toolbar-title {{
       width: 100%;
@@ -3437,6 +3687,9 @@ def html(
       .page-header h1 {{
         font-size: 30px;
       }}
+      .page-header-price {{
+        font-size: 18px;
+      }}
       .page-header p {{
         font-size: 14px;
       }}
@@ -3451,6 +3704,12 @@ def html(
       }}
       .forecast-card-head {{
         padding: 18px 16px 14px;
+        flex-direction: column;
+        align-items: stretch;
+      }}
+      .forecast-card-tabs {{
+        width: 100%;
+        justify-content: flex-start;
       }}
       .forecast-scenario-grid {{
         grid-template-columns: 1fr;
@@ -3528,6 +3787,7 @@ def html(
 	        <h1>{title}</h1>
 	        {ai_report_link_html}
 	      </div>
+        {page_header_price_html}
 	      <p>{generated_at} 生成。本报告聚合了回测核心指标、图表、交易日志与操作建议，适合直接复盘策略收益、风险和交易节奏。</p>
         <div class="page-header-badges">
           {report_badges_html}

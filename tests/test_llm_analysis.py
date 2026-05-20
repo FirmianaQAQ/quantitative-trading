@@ -223,11 +223,15 @@ class LLMAnalysisTests(unittest.TestCase):
         self.assertEqual(context["news"]["status"], "ok")
         self.assertEqual(len(context["news"]["items"]), 1)
         self.assertEqual(context["news"]["items"][0]["title"], "公司发布新产品")
+        self.assertEqual(context["news"]["items"][0]["sentiment_label"], "偏利多")
+        self.assertEqual(context["news"]["items"][0]["theme"], "产品突破")
+        self.assertIn("偏积极", context["news"]["aggregate_sentiment_label"])
         self.assertEqual(context["fund_flow"]["main_net_inflow_3d"], 3000.0)
         self.assertEqual(context["fund_flow"]["main_net_inflow_5d"], 3000.0)
         self.assertEqual(context["financials"]["report_date"], "2023-12-31")
         self.assertEqual(context["financials"]["revenue_yoy_pct"], 12.5)
         self.assertEqual(context["financials"]["roe_pct"], 9.8)
+        self.assertIn("基本面提供一定支撑", context["financials"]["bias_label"])
 
     def test_build_batch_analysis_payload_ranks_best_candidate_first(self) -> None:
         payload = build_batch_analysis_payload(

@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 from contextlib import redirect_stdout
+from functools import lru_cache
 from pathlib import Path
 import pandas as pd
 
@@ -25,7 +26,12 @@ from backtest.strategy_registry import (
     list_strategy_specs,
     supports_manual_code_input,
 )
-from utils.project_utils import get_daily_csv_path, load_daily_data
+from utils.project_utils import (
+    REQUIRED_PRICE_COLUMNS,
+    build_adjusted_daily_column_map,
+    get_daily_csv_path,
+    load_daily_data,
+)
 from utils.default_stocks import DEFAULT_STOCK_NAMES
 
 
@@ -772,15 +778,14 @@ def try_open_report(report_path: Path) -> None:
 
 
 def collect_available_adjust_flags(code: str) -> list[str]:
-    if not DAILY_DIR.exists():
+    available_columns = load_local_daily_columns(code)
+    if not available_columns:
         return []
     adjust_flags: set[str] = set()
-    for path in DAILY_DIR.glob(f"{code}_*.csv"):
-        stem = path.stem
-        if "_" not in stem:
-            continue
-        code_part, adjust_flag = stem.rsplit("_", 1)
-        if code_part == code and adjust_flag:
+    required_columns = [column for column in REQUIRED_PRICE_COLUMNS if column != "date"]
+    for adjust_flag in DEFAULT_ADJUST_ORDER:
+        column_map = build_adjusted_daily_column_map(adjust_flag)
+        if all(column_map[column] in available_columns for column in required_columns):
             adjust_flags.add(adjust_flag)
     return sorted(
         adjust_flags,
@@ -795,6 +800,18 @@ def collect_available_adjust_flags(code: str) -> list[str]:
             flag,
         ),
     )
+
+
+@lru_cache(maxsize=None)
+def load_local_daily_columns(code: str) -> frozenset[str]:
+    csv_path = get_daily_csv_path(code, "cq")
+    if not csv_path.exists():
+        return frozenset()
+    try:
+        header_df = pd.read_csv(csv_path, nrows=0)
+    except Exception:
+        return frozenset()
+    return frozenset(header_df.columns)
 
 
 def collect_recommendation_adjust_flags(spec: StrategySpec, code: str) -> list[str]:
@@ -829,12 +846,11 @@ def collect_local_stock_codes(adjust_flag: str) -> list[str]:
         return []
 
     codes: set[str] = set()
-    for path in DAILY_DIR.glob(f"*_{adjust_flag}.csv"):
-        stem = path.stem
-        if "_" not in stem:
+    for path in DAILY_DIR.glob("*.csv"):
+        code = path.stem
+        if not code.startswith(("sh.", "sz.")):
             continue
-        code, _flag = stem.rsplit("_", 1)
-        if code.startswith(("sh.", "sz.")):
+        if adjust_flag in collect_available_adjust_flags(code):
             codes.add(code)
     return sorted(codes)
 

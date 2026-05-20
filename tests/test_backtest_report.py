@@ -13,6 +13,7 @@ from utils.backtest_report import (
     merge_backtest_html_with_ai_report,
 )
 from utils.backtest_report_builder import (
+    build_enhanced_trade_chart_data,
     build_empty_entry_timing_plan,
     build_next_trade_plan,
     describe_adjust_flag,
@@ -69,6 +70,10 @@ class BacktestReportAdviceTests(unittest.TestCase):
                         "空仓-建仓提示": "当前均线结构还没完全转强。",
                         "持仓-下一交易日策略": "偏持有",
                         "持仓-预判摘要": "当前更适合继续持有。",
+                        "新闻情绪": "偏积极",
+                        "新闻主题": "订单合同",
+                        "资金面判断": "偏流入",
+                        "财报面判断": "中性",
                     },
                 }
             ]
@@ -82,6 +87,10 @@ class BacktestReportAdviceTests(unittest.TestCase):
         self.assertNotIn("空仓-下一交易日策略", html)
         self.assertNotIn("空仓-建仓提示", html)
         self.assertNotIn("持仓-下一交易日策略", html)
+        self.assertNotIn("新闻情绪", html)
+        self.assertNotIn("新闻主题", html)
+        self.assertNotIn("资金面判断", html)
+        self.assertNotIn("财报面判断", html)
 
     def test_next_trade_plan_card_contains_action_summary_and_reason(self) -> None:
         report_data = [
@@ -109,13 +118,42 @@ class BacktestReportAdviceTests(unittest.TestCase):
 
         html = _build_next_trade_plan_card(report_data)
 
-        self.assertIn("明日策略预判", html)
+        self.assertIn("策略预判", html)
+        self.assertIn("今日策略", html)
+        self.assertIn("明日策略", html)
+        self.assertIn("都区分空仓和持仓两种执行视角", html)
+        self.assertIn('data-forecast-tab-panel="today"', html)
+        self.assertIn('class="forecast-card-tab is-active"', html)
+        self.assertIn('forecast-scenario-reason is-compact', html)
         self.assertIn("如果你当前空仓", html)
         self.assertIn("如果你当前持仓", html)
         self.assertIn("继续观察", html)
         self.assertIn("继续持有", html)
         self.assertIn("预判依据", html)
         self.assertIn("2026-05-19", html)
+
+    def test_build_enhanced_trade_chart_data_keeps_optimized_plan_when_no_advice_entries(self) -> None:
+        filtered_df = pd.DataFrame(
+            [
+                {"date": "2026-05-19", "close": 10.2},
+            ]
+        )
+        optimized_chart_data = {
+            "x_axis": ["2026-05-19"],
+            "candles": [[10.0, 10.1, 9.9, 10.2]],
+            "buy_points": [],
+            "sell_points": [],
+            "indicator_lines": [],
+            "advice_entries": [],
+        }
+
+        result = build_enhanced_trade_chart_data(
+            filtered_df=filtered_df,
+            optimized_chart_data=optimized_chart_data,
+            external_context=None,
+        )
+
+        self.assertEqual(result, optimized_chart_data)
 
     def test_extract_next_trade_plan_from_chart_data_maps_latest_advice(self) -> None:
         plan = extract_next_trade_plan_from_chart_data(
@@ -329,6 +367,76 @@ class BacktestReportAdviceTests(unittest.TestCase):
         self.assertIn("优化策略", html)
         self.assertIn("优化观察", html)
 
+    def test_advice_panel_uses_single_optimized_strategy_source_after_external_patch(self) -> None:
+        report_data = build_buy_sell_report(
+            dates=["2026-05-13", "2026-05-14"],
+            buy_points=[["2026-05-13", 10.0]],
+        )
+        report_data.append(
+            {
+                "chart_name": "优化买卖点",
+                "chart_data": {
+                    "x_axis": ["2026-05-13", "2026-05-14"],
+                    "candles": [[10.0, 10.0], [11.0, 11.0]],
+                    "buy_points": [["2026-05-13", 10.0]],
+                    "sell_points": [],
+                    "indicator_lines": [],
+                    "advice_entries": [
+                        {
+                            "date": "2026-05-14",
+                            "action": "observe",
+                            "title": "优化观望",
+                            "price": "11.00",
+                            "summary": "外部因子明显转弱，暂缓偏多信号。",
+                            "reason": "新闻面偏谨慎，资金面偏流出。",
+                            "is_signal": False,
+                        }
+                    ],
+                },
+            }
+        )
+
+        html = _build_advice_panel(
+            report_data,
+            log_lines=[],
+            current_position="auto",
+        )
+
+        self.assertNotIn('data-advice-source="enhanced"', html)
+        self.assertIn('data-advice-source="optimized"', html)
+        self.assertIn('data-default-advice-source="optimized"', html)
+        self.assertIn("优化策略", html)
+        self.assertIn("优化观望", html)
+
+    def test_next_trade_plan_card_uses_externally_patched_optimized_source(self) -> None:
+        report_data = [
+            {
+                "chart_name": "优化买卖点",
+                "chart_data": {
+                    "x_axis": ["2026-05-19"],
+                    "candles": [[10.0, 10.1, 9.9, 10.2]],
+                    "buy_points": [],
+                    "sell_points": [],
+                    "indicator_lines": [],
+                    "advice_entries": [
+                        {
+                            "date": "2026-05-19",
+                            "action": "observe",
+                            "title": "优化观望",
+                            "summary": "外部因子明显转弱，暂缓偏多信号。",
+                            "reason": "新闻面偏谨慎，资金面偏流出。",
+                            "is_signal": False,
+                        }
+                    ],
+                },
+            },
+        ]
+
+        html = _build_next_trade_plan_card(report_data)
+
+        self.assertIn("优化观望", html)
+        self.assertIn("暂缓偏多信号", html)
+
     def test_html_report_title_can_include_ai_link(self) -> None:
         report_data = build_buy_sell_report(
             dates=["2026-05-13", "2026-05-14"],
@@ -389,10 +497,13 @@ class BacktestReportAdviceTests(unittest.TestCase):
             )
             html = output_path.read_text(encoding="utf-8")
 
-        self.assertIn("明日策略预判", html)
+        self.assertIn("策略预判", html)
+        self.assertIn("今日策略", html)
+        self.assertIn("明日策略", html)
+        self.assertIn("当日股价：10.20", html)
         self.assertIn("如果你当前空仓", html)
         self.assertIn("如果你当前持仓", html)
-        self.assertIn("含明日预判", html)
+        self.assertIn("含策略预判", html)
 
     def test_html_report_can_embed_ai_report_into_single_file(self) -> None:
         report_data = build_buy_sell_report(
