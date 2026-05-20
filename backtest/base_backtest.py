@@ -69,6 +69,10 @@ from utils.a_share_costs import (
     get_a_share_cost_config,
     validate_a_share_cost_config,
 )
+from backtest.patches.loader import (
+    StrategyPatchManager,
+    normalize_requested_patch_names,
+)
 
 CONFIG: dict[str, Any] = {
     # 股票代码，例如 sh.000001 或 sz.000100 sz.000725
@@ -124,6 +128,10 @@ CONFIG: dict[str, Any] = {
     "strategy_brief": "基础版",
     "current_position": "auto",
     "enable_llm_analysis": False,
+    # 启用的策略增强补丁，按 backtest/patches/*.py 的模块名填写
+    "patches": [],
+    # 为 True 时，补丁不存在或执行失败会直接报错
+    "patch_strict": False,
 }
 
 STRATEGY_ID = "base_backtest"
@@ -373,6 +381,11 @@ class SimpleMovingAverageStrategy(HStrategy):
         self.position_days_total = 0
         self.idle_cash_days_total = 0
         self.has_completed_sell = False
+        self.patch_manager = StrategyPatchManager(
+            self,
+            self.param.get("patches"),
+            strict=bool(self.param.get("patch_strict", False)),
+        )
 
     def _get_trade_price(self, field: str, ago: int = 0) -> float:
         raw_line = getattr(self.data, f"raw_{field}", None)
@@ -515,6 +528,18 @@ class SimpleMovingAverageStrategy(HStrategy):
     def reset_sell_setup(self) -> None:
         self.sell_trigger_active = False
         self.sell_trigger_days_seen = 0
+
+    def _allow_buy_by_patches(self, **extra: Any) -> bool:
+        allow, reason = self.patch_manager.allow_buy(**extra)
+        if not allow:
+            self.log(f"补丁阻止买入 | 原因={reason or '未提供'}")
+        return allow
+
+    def _allow_sell_by_patches(self, **extra: Any) -> bool:
+        allow, reason = self.patch_manager.allow_sell(**extra)
+        if not allow:
+            self.log(f"补丁阻止卖出 | 原因={reason or '未提供'}")
+        return allow
 
     def record_water_up_down_days(self) -> str:
         """
@@ -860,10 +885,14 @@ class SimpleMovingAverageStrategy(HStrategy):
         elif self.has_completed_sell:
             self.idle_cash_days_total += 1
 
-        if self.order is not None:
-            return
-        self._check_and_buy()
-        self._check_and_sell()
+        self.patch_manager.before_next()
+        try:
+            if self.order is not None:
+                return
+            self._check_and_buy()
+            self._check_and_sell()
+        finally:
+            self.patch_manager.after_next()
 
     def _check_and_buy(self) -> None:
         if self.position:
@@ -969,6 +998,21 @@ class SimpleMovingAverageStrategy(HStrategy):
                         f"上一个最低价={lowest_price_previous:.2f} "
                         f"买入价不高于 {highest_price_previous:.2f} * {float(self.param.get('sell_trigger_multiplier')):.1f} = {buy_limit:.2f}"
                     )
+                    if not self._allow_buy_by_patches(
+                        current_close=current_close,
+                        candidate_size=size,
+                        trigger_price=buy_trigger_price,
+                        buy_limit=buy_limit,
+                        highest_price_previous=highest_price_previous,
+                        lowest_price_previous=lowest_price_previous,
+                        price_change=price_change,
+                        rise_days_num=rise_days_num,
+                        rise_days_required=rise_days_required,
+                        power=power,
+                        plan_b=plan_b,
+                    ):
+                        self.reset_buy_setup()
+                        return
                     self.order = self.buy(size=size)
                     self.reset_buy_setup()
                     return
@@ -1023,6 +1067,12 @@ class SimpleMovingAverageStrategy(HStrategy):
                     f"买入价={self.last_buy_price:.2f} 止损价={stop_loss_price:.2f} "
                     "并清除最低点，等待下次重新记录"
                 )
+                if not self._allow_sell_by_patches(
+                    current_close=current_close,
+                    stop_loss_price=stop_loss_price,
+                    reason="stop_loss",
+                ):
+                    return
                 # 这里是跌超10%了，要清除最低价，防止再按照这个来买，看看有什么逻辑可以替代
                 self.clear_last_lowest_price()
                 self.order = self.close()
@@ -1113,6 +1163,15 @@ class SimpleMovingAverageStrategy(HStrategy):
                 f"{sell_msg}，下单卖出 收盘价={current_close:.2f} "
                 f"数量={abs(self.position.size)}"
             )
+            if not self._allow_sell_by_patches(
+                current_close=current_close,
+                reason="sell_trigger_active",
+                sell_msg=sell_msg,
+                highest_price_previous=highest_price_previous,
+                fall_from_high=fall_from_hight,
+                recent_up_days=up_days,
+            ):
+                return False
             self.order = self.close()
             self.reset_sell_setup()
             return True
@@ -1339,6 +1398,8 @@ def parse_range(expr: str, label: str) -> range:
 
 
 def validate_config(config: dict[str, Any]) -> None:
+    config["patches"] = normalize_requested_patch_names(config.get("patches"))
+    config["patch_strict"] = bool(config.get("patch_strict", False))
     if config["cash"] <= 0:
         raise ValueError("初始资金 cash 必须大于 0")
     validate_a_share_cost_config(config)

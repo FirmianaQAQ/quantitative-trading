@@ -34,6 +34,8 @@
     "strategy_brief": "策略简述，用于菜单和报告摘要。",
     "current_position": "报告里明日操作建议的当前持仓状态。常用值为 auto/empty/hold。",
     "enable_llm_analysis": "是否在回测后触发大模型分析。",
+    "patches": "策略增强补丁列表。填写 backtest/patches 目录下的模块名，例如 [\"macd\", \"boll\"]。",
+    "patch_strict": "是否严格校验补丁。为 true 时，补丁缺失、没有 hook 或 hook 执行失败会直接报错；否则仅记录并跳过。",
     "breakout_power_threshold": "V2/专版中的趋势突破强度阈值。越高表示越要求强趋势。",
     "breakout_buy_limit_multiplier": "V2/专版突破买入时允许价格相对前高的上限倍率。",
     "trend_slope_window": "V3 判断慢线斜率时向前看的窗口天数。",
@@ -115,7 +117,9 @@
       "strategy_name": "普通双均线",
       "strategy_brief": "基础版",
       "current_position": "auto",
-      "enable_llm_analysis": false
+      "enable_llm_analysis": false,
+      "patches": [],
+      "patch_strict": false
     },
     "simple_ma_v2_base": {
       "code": "sh.601991",
@@ -148,6 +152,8 @@
       "strategy_brief": "稳健轮动版",
       "current_position": "auto",
       "enable_llm_analysis": false,
+      "patches": [],
+      "patch_strict": false,
       "breakout_power_threshold": 0.6,
       "breakout_buy_limit_multiplier": 1.0
     },
@@ -182,6 +188,8 @@
       "strategy_brief": "sz.000100",
       "current_position": "auto",
       "enable_llm_analysis": false,
+      "patches": [],
+      "patch_strict": false,
       "breakout_power_threshold": 0.55,
       "breakout_buy_limit_multiplier": 1.0
     },
@@ -216,6 +224,8 @@
       "strategy_brief": "趋势突破融合版",
       "current_position": "auto",
       "enable_llm_analysis": false,
+      "patches": [],
+      "patch_strict": false,
       "breakout_power_threshold": 0.6,
       "breakout_buy_limit_multiplier": 1.0,
       "trend_slope_window": 5,
