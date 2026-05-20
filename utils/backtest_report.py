@@ -888,7 +888,7 @@ def _extract_latest_price_snapshot(report_data: list[dict[str, Any]]) -> dict[st
     return {}
 
 
-def _extract_today_trade_plan_preview(
+def _extract_current_trade_plan_previews(
     report_data: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     previews = [
@@ -1051,7 +1051,7 @@ def _build_forecast_scenario_html(
 
 
 def _build_next_trade_plan_card(report_data: list[dict[str, Any]]) -> str:
-    current_previews = _extract_today_trade_plan_preview(report_data)
+    current_previews = _extract_current_trade_plan_previews(report_data)
     if not current_previews:
         current_previews = [
         preview
