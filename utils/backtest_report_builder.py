@@ -36,6 +36,19 @@ def _is_unadjusted_flag(adjust_flag: str) -> bool:
     return str(adjust_flag or "").strip().lower() in {"", "3", "bfq", "cq", "raw", "none"}
 
 
+def describe_adjust_flag(adjust_flag: str) -> str:
+    normalized = str(adjust_flag or "").strip().lower()
+    if normalized == "dypre":
+        return "Dypre 动态前复权（信号按前复权、成交与估值按不复权，除权日同步调整持仓股数）"
+    if normalized in {"", "3", "bfq", "cq", "raw", "none"}:
+        return "不复权（cq）"
+    if normalized in {"2", "qfq"}:
+        return "前复权（qfq）"
+    if normalized in {"1", "hfq"}:
+        return "后复权（hfq）"
+    return str(adjust_flag or "")
+
+
 def attach_ex_right_close_column(
     price_df: pd.DataFrame,
     stock_code: str,
@@ -210,6 +223,7 @@ def build_backtest_report_data(
     summary_items = [
         {"label": "股票代码", "value": config["code"]},
         {"label": "策略名称", "value": config.get("strategy_name", "my strategy")},
+        {"label": "复权口径", "value": describe_adjust_flag(config.get("adjust_flag"))},
         {
             "label": "均线说明",
             "value": "快线看短期节奏，慢线看中期趋势；快线强于慢线通常表示趋势偏强。",

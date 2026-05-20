@@ -18,28 +18,32 @@ fi
 choose_source_arg() {
   echo "" >&2
   echo "请选择拉取方式：" >&2
-  echo "1. 东方财富直连" >&2
-  echo "2. Baostock" >&2
-  echo "3. Akshare" >&2
-  echo "4. Tushare" >&2
-  echo "5. 自动（东方财富直连 -> Baostock -> Akshare -> Tushare）" >&2
+  echo "1. 同花顺" >&2
+  echo "2. 东方财富直连" >&2
+  echo "3. Baostock" >&2
+  echo "4. Akshare" >&2
+  echo "5. Tushare" >&2
+  echo "6. 自动（同花顺 -> 东方财富直连 -> Akshare -> Baostock -> Tushare）" >&2
   echo "" >&2
 
-  read "source_mode?请输入选项 [1/2/3/4/5，默认5]: "
+  read "source_mode?请输入选项 [1/2/3/4/5/6，默认6]: "
   case "$source_mode" in
-    ""|5)
+    ""|6)
       echo "--source=auto"
       ;;
     1)
-      echo "--source=eastmoney"
+      echo "--source=ths"
       ;;
     2)
-      echo "--source=baostock"
+      echo "--source=eastmoney"
       ;;
     3)
-      echo "--source=akshare"
+      echo "--source=baostock"
       ;;
     4)
+      echo "--source=akshare"
+      ;;
+    5)
       echo "--source=tushare"
       ;;
     *)

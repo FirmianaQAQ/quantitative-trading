@@ -1,6 +1,6 @@
 import unittest
 
-from backtest.boe_simple_ma_backtest import BOE_CODE, CONFIG, validate_config
+from backtest.extended_strategies.boe_simple_ma_backtest import BOE_CODE, CONFIG, validate_config
 from backtest.strategy_registry import list_strategy_specs
 
 

@@ -1,7 +1,7 @@
 import unittest
 
 from backtest.strategy_registry import list_strategy_specs
-from backtest.tcl_simple_ma_backtest import CONFIG, TCL_CODE, validate_config
+from backtest.extended_strategies.tcl_simple_ma_backtest import CONFIG, TCL_CODE, validate_config
 
 
 class TclSimpleMABacktestTests(unittest.TestCase):

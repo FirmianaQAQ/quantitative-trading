@@ -25,7 +25,7 @@ class StrategySpec:
 
 
 STRATEGY_FAMILY_DISPLAY_NAMES = {
-    "simple_ma_backtest": "普通双均线",
+    "base_backtest": "普通双均线",
     "specialized_ma_backtest": "单票双均线专版",
     "pair_trade_backtest": "统计套利配对交易",
     "rotation_backtest": "多因子轮动策略",
@@ -35,7 +35,7 @@ STRATEGY_FAMILY_DISPLAY_NAMES = {
 }
 STRATEGY_FAMILY_ORDER = {
     "specialized_ma_backtest": 0,
-    "simple_ma_backtest": 1,
+    "base_backtest": 1,
     "pair_trade_backtest": 2,
     "rotation_backtest": 3,
     "cta_event_backtest": 4,
@@ -50,22 +50,30 @@ STRATEGY_FAMILY_ORDER = {
 STRATEGY_ID_WHITELIST: frozenset[str] = frozenset()
 STRATEGY_FAMILY_WHITELIST: frozenset[str] = frozenset(
     {
-        "simple_ma_backtest",
         "specialized_ma_backtest",
+        "base_backtest",
         "pair_trade_backtest",
     }
 )
 
 
-def _iter_candidate_strategy_ids() -> list[str]:
+def _iter_candidate_strategy_modules() -> list[tuple[str, str]]:
     backtest_dir = Path(__file__).resolve().parent
-    return sorted(
-        path.stem
-        for path in backtest_dir.glob("*_backtest*.py")
-        if path.is_file()
-        and not path.stem.startswith("_")
-        and path.stem != "strategy_registry"
-    )
+    candidates: list[tuple[str, str]] = []
+    for path in backtest_dir.rglob("*.py"):
+        if not path.is_file():
+            continue
+        if path.stem.startswith("_"):
+            continue
+        if path.stem in {"strategy_registry", "__init__"}:
+            continue
+        if "__pycache__" in path.parts:
+            continue
+        if path.stem != "base_backtest" and "_backtest" not in path.stem:
+            continue
+        module_name = ".".join(path.relative_to(backtest_dir.parent).with_suffix("").parts)
+        candidates.append((path.stem, module_name))
+    return sorted(candidates, key=lambda item: (item[0], item[1]))
 
 
 def _parse_strategy_family(strategy_id: str) -> tuple[str, int]:
@@ -75,6 +83,18 @@ def _parse_strategy_family(strategy_id: str) -> tuple[str, int]:
     return match.group(1), int(match.group(2))
 
 
+def _resolve_brief_description(
+    family_id: str,
+    config: dict[str, Any],
+    strategy_id: str,
+) -> str:
+    if family_id == "specialized_ma_backtest":
+        configured_code = str(config.get("code", "")).strip()
+        if configured_code:
+            return configured_code
+    return str(config.get("strategy_brief", strategy_id))
+
+
 def _build_strategy_spec(module: ModuleType, strategy_id: str) -> StrategySpec | None:
     required_attrs = ("CONFIG", "TEST_CASES", "run_backtest", "validate_config")
     if any(not hasattr(module, attr) for attr in required_attrs):
@@ -82,6 +102,7 @@ def _build_strategy_spec(module: ModuleType, strategy_id: str) -> StrategySpec |
 
     config = dict(getattr(module, "CONFIG"))
     test_cases = list(getattr(module, "TEST_CASES"))
+    strategy_id = str(getattr(module, "STRATEGY_ID", strategy_id))
     family_id, version_number = _parse_strategy_family(strategy_id)
     family_id = str(getattr(module, "STRATEGY_FAMILY_ID", family_id))
     if STRATEGY_ID_WHITELIST and strategy_id not in STRATEGY_ID_WHITELIST:
@@ -92,7 +113,11 @@ def _build_strategy_spec(module: ModuleType, strategy_id: str) -> StrategySpec |
         strategy_id=strategy_id,
         module_name=module.__name__,
         display_name=str(config.get("strategy_name", strategy_id)),
-        brief_description=str(config.get("strategy_brief", strategy_id)),
+        brief_description=_resolve_brief_description(
+            family_id,
+            config,
+            strategy_id,
+        ),
         family_id=family_id,
         family_display_name=STRATEGY_FAMILY_DISPLAY_NAMES.get(
             family_id,
@@ -109,8 +134,9 @@ def _build_strategy_spec(module: ModuleType, strategy_id: str) -> StrategySpec |
 @lru_cache(maxsize=1)
 def list_strategy_specs() -> tuple[StrategySpec, ...]:
     specs: list[StrategySpec] = []
-    for strategy_id in _iter_candidate_strategy_ids():
-        module = import_module(f"backtest.{strategy_id}")
+    for strategy_file_stem, module_name in _iter_candidate_strategy_modules():
+        module = import_module(module_name)
+        strategy_id = str(getattr(module, "STRATEGY_ID", strategy_file_stem))
         spec = _build_strategy_spec(module, strategy_id)
         if spec is not None:
             specs.append(spec)
@@ -139,7 +165,7 @@ def get_strategy_spec(strategy_id: str) -> StrategySpec:
 def get_default_strategy_spec() -> StrategySpec:
     specs = list_strategy_specs()
     for spec in specs:
-        if spec.strategy_id == "simple_ma_backtest":
+        if spec.strategy_id == "base_backtest":
             return spec
     return specs[0]
 

@@ -8,7 +8,7 @@ socket.setdefaulttimeout(120)
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 DATA_PATH = PROJECT_ROOT / "data"
-DEFAULT_A_SHARE_ADJUST = "hfq"
+DEFAULT_A_SHARE_ADJUST = "cq"
 ignore_stock_code = {
     "300385",  # 雪浪环境，长期停盘
 }

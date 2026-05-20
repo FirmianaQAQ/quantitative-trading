@@ -7,6 +7,7 @@ from contextlib import redirect_stdout
 
 import pandas as pd
 
+from utils.config import DEFAULT_A_SHARE_ADJUST
 from analysis.config import LLMAnalysisSettings, load_llm_analysis_settings
 from analysis.payload_builder import (
     build_batch_analysis_payload,
@@ -72,10 +73,10 @@ class LLMAnalysisTests(unittest.TestCase):
         payload = build_single_stock_analysis_payload(
             config={
                 "code": "sz.000725",
-                "report_name": "simple_ma_backtest",
+                "report_name": "base_backtest",
                 "strategy_name": "普通双均线",
                 "strategy_brief": "基础版",
-                "adjust_flag": "hfq",
+                "adjust_flag": DEFAULT_A_SHARE_ADJUST,
                 "from_date": "2024-01-01",
                 "to_date": "2024-03-30",
                 "fast": 8,
@@ -108,8 +109,8 @@ class LLMAnalysisTests(unittest.TestCase):
 
     def test_build_batch_analysis_payload_ranks_best_candidate_first(self) -> None:
         payload = build_batch_analysis_payload(
-            strategy_id="simple_ma_backtest_v2",
-            strategy_name="普通双均线V2",
+            strategy_id="base_backtest",
+            strategy_name="普通双均线",
             batch_results=[
                 {
                     "code": "sz.000725",
@@ -141,10 +142,10 @@ class LLMAnalysisTests(unittest.TestCase):
     def test_single_analysis_writes_markdown_report(self) -> None:
         config = {
             "code": "sz.000725",
-            "report_name": "simple_ma_backtest",
+                "report_name": "base_backtest",
             "strategy_name": "普通双均线",
             "strategy_brief": "基础版",
-            "adjust_flag": "hfq",
+            "adjust_flag": DEFAULT_A_SHARE_ADJUST,
             "from_date": "2024-01-01",
             "to_date": "2024-03-30",
             "fast": 8,
@@ -201,8 +202,8 @@ class LLMAnalysisTests(unittest.TestCase):
 
     def test_batch_analysis_skips_when_disabled(self) -> None:
         report_path = maybe_generate_batch_analysis(
-            strategy_id="simple_ma_backtest_v2",
-            strategy_name="普通双均线V2",
+            strategy_id="base_backtest",
+            strategy_name="普通双均线",
             batch_results=[
                 {
                     "code": "sz.000725",
@@ -219,7 +220,7 @@ class LLMAnalysisTests(unittest.TestCase):
             "report_name": "tcl_simple_ma_backtest",
             "strategy_name": "TCL双均线专版",
             "strategy_brief": "稳健增强版",
-            "adjust_flag": "hfq",
+            "adjust_flag": DEFAULT_A_SHARE_ADJUST,
             "from_date": "2024-01-01",
             "to_date": "2024-03-30",
             "fast": 10,

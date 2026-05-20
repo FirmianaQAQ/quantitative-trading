@@ -31,7 +31,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "backtest_report",
-        help="回测 HTML 路径，例如 logs/backtest/simple_ma_backtest_v2-sz.000725.html",
+        help="回测 HTML 路径，例如 logs/backtest/base_backtest-sz.000725.html",
     )
     parser.add_argument(
         "--ai-report",

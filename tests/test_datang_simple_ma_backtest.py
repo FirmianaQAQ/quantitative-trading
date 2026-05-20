@@ -1,6 +1,6 @@
 import unittest
 
-from backtest.datang_simple_ma_backtest import CONFIG, DATANG_CODE, validate_config
+from backtest.extended_strategies.datang_simple_ma_backtest import CONFIG, DATANG_CODE, validate_config
 from backtest.strategy_registry import list_strategy_specs
 
 

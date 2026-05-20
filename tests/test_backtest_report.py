@@ -15,6 +15,7 @@ from utils.backtest_report import (
 from utils.backtest_report_builder import (
     build_empty_entry_timing_plan,
     build_next_trade_plan,
+    describe_adjust_flag,
     extract_next_trade_plan_from_chart_data,
 )
 
@@ -43,6 +44,14 @@ def build_buy_sell_report(
 
 
 class BacktestReportAdviceTests(unittest.TestCase):
+    def test_describe_adjust_flag_explains_dypre_semantics(self) -> None:
+        description = describe_adjust_flag("dypre")
+
+        self.assertIn("Dypre 动态前复权", description)
+        self.assertIn("前复权", description)
+        self.assertIn("不复权", description)
+        self.assertIn("调整持仓股数", description)
+
     def test_metric_cards_hide_redundant_strategy_and_forecast_cards(self) -> None:
         html = _build_metric_cards(
             [
@@ -50,7 +59,7 @@ class BacktestReportAdviceTests(unittest.TestCase):
                     "chart_name": "指标概览",
                     "chart_data": {
                         "股票代码": "sh.600236",
-                        "策略名称": "普通双均线V1",
+                        "策略名称": "普通双均线",
                         "均线说明": "快线看短期节奏，慢线看中期趋势。",
                         "总收益率": "41.20%",
                         "空仓-下一交易日策略": "观察买点",

@@ -120,20 +120,18 @@ cd /Users/y/Downloads/project/quantitative-trading
 `start.sh` 会进入总菜单：
 
 ```text
-1. GUI 回测 + AI 分析
-2. GUI 回测（不启用 AI）
-3. 终端批量回测
-4. 拉取数据
-5. 合并历史回测报告为分享版
+1. GUI 回测（LLM）
+2. 终端批量回测
+3. 拉取数据
 q. 退出
 ```
 
 说明：
 
-- 直接回车默认进入 `1. GUI 回测 + AI 分析`
-- 也支持快捷键：`ga`、`g`、`b`、`s`、`m`
+- 直接回车默认进入 `1. GUI 回测（LLM）`
+- 也支持快捷键：`g`、`b`、`s`
 - 现在不再需要先选 GUI，再单独选一次 AI 开关
-- 如果要把历史 `backtest HTML + llm_analysis HTML` 合成一份可分享报告，可以直接选 `5`
+- `GUI 回测（LLM）` 会自动判断当前 LLM 是否可用：可用就自动追加 AI 分析，不可用就只跑回测
 
 ## 5.1 启用大模型分析
 
@@ -202,8 +200,8 @@ logs/llm_analysis/
 典型文件示例：
 
 ```text
-logs/llm_analysis/simple_ma_backtest-sz.000725.html
-logs/llm_analysis/simple_ma_backtest_v2-batch.html
+logs/llm_analysis/base_backtest-sz.000725.html
+logs/llm_analysis/base_backtest-batch.html
 ```
 
 单次回测报告现在会直接给出两套口径：
@@ -211,26 +209,6 @@ logs/llm_analysis/simple_ma_backtest_v2-batch.html
 - `买卖点`：原始策略实际信号
 - `优化买卖点`：在原策略基础上增加趋势确认、回撤保护和不追高过滤后的建议信号
 - `买卖建议` 面板：可在 `原策略` / `优化策略` 间切换，并保持与时间筛选联动
-
-如果你手里已经有历史回测 HTML 和对应的 AI HTML，不想重跑回测，也可以直接合并成单文件分享版：
-
-```bash
-python3 merge_backtest_ai_html.py logs/backtest/simple_ma_backtest_v2-sz.000725.html
-```
-
-默认行为：
-
-- 自动查找同名 AI 报告：`logs/llm_analysis/simple_ma_backtest_v2-sz.000725.html`
-- 输出到原目录，文件名自动变为：`simple_ma_backtest_v2-sz.000725-share.html`
-
-如果 AI 文件路径不同，也可以手动指定：
-
-```bash
-python3 merge_backtest_ai_html.py \
-  logs/backtest/simple_ma_backtest_v2-sz.000725.html \
-  --ai-report logs/llm_analysis/simple_ma_backtest_v2-sz.000725.html \
-  --output logs/backtest/simple_ma_backtest_v2-sz.000725-share.html
-```
 
 ## 6. 数据同步
 
@@ -253,14 +231,15 @@ python3 merge_backtest_ai_html.py \
 然后再选择数据源：
 
 ```text
-1. 东方财富直连
-2. Baostock
-3. Akshare
-4. Tushare
-5. 自动（东方财富直连 -> Baostock -> Akshare -> Tushare）
+1. 同花顺
+2. 东方财富直连
+3. Baostock
+4. Akshare
+5. Tushare
+6. 自动（同花顺 -> 东方财富直连 -> Akshare -> Baostock -> Tushare）
 ```
 
-默认推荐直接选 `5`，也就是自动模式。
+默认推荐直接选 `6`，也就是自动模式。
 
 ### 6.2 命令行同步
 
@@ -300,8 +279,13 @@ python3 merge_backtest_ai_html.py \
 
 当你不传股票代码，也不传 `--all-sh-main` 时，脚本会同步当前默认配置需要的数据，主要来自：
 
-- `backtest/simple_ma_backtest.py` 里的默认标的
+- `backtest/base_backtest.py` 里的默认标的
 - 对应测试用例股票池
+
+当前目录结构里：
+
+- `backtest/base_backtest.py`：基础策略
+- `backtest/extended_strategies/`：各类扩展策略
 
 当前默认股票主要包括：
 
@@ -317,16 +301,22 @@ python3 merge_backtest_ai_html.py \
 同步后的 CSV 会写到：
 
 ```text
-data/daily/<股票代码>_<复权类型>.csv
+data/daily/<股票代码>.csv
 ```
 
 例如：
 
 ```text
-data/daily/sz.000725_hfq.csv
+data/daily/sz.000725.csv
 ```
 
-当前项目默认使用 `hfq`（后复权）。
+单个文件里会同时包含 `cq/qfq/hfq` 三套字段，回测时再按 `adjust_flag` 读取对应列。
+
+另外，回测层额外支持 `dypre`（动态前复权）口径：
+
+- 信号计算使用 `qfq` 前复权价格
+- 撮合成交、持仓估值使用 `cq` 不复权价格
+- 除权日会按动态复权因子同步重算等价持仓股数与持仓成本
 
 ### 6.5 基准指数同步
 
@@ -372,16 +362,8 @@ logs/backtest/
 常见报告文件示例：
 
 ```text
-logs/backtest/simple_ma_backtest-sz.000725.html
-logs/backtest/simple_ma_backtest_v1-sz.000725.html
-logs/backtest/simple_ma_backtest_v2-sz.000725.html
+logs/backtest/base_backtest-sz.000725.html
 logs/backtest/pair_trade_backtest-pair_000100_001308.html
-```
-
-普通双均线家族在 GUI 下会联跑多个版本，并额外生成一个对比页：
-
-```text
-logs/backtest/simple_ma_backtest-family-sz.000725.html
 ```
 
 如果你不想自动打开浏览器，可以这样执行：
@@ -395,7 +377,7 @@ OPEN_GUI=0 ./start_backtest_gui.sh
 也可以跳过菜单，直接传参：
 
 ```bash
-./start_backtest_gui.sh simple_ma_backtest sz.000725
+./start_backtest_gui.sh base_backtest sz.000725
 ```
 
 或者只传股票代码，让策略继续走交互选择：
@@ -406,9 +388,7 @@ OPEN_GUI=0 ./start_backtest_gui.sh
 
 当前默认开放的策略 ID：
 
-- `simple_ma_backtest`
-- `simple_ma_backtest_v1`
-- `simple_ma_backtest_v2`
+- `base_backtest`
 - `pair_trade_backtest`
 
 ### 7.3 终端批量回测
@@ -428,7 +408,7 @@ OPEN_GUI=0 ./start_backtest_gui.sh
 也可以直接执行 Python 入口并指定策略：
 
 ```bash
-./.venv/bin/python run_batch_backtest.py simple_ma_backtest
+./.venv/bin/python run_batch_backtest.py base_backtest
 ```
 
 如果不传策略 ID，会使用默认策略。
@@ -445,15 +425,22 @@ OPEN_GUI=0 ./start_backtest_gui.sh
 
 适合二次开发或调试脚本时使用。
 
+`sync/sync_akshare.py` 当前支持的数据源参数有：
+
+- `auto`：按 `ths -> eastmoney -> akshare -> baostock -> tushare(仅不复权)` 顺序回退
+- `eastmoney`
+- `ths`：同花顺日线直连，股票页来源为 `https://stockpage.10jqka.com.cn/股票代码/`
+- `akshare`
+- `baostock`
+- `tushare`
+
 ## 8. 当前策略说明
 
 ### 8.1 普通双均线
 
-当前有 3 个版本：
+当前仅保留 1 个版本：
 
-- `simple_ma_backtest`：基础版
-- `simple_ma_backtest_v1`：强化收益版
-- `simple_ma_backtest_v2`：稳健轮动版
+- `base_backtest`：基础版
 
 默认股票池来自 `utils/default_stocks.py`。
 
@@ -461,7 +448,8 @@ OPEN_GUI=0 ./start_backtest_gui.sh
 
 - `boe_simple_ma_backtest`：仅支持 `sz.000725`
 
-基于普通双均线 `V2` 逻辑封装，固定为京东方A单票专版，适合在 GUI 里直接选股回测。
+基于普通双均线 `V2` 逻辑封装，固定为京东方A单票专版。
+现在在 GUI 里选中专版策略后，会直接按固定股票和默认参数生成报告，不再进入后续选择流程。
 
 ### 8.3 TCL双均线专版
 
@@ -532,7 +520,7 @@ logs/backtest/
 
 因为策略展示受 `backtest/strategy_registry.py` 里的白名单控制。当前默认只开放：
 
-- `simple_ma_backtest`
+- `base_backtest`
 - `pair_trade_backtest`
 
 对应家族下的可见版本会自动出现在菜单中。
@@ -553,5 +541,5 @@ cd /Users/y/Downloads/project/quantitative-trading
 ```bash
 ./bootstrap.sh
 ./sync_data.sh --source=auto sz.000725
-./start_backtest_gui.sh simple_ma_backtest sz.000725
+./start_backtest_gui.sh base_backtest sz.000725
 ```

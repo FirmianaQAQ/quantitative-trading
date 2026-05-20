@@ -7,8 +7,10 @@ import pandas as pd
 
 from sync.sync_akshare import (
     STORAGE_COLUMNS,
+    build_unified_history_df,
     attach_ex_right_close_for_sync,
     build_eastmoney_cookie_chrome_applescript,
+    fetch_stock_history_from_ths,
     compute_incremental_start_date,
     fetch_index_history,
     fetch_index_history_from_eastmoney,
@@ -16,12 +18,18 @@ from sync.sync_akshare import (
     fetch_stock_history_from_eastmoney,
     merge_and_save_history,
     normalize_sina_stock_history_df,
+    parse_cli_options,
     refresh_eastmoney_cookie,
     refresh_eastmoney_cookie_from_chrome,
     refresh_eastmoney_cookie_from_chrome_profile,
+    resolve_effective_adjust_flag,
     resolve_eastmoney_cookie_bootstrap_urls,
     should_full_refresh_history,
+    to_akshare_adjust_flag,
+    to_baostock_adjust_flag,
+    to_ths_adjust_flag,
 )
+from utils.project_utils import load_daily_data
 
 
 def build_row(trade_date: str, close_price: float) -> dict:
@@ -47,6 +55,23 @@ def build_row(trade_date: str, close_price: float) -> dict:
 
 
 class SyncAkshareHistoryTests(unittest.TestCase):
+    def test_dynamic_pre_alias_maps_to_qfq_across_sync_helpers(self) -> None:
+        self.assertEqual(resolve_effective_adjust_flag("dypre"), "qfq")
+        self.assertEqual(to_baostock_adjust_flag("dypre"), "2")
+        self.assertEqual(to_akshare_adjust_flag("dypre"), "qfq")
+        self.assertEqual(to_ths_adjust_flag("dypre"), "01")
+
+    def test_parse_cli_options_accepts_ths_source(self) -> None:
+        with mock.patch(
+            "sys.argv",
+            ["sync_akshare.py", "--source=ths", "000100"],
+        ):
+            code_args, sync_all_sh_main, source_name = parse_cli_options()
+
+        self.assertEqual(code_args, ["000100"])
+        self.assertFalse(sync_all_sh_main)
+        self.assertEqual(source_name, "ths")
+
     def test_resolve_eastmoney_cookie_bootstrap_urls_uses_multiple_candidates(self) -> None:
         urls = resolve_eastmoney_cookie_bootstrap_urls("sh.600580")
 
@@ -172,6 +197,91 @@ class SyncAkshareHistoryTests(unittest.TestCase):
         self.assertTrue(should_full_refresh_history("qfq"))
         self.assertFalse(should_full_refresh_history("cq"))
         self.assertFalse(should_full_refresh_history("bfq"))
+
+    def test_build_unified_history_df_merges_cq_qfq_hfq_into_single_file_shape(self) -> None:
+        cq_df = pd.DataFrame(
+            [build_row("2026-05-13", 10.0)],
+            columns=STORAGE_COLUMNS,
+        )
+        qfq_df = pd.DataFrame(
+            [build_row("2026-05-13", 11.0)],
+            columns=STORAGE_COLUMNS,
+        )
+        hfq_df = pd.DataFrame(
+            [build_row("2026-05-13", 12.0)],
+            columns=STORAGE_COLUMNS,
+        )
+        cq_df["adjustflag"] = "cq"
+        qfq_df["adjustflag"] = "qfq"
+        hfq_df["adjustflag"] = "hfq"
+        cq_df["ex_right_close"] = 10.0
+        qfq_df["ex_right_close"] = 10.0
+        hfq_df["ex_right_close"] = 10.0
+
+        result = build_unified_history_df(
+            "sz.000725",
+            {"cq": cq_df, "qfq": qfq_df, "hfq": hfq_df},
+        )
+
+        self.assertEqual(result["code"].tolist(), ["sz.000725"])
+        self.assertEqual(result["cq_close"].tolist(), [10.0])
+        self.assertEqual(result["qfq_close"].tolist(), [11.0])
+        self.assertEqual(result["hfq_close"].tolist(), [12.0])
+
+    def test_load_daily_data_reads_selected_adjustment_columns_from_unified_csv(self) -> None:
+        unified_df = pd.DataFrame(
+            [
+                {
+                    "date": "2026-05-13",
+                    "code": "sz.000725",
+                    "cq_open": 10.0,
+                    "cq_high": 10.5,
+                    "cq_low": 9.8,
+                    "cq_close": 10.2,
+                    "cq_ex_right_close": 10.2,
+                    "cq_preclose": 10.0,
+                    "cq_volume": 1000,
+                    "cq_amount": 10000,
+                    "cq_adjustflag": "cq",
+                    "cq_turn": 1.2,
+                    "cq_pctChg": 2.0,
+                    "qfq_open": 8.0,
+                    "qfq_high": 8.5,
+                    "qfq_low": 7.8,
+                    "qfq_close": 8.2,
+                    "qfq_ex_right_close": 10.2,
+                    "qfq_preclose": 8.0,
+                    "qfq_volume": 1000,
+                    "qfq_amount": 10000,
+                    "qfq_adjustflag": "qfq",
+                    "qfq_turn": 1.2,
+                    "qfq_pctChg": 2.0,
+                    "hfq_open": 18.0,
+                    "hfq_high": 18.5,
+                    "hfq_low": 17.8,
+                    "hfq_close": 18.2,
+                    "hfq_ex_right_close": 10.2,
+                    "hfq_preclose": 18.0,
+                    "hfq_volume": 1000,
+                    "hfq_amount": 10000,
+                    "hfq_adjustflag": "hfq",
+                    "hfq_turn": 1.2,
+                    "hfq_pctChg": 2.0,
+                }
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            csv_path = Path(temp_dir) / "sz.000725.csv"
+            unified_df.to_csv(csv_path, index=False)
+            with mock.patch(
+                "utils.project_utils.get_daily_csv_path",
+                return_value=csv_path,
+            ):
+                qfq_df = load_daily_data("sz.000725", "qfq")
+
+        self.assertEqual(qfq_df["close"].tolist(), [8.2])
+        self.assertEqual(qfq_df["ex_right_close"].tolist(), [10.2])
 
     def test_merge_and_save_history_full_refresh_replaces_existing_history(self) -> None:
         existing_df = pd.DataFrame(
@@ -334,6 +444,10 @@ class SyncAkshareHistoryTests(unittest.TestCase):
                 side_effect=RuntimeError("eastmoney down"),
             ) as eastmoney_mock,
             mock.patch(
+                "sync.sync_akshare.fetch_stock_history_from_ths",
+                side_effect=RuntimeError("ths down"),
+            ) as ths_mock,
+            mock.patch(
                 "sync.sync_akshare.fetch_stock_history_from_baostock",
                 return_value=fallback_df,
             ) as baostock_mock,
@@ -361,9 +475,46 @@ class SyncAkshareHistoryTests(unittest.TestCase):
 
         self.assertTrue(result.equals(fallback_df))
         eastmoney_mock.assert_called_once()
+        ths_mock.assert_called_once()
         sina_mock.assert_called_once()
         baostock_mock.assert_not_called()
         tushare_mock.assert_not_called()
+
+    def test_fetch_stock_history_uses_ths_when_requested(self) -> None:
+        fallback_df = pd.DataFrame([{"date": "2026-05-19", "close": 10.0}])
+
+        with (
+            mock.patch(
+                "sync.sync_akshare.fetch_stock_history_from_ths",
+                return_value=fallback_df,
+            ) as ths_mock,
+            mock.patch(
+                "sync.sync_akshare.fetch_stock_history_from_eastmoney",
+            ) as eastmoney_mock,
+            mock.patch(
+                "sync.sync_akshare.fetch_stock_history_from_sina",
+            ) as sina_mock,
+            mock.patch(
+                "sync.sync_akshare.fetch_stock_history_from_baostock",
+            ) as baostock_mock,
+            mock.patch(
+                "sync.sync_akshare.normalize_ths_stock_history_df",
+                side_effect=lambda raw_df, **_: raw_df,
+            ),
+        ):
+            result = fetch_stock_history(
+                symbol="000100",
+                start_date="2026-05-01",
+                end_date="2026-05-19",
+                adjust_flag="hfq",
+                source_name="ths",
+            )
+
+        self.assertTrue(result.equals(fallback_df))
+        ths_mock.assert_called_once()
+        eastmoney_mock.assert_not_called()
+        sina_mock.assert_not_called()
+        baostock_mock.assert_not_called()
 
     def test_fetch_stock_history_from_eastmoney_retries_with_empty_cookie_session(self) -> None:
         success_response = mock.Mock()
@@ -401,6 +552,32 @@ class SyncAkshareHistoryTests(unittest.TestCase):
         refresh_mock.assert_called_once()
         self.assertEqual(result["日期"].tolist(), ["2026-05-19"])
         self.assertEqual(result["收盘"].tolist(), ["11"])
+
+    def test_fetch_stock_history_from_ths_parses_last36000_payload(self) -> None:
+        response_mock = mock.Mock()
+        response_mock.raise_for_status.return_value = None
+        response_mock.text = (
+            'quotebridge_v6_line_hs_000100_00_last36000('
+            '{"name":"TCL科技","data":"20260518,4.51,4.60,4.48,4.55,1000,455000;'
+            '20260519,4.55,4.66,4.53,4.60,1200,552000"}'
+            ")"
+        )
+
+        with mock.patch(
+            "sync.sync_akshare.retry_request_call",
+            return_value=response_mock,
+        ) as retry_mock:
+            result = fetch_stock_history_from_ths(
+                symbol="000100",
+                start_date="2026-05-19",
+                end_date="2026-05-19",
+                adjust_flag="cq",
+            )
+
+        self.assertEqual(retry_mock.call_count, 1)
+        self.assertEqual(result["date"].tolist(), ["2026-05-19"])
+        self.assertEqual(result["close"].tolist(), ["4.60"])
+        self.assertEqual(result["amount"].tolist(), ["552000"])
 
     def test_fetch_index_history_falls_back_after_eastmoney_failure(self) -> None:
         fallback_df = pd.DataFrame([{"date": "2026-05-19", "close": 3200.0}])

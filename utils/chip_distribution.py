@@ -8,6 +8,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from utils.config import DEFAULT_A_SHARE_ADJUST
 from utils.project_utils import load_daily_data
 
 
@@ -273,7 +274,7 @@ class ChipDistribution:
 
 
 def fetch_stock_data(code):
-    df = load_daily_data(code, "hfq")
+    df = load_daily_data(code, DEFAULT_A_SHARE_ADJUST)
     df["date"] = pd.to_datetime(df["date"])
     df = df.sort_values("date")
     df["turn"] = df["turn"] / 100  # 数据单位本来就是百分比，这里除去。

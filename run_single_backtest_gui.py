@@ -9,12 +9,12 @@ from contextlib import redirect_stdout
 from pathlib import Path
 import pandas as pd
 
-from backtest.pair_trade_backtest import (
+from backtest.extended_strategies.pair_trade_backtest import (
     _align_pair_data,
     _build_spread_price_frame,
     evaluate_pair_signal_quality,
 )
-from analysis.config import is_llm_analysis_requested
+from analysis.config import is_llm_analysis_available
 from backtest.strategy_registry import (
     StrategySpec,
     get_required_codes,
@@ -43,7 +43,8 @@ AI_ANALYSIS_ON = "on"
 AI_ANALYSIS_OFF = "off"
 AI_ANALYSIS_AUTO = "auto"
 PAIR_AUTO_PREFIX = "pair_auto|"
-MULTI_VERSION_FAMILY_IDS = {"simple_ma_backtest"}
+MULTI_VERSION_FAMILY_IDS: frozenset[str] = frozenset()
+DIRECT_REPORT_FAMILY_IDS: frozenset[str] = frozenset({"specialized_ma_backtest"})
 
 
 def normalize_code(raw_code: str) -> str:
@@ -135,14 +136,62 @@ def is_multi_version_family(family_specs: list[StrategySpec]) -> bool:
     return bool(family_specs) and family_specs[0].family_id in MULTI_VERSION_FAMILY_IDS
 
 
+def get_family_menu_label(family_name: str, family_specs: list[StrategySpec]) -> str:
+    if is_multi_version_family(family_specs):
+        return f"{family_name}版"
+    return family_name
+
+
+def is_direct_report_strategy(spec: StrategySpec) -> bool:
+    return spec.family_id in DIRECT_REPORT_FAMILY_IDS
+
+
+def resolve_strategy_default_stock_selection(
+    spec: StrategySpec,
+    cli_stock_code: str | None,
+) -> str | tuple[str, str]:
+    normalized_cli_selection = normalize_cli_stock_selection(spec, cli_stock_code)
+    if normalized_cli_selection is not None:
+        return normalized_cli_selection
+
+    configured_code = str(spec.config.get("code", "")).strip()
+    if configured_code:
+        return configured_code
+
+    candidate_codes = collect_stock_candidates(spec)
+    if len(candidate_codes) == 1:
+        return candidate_codes[0]
+
+    raise RuntimeError(f"{spec.display_name} 缺少唯一固定股票，无法直接生成报告")
+
+
+def resolve_strategy_default_cash(spec: StrategySpec) -> float:
+    cash_value = float(spec.config.get("cash", DEFAULT_CASH))
+    if cash_value <= 0:
+        raise ValueError(f"{spec.display_name} 的默认初始资金必须大于 0")
+    return round(cash_value, 2)
+
+
+def resolve_strategy_default_current_position(spec: StrategySpec) -> str:
+    current_position = str(
+        spec.config.get("current_position", DEFAULT_CURRENT_POSITION)
+    ).strip().lower()
+    if not current_position:
+        current_position = DEFAULT_CURRENT_POSITION
+    if current_position not in {"auto", "empty", "hold"}:
+        raise ValueError(
+            f"{spec.display_name} 的默认 current_position 仅支持 auto、empty、hold"
+        )
+    return current_position
+
+
 def prompt_strategy_menu() -> str:
     grouped_specs = group_strategy_specs()
     while True:
         print()
         print("请选择策略大类：")
         for index, (family_name, family_specs) in enumerate(grouped_specs, start=1):
-            family_suffix = "（联跑全部版本）" if is_multi_version_family(family_specs) else ""
-            print(f"  {index}. {family_name}{family_suffix}")
+            print(f"  {index}. {get_family_menu_label(family_name, family_specs)}")
         print("  b. 返回上一级")
         print("  q. 退出")
 
@@ -162,13 +211,16 @@ def prompt_strategy_menu() -> str:
             continue
 
         family_name, family_specs = grouped_specs[selected_index - 1]
+        family_menu_label = get_family_menu_label(family_name, family_specs)
         if is_multi_version_family(family_specs):
             print()
-            print(f"已选择大类：{family_name}，将自动联跑全部版本")
+            print(f"已选择大类：{family_menu_label}，将自动联跑全部版本")
             return family_specs[0].family_id
+        if len(family_specs) == 1:
+            return family_specs[0].strategy_id
         while True:
             print()
-            print(f"已选择大类：{family_name}")
+            print(f"已选择大类：{family_menu_label}")
             print("请选择具体策略版本：")
             for index, spec in enumerate(family_specs, start=1):
                 print(f"  {index}. {spec.display_name} ({spec.brief_description})")
@@ -250,8 +302,12 @@ def choose_stock_interactively(spec: StrategySpec) -> str:
                     raise SystemExit(FULL_EXIT_CODE)
                 try:
                     if supports_manual_pair_input(spec):
-                        return parse_manual_pair_selection(raw_value)
-                    return normalize_code(raw_value)
+                        selected_code = parse_manual_pair_selection(raw_value)
+                    else:
+                        selected_code = normalize_code(raw_value)
+                    if sync_manual_stock_selection(spec, selected_code):
+                        return selected_code
+                    print("目标数据同步失败，请重新输入，或输入 b 返回上一级。")
                 except ValueError as exc:
                     print(str(exc))
         if selected == RECOMMEND_MENU_VALUE:
@@ -294,33 +350,21 @@ def prompt_current_position() -> str:
         print("输入无效，请重新输入")
 
 
+def get_current_position_label(current_position: str) -> str:
+    label_map = {
+        "auto": "自动按回测信号推断",
+        "empty": "当前空仓",
+        "hold": "当前持仓",
+    }
+    return label_map.get(current_position, current_position)
+
+
 def resolve_ai_analysis_enabled(ai_analysis_mode: str | None) -> bool:
     if ai_analysis_mode == AI_ANALYSIS_ON:
         return True
     if ai_analysis_mode == AI_ANALYSIS_OFF:
         return False
-    return is_llm_analysis_requested()
-
-
-def prompt_ai_analysis_enabled(default_enabled: bool) -> bool:
-    default_choice = "1" if default_enabled else "2"
-    while True:
-        print()
-        print("请选择是否启用 AI 分析：")
-        print(f"  1. 启用{'（当前默认）' if default_enabled else ''}")
-        print(f"  2. 关闭{'（当前默认）' if not default_enabled else ''}")
-        print("  q. 退出")
-
-        raw_value = input(f"请输入编号，直接回车默认 {default_choice}: ").strip().lower()
-        if not raw_value:
-            return default_enabled
-        if raw_value == "1":
-            return True
-        if raw_value == "2":
-            return False
-        if raw_value == "q":
-            raise SystemExit(FULL_EXIT_CODE)
-        print("输入无效，请重新输入")
+    return is_llm_analysis_available()
 
 
 def parse_cli_args() -> tuple[str | None, str | None, str | None]:
@@ -432,6 +476,18 @@ def sync_single_stock_data(code: str) -> bool:
         return True
     print(f"{code} 数据同步失败，退出码={result.returncode}")
     return False
+
+
+def sync_manual_stock_selection(spec: StrategySpec, stock_selection: str) -> bool:
+    required_codes = get_required_codes(spec, stock_selection)
+    if not required_codes:
+        return True
+
+    print(f"已手动输入目标，正在同步数据: {', '.join(required_codes)}")
+    for code in required_codes:
+        if not sync_single_stock_data(code):
+            return False
+    return True
 
 
 def build_report_path(config: dict) -> Path:
@@ -1113,22 +1169,37 @@ def run_simple_ma_family(
 
 def main() -> None:
     cli_strategy_id, cli_stock_code, cli_ai_analysis_mode = parse_cli_args()
+    stock_code: str | tuple[str, str]
     while True:
         spec = choose_strategy_spec(cli_strategy_id)
+        if is_direct_report_strategy(spec):
+            stock_code = resolve_strategy_default_stock_selection(spec, cli_stock_code)
+            print()
+            print(f"已选择专版策略：{spec.display_name}，将直接生成报告")
+            print(f"固定股票: {stock_code} {get_display_label(spec, str(stock_code))}")
+            break
         stock_code = normalize_cli_stock_selection(spec, cli_stock_code) or choose_stock_interactively(spec)
         if stock_code == BACK_MENU_VALUE:
             cli_strategy_id = None
             cli_stock_code = None
             continue
         break
-    cash = prompt_initial_cash()
-    current_position = prompt_current_position()
-    enable_llm_analysis = (
-        resolve_ai_analysis_enabled(cli_ai_analysis_mode)
-        if cli_ai_analysis_mode is not None
-        else prompt_ai_analysis_enabled(resolve_ai_analysis_enabled(None))
-    )
-    if spec.family_id == "simple_ma_backtest":
+    if is_direct_report_strategy(spec):
+        cash = resolve_strategy_default_cash(spec)
+        current_position = resolve_strategy_default_current_position(spec)
+        print(f"默认初始资金: {cash:.2f}")
+        print(f"默认持仓状态: {get_current_position_label(current_position)}")
+    else:
+        cash = prompt_initial_cash()
+        current_position = prompt_current_position()
+    enable_llm_analysis = resolve_ai_analysis_enabled(cli_ai_analysis_mode)
+    if cli_ai_analysis_mode is None:
+        print()
+        if enable_llm_analysis:
+            print("检测到 LLM 可用，本次 GUI 回测将自动附带 AI 分析")
+        else:
+            print("未检测到可用的 LLM 配置，本次 GUI 回测将不启用 AI 分析")
+    if spec.family_id in MULTI_VERSION_FAMILY_IDS:
         report_path = run_simple_ma_family(
             spec,
             stock_code,

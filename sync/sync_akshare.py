@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import atexit
+import json
 import logging
 import os
 import shutil
@@ -35,9 +36,15 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from backtest.simple_ma_backtest import CONFIG, TEST_CASES
+from backtest.base_backtest import CONFIG, TEST_CASES
 from utils.ak_share_utils import get_a_share_code_name_df_and_filter
-from utils.project_utils import get_daily_csv_path
+from utils.project_utils import (
+    SUPPORTED_ADJUST_FLAGS,
+    BASE_DAILY_COLUMNS,
+    build_adjusted_daily_column_map,
+    build_unified_daily_columns,
+    get_daily_csv_path,
+)
 from utils.stock_utils import stock_is_ignored
 
 logger = logging.getLogger(__name__)
@@ -80,6 +87,7 @@ STORAGE_COLUMNS = [
     "pcfNcfTTM",
     "pbMRQ",
 ]
+UNIFIED_STORAGE_COLUMNS = build_unified_daily_columns()
 
 _TUSHARE_PRO_CLIENT = None
 _TUSHARE_DAILY_CALL_TIMESTAMPS: deque[float] = deque()
@@ -90,12 +98,14 @@ SYNC_SOURCE_EASTMONEY = "eastmoney"
 SYNC_SOURCE_BAOSTOCK = "baostock"
 SYNC_SOURCE_AKSHARE = "akshare"
 SYNC_SOURCE_TUSHARE = "tushare"
+SYNC_SOURCE_THS = "ths"
 SYNC_SOURCE_CHOICES = {
     SYNC_SOURCE_AUTO,
     SYNC_SOURCE_EASTMONEY,
     SYNC_SOURCE_BAOSTOCK,
     SYNC_SOURCE_AKSHARE,
     SYNC_SOURCE_TUSHARE,
+    SYNC_SOURCE_THS,
 }
 
 
@@ -175,6 +185,22 @@ def build_eastmoney_headers(referer_url: str, cookie_str: str = "") -> dict[str,
     if cookie_str.strip():
         headers["cookie"] = cookie_str.strip()
     return headers
+
+
+def build_ths_stock_page_url(symbol: str) -> str:
+    return f"https://stockpage.10jqka.com.cn/{symbol}/"
+
+
+def build_ths_headers(referer_url: str) -> dict[str, str]:
+    return {
+        "user-agent": (
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/136.0.0.0 Safari/537.36"
+        ),
+        "referer": referer_url,
+        "accept": "application/javascript, application/json, text/plain, */*",
+    }
 
 
 def get_eastmoney_cookie_chrome_app_name() -> str:
@@ -548,11 +574,14 @@ def resolve_sync_end_date() -> str:
 
 
 def resolve_effective_adjust_flag(config_adjust_flag: str) -> str:
-    return config_adjust_flag
+    return normalize_adjust_flag(config_adjust_flag)
 
 
 def normalize_adjust_flag(adjust_flag: str) -> str:
-    return str(adjust_flag or "").strip().lower()
+    normalized_flag = str(adjust_flag or "").strip().lower()
+    if normalized_flag == "dypre":
+        return "qfq"
+    return normalized_flag
 
 
 def is_unadjusted_flag(adjust_flag: str) -> bool:
@@ -575,6 +604,17 @@ def to_akshare_adjust_flag(adjust_flag: str) -> str:
     if normalized_flag in {"hfq", "qfq"}:
         return normalized_flag
     return ""
+
+
+def to_ths_adjust_flag(adjust_flag: str) -> str:
+    normalized_flag = normalize_adjust_flag(adjust_flag)
+    if normalized_flag == "qfq":
+        return "01"
+    if normalized_flag == "hfq":
+        return "02"
+    if is_unadjusted_flag(normalized_flag):
+        return "00"
+    raise ValueError(f"不支持的同花顺复权口径: {adjust_flag}")
 
 
 def is_tushare_rate_limit_error(exc: Exception) -> bool:
@@ -700,6 +740,19 @@ def fetch_stock_history(
             adjust_flag=adjust_flag,
         ),
     )
+    ths_source = (
+        "ths-direct",
+        lambda: normalize_ths_stock_history_df(
+            fetch_stock_history_from_ths(
+                symbol=symbol,
+                start_date=start_date,
+                end_date=end_date,
+                adjust_flag=adjust_flag,
+            ),
+            full_code=full_code,
+            adjust_flag=adjust_flag,
+        ),
+    )
     akshare_sources = [
         (
             "akshare-sina",
@@ -731,19 +784,23 @@ def fetch_stock_history(
             raise RuntimeError(f"Tushare 仅支持不复权日线，不支持 {adjust_flag}")
         stock_sources = [tushare_source]
     elif source_name == SYNC_SOURCE_EASTMONEY:
-        stock_sources = [eastmoney_source, *akshare_sources, baostock_source]
+        stock_sources = [eastmoney_source, ths_source, *akshare_sources, baostock_source]
+        if is_unadjusted_flag(adjust_flag):
+            stock_sources.append(tushare_source)
+    elif source_name == SYNC_SOURCE_THS:
+        stock_sources = [ths_source, eastmoney_source, *akshare_sources, baostock_source]
         if is_unadjusted_flag(adjust_flag):
             stock_sources.append(tushare_source)
     elif source_name == SYNC_SOURCE_BAOSTOCK:
-        stock_sources = [baostock_source, eastmoney_source, *akshare_sources]
+        stock_sources = [baostock_source, eastmoney_source, ths_source, *akshare_sources]
         if is_unadjusted_flag(adjust_flag):
             stock_sources.append(tushare_source)
     elif source_name == SYNC_SOURCE_AKSHARE:
-        stock_sources = [*akshare_sources, eastmoney_source, baostock_source]
+        stock_sources = [*akshare_sources, eastmoney_source, ths_source, baostock_source]
         if is_unadjusted_flag(adjust_flag):
             stock_sources.append(tushare_source)
     else:
-        stock_sources = [eastmoney_source, *akshare_sources, baostock_source]
+        stock_sources = [ths_source, eastmoney_source, *akshare_sources, baostock_source]
         if is_unadjusted_flag(adjust_flag):
             stock_sources.append(tushare_source)
         else:
@@ -956,6 +1013,89 @@ def fetch_stock_history_from_sina(
         ),
         action_name=f"拉取股票 {full_code} 新浪日线",
     )
+
+
+def parse_ths_history_df(response_text: str) -> pd.DataFrame:
+    text = str(response_text or "").strip()
+    if not text:
+        return pd.DataFrame(
+            columns=["date", "open", "high", "low", "close", "volume", "amount"]
+        )
+    if "Nginx forbidden" in text or "访问频率过快" in text:
+        raise RuntimeError("同花顺返回了访问限制页面")
+
+    payload_start = text.find("{")
+    payload_end = text.rfind("}")
+    if payload_start < 0 or payload_end < payload_start:
+        raise RuntimeError("同花顺日线响应无法解析 JSON")
+
+    payload = json.loads(text[payload_start : payload_end + 1])
+    data_text = payload.get("data")
+    if data_text is None and len(payload) == 1:
+        only_value = next(iter(payload.values()))
+        if isinstance(only_value, dict):
+            data_text = only_value.get("data")
+    if not data_text:
+        return pd.DataFrame(
+            columns=["date", "open", "high", "low", "close", "volume", "amount"]
+        )
+
+    rows: list[dict[str, str]] = []
+    for raw_line in str(data_text).split(";"):
+        line = raw_line.strip()
+        if not line:
+            continue
+        parts = [item.strip() for item in line.split(",")]
+        if len(parts) < 7:
+            continue
+        trade_date = parts[0]
+        if len(trade_date) != 8 or not trade_date.isdigit():
+            continue
+        rows.append(
+            {
+                "date": (
+                    f"{trade_date[0:4]}-{trade_date[4:6]}-{trade_date[6:8]}"
+                ),
+                "open": parts[1],
+                "high": parts[2],
+                "low": parts[3],
+                "close": parts[4],
+                "volume": parts[5],
+                "amount": parts[6],
+            }
+        )
+
+    return pd.DataFrame(
+        rows,
+        columns=["date", "open", "high", "low", "close", "volume", "amount"],
+    )
+
+
+def fetch_stock_history_from_ths(
+    symbol: str,
+    start_date: str,
+    end_date: str,
+    adjust_flag: str,
+) -> pd.DataFrame:
+    referer_url = build_ths_stock_page_url(symbol)
+    url = (
+        f"https://d.10jqka.com.cn/v6/line/hs_{symbol}/"
+        f"{to_ths_adjust_flag(adjust_flag)}/last36000.js"
+    )
+    response = retry_request_call(
+        lambda: requests.get(
+            url,
+            headers=build_ths_headers(referer_url),
+            timeout=30,
+        ),
+        action_name=f"拉取股票 {symbol} 同花顺日线",
+    )
+    response.raise_for_status()
+    raw_df = parse_ths_history_df(response.text)
+    if raw_df.empty:
+        return raw_df
+    date_mask = (raw_df["date"] >= start_date) & (raw_df["date"] <= end_date)
+    return raw_df.loc[date_mask].reset_index(drop=True)
 
 
 def fetch_index_history(
@@ -1259,6 +1399,35 @@ def normalize_index_history_df(raw_df: pd.DataFrame, full_code: str, adjust_flag
     return finalize_history_df(normalized_df)
 
 
+def normalize_ths_stock_history_df(
+    raw_df: pd.DataFrame,
+    full_code: str,
+    adjust_flag: str,
+) -> pd.DataFrame:
+    if raw_df is None or raw_df.empty:
+        return pd.DataFrame(columns=STORAGE_COLUMNS)
+
+    normalized_df = raw_df.copy()
+    normalized_df["date"] = pd.to_datetime(
+        normalized_df["date"], errors="coerce"
+    ).dt.strftime("%Y-%m-%d")
+    normalized_df["code"] = full_code
+    normalized_df["adjustflag"] = adjust_flag
+    normalized_df["turn"] = 0
+    normalized_df["pctChg"] = (
+        (
+            pd.to_numeric(normalized_df["close"], errors="coerce")
+            / pd.to_numeric(normalized_df["close"], errors="coerce").shift(1)
+            - 1
+        )
+        * 100
+    )
+    normalized_df["preclose"] = pd.to_numeric(
+        normalized_df["close"], errors="coerce"
+    ).shift(1)
+    return finalize_history_df(normalized_df)
+
+
 def merge_ex_right_close_by_date(
     target_df: pd.DataFrame,
     source_df: pd.DataFrame | None,
@@ -1304,9 +1473,11 @@ def read_local_ex_right_history(full_code: str) -> pd.DataFrame:
     local_df = pd.read_csv(csv_path)
     if local_df.empty:
         return pd.DataFrame(columns=["date", "close"])
-    if "date" not in local_df.columns or "close" not in local_df.columns:
-        return pd.DataFrame(columns=["date", "close"])
-    return local_df[["date", "close"]].copy()
+    if {"date", "close"} <= set(local_df.columns):
+        return local_df[["date", "close"]].copy()
+    if {"date", "cq_close"} <= set(local_df.columns):
+        return local_df[["date", "cq_close"]].rename(columns={"cq_close": "close"}).copy()
+    return pd.DataFrame(columns=["date", "close"])
 
 
 def attach_ex_right_close_for_sync(
@@ -1426,11 +1597,46 @@ def to_full_code(symbol: str) -> str:
 
 def read_existing_history(csv_path: Path) -> pd.DataFrame:
     if not csv_path.exists():
-        return pd.DataFrame(columns=STORAGE_COLUMNS)
+        return pd.DataFrame(columns=UNIFIED_STORAGE_COLUMNS)
     existing_df = pd.read_csv(csv_path)
     if existing_df.empty:
-        return pd.DataFrame(columns=STORAGE_COLUMNS)
+        return pd.DataFrame(columns=UNIFIED_STORAGE_COLUMNS)
     return existing_df
+
+
+def extract_adjusted_history(existing_df: pd.DataFrame, adjust_flag: str) -> pd.DataFrame:
+    if existing_df is None or existing_df.empty:
+        return pd.DataFrame(columns=STORAGE_COLUMNS)
+
+    if set(STORAGE_COLUMNS).issubset(existing_df.columns):
+        frame = existing_df[STORAGE_COLUMNS].copy()
+        frame["adjustflag"] = adjust_flag
+        return frame
+
+    column_map = build_adjusted_daily_column_map(adjust_flag)
+    extracted_df = pd.DataFrame()
+    if "date" in existing_df.columns:
+        extracted_df["date"] = existing_df["date"]
+    if "code" in existing_df.columns:
+        extracted_df["code"] = existing_df["code"]
+
+    for normalized_column in BASE_DAILY_COLUMNS:
+        storage_column = column_map[normalized_column]
+        if storage_column in existing_df.columns:
+            extracted_df[normalized_column] = existing_df[storage_column]
+
+    if extracted_df.empty or "date" not in extracted_df.columns:
+        return pd.DataFrame(columns=STORAGE_COLUMNS)
+
+    if "code" not in extracted_df.columns:
+        extracted_df["code"] = pd.NA
+    if "adjustflag" not in extracted_df.columns:
+        extracted_df["adjustflag"] = adjust_flag
+
+    for column in STORAGE_COLUMNS:
+        if column not in extracted_df.columns:
+            extracted_df[column] = pd.NA
+    return extracted_df[STORAGE_COLUMNS].dropna(subset=["date"]).reset_index(drop=True)
 
 
 def compute_incremental_start_date(existing_df: pd.DataFrame, default_start_date: str) -> str:
@@ -1469,6 +1675,66 @@ def merge_and_save_history(
     return len(new_df)
 
 
+def merge_history_frames(
+    existing_df: pd.DataFrame,
+    new_df: pd.DataFrame,
+    *,
+    full_refresh: bool = False,
+) -> pd.DataFrame:
+    if full_refresh:
+        combined_df = new_df.copy()
+    else:
+        combined_df = pd.concat([existing_df, new_df], ignore_index=True)
+    combined_df = combined_df.drop_duplicates(subset=["date", "code"], keep="last")
+    combined_df = combined_df.sort_values("date").reset_index(drop=True)
+    combined_df["preclose"] = pd.to_numeric(combined_df["close"], errors="coerce").shift(1)
+    return combined_df
+
+
+def build_unified_history_df(
+    full_code: str,
+    histories_by_adjust: dict[str, pd.DataFrame],
+) -> pd.DataFrame:
+    date_values: set[str] = set()
+    for history_df in histories_by_adjust.values():
+        if history_df is None or history_df.empty:
+            continue
+        date_values.update(str(item) for item in history_df["date"].dropna().tolist())
+
+    if not date_values:
+        return pd.DataFrame(columns=UNIFIED_STORAGE_COLUMNS)
+
+    unified_df = pd.DataFrame({"date": sorted(date_values)})
+    unified_df["code"] = full_code
+
+    for adjust_flag in SUPPORTED_ADJUST_FLAGS:
+        history_df = histories_by_adjust.get(adjust_flag)
+        column_map = build_adjusted_daily_column_map(adjust_flag)
+        if history_df is None or history_df.empty:
+            for storage_column in column_map.values():
+                unified_df[storage_column] = pd.NA
+            continue
+
+        prefixed_df = history_df.copy()
+        prefixed_df["date"] = pd.to_datetime(
+            prefixed_df["date"], errors="coerce"
+        ).dt.strftime("%Y-%m-%d")
+        rename_map = {
+            column: storage_column
+            for column, storage_column in column_map.items()
+            if column in prefixed_df.columns
+        }
+        prefixed_df = prefixed_df.rename(columns=rename_map)
+        merge_columns = ["date", *rename_map.values()]
+        prefixed_df = prefixed_df[merge_columns].drop_duplicates(subset=["date"], keep="last")
+        unified_df = unified_df.merge(prefixed_df, on="date", how="left")
+
+    for column in UNIFIED_STORAGE_COLUMNS:
+        if column not in unified_df.columns:
+            unified_df[column] = pd.NA
+    return unified_df[UNIFIED_STORAGE_COLUMNS].sort_values("date").reset_index(drop=True)
+
+
 def sync_one_code(
     full_code: str,
     start_date: str,
@@ -1477,64 +1743,83 @@ def sync_one_code(
     source_name: str,
 ) -> str:
     csv_path = get_daily_csv_path(full_code, adjust_flag)
-    existing_df = read_existing_history(csv_path)
-    full_refresh = should_full_refresh_history(adjust_flag)
-    request_start_date = (
-        start_date
-        if full_refresh
-        else compute_incremental_start_date(existing_df, start_date)
-    )
-    if request_start_date > end_date:
-        logger.info("%s 已是最新，跳过", full_code)
-        return "skipped"
+    existing_bundle_df = read_existing_history(csv_path)
+    merged_histories: dict[str, pd.DataFrame] = {}
+    total_write_count = 0
 
-    sync_mode = "全量刷新" if full_refresh else "增量回刷"
-    logger.info(
-        "开始同步 %s, 模式=%s, 区间 %s ~ %s",
-        full_code,
-        sync_mode,
-        request_start_date,
-        end_date,
-    )
-    if full_code == CONFIG["benchmark_code"]:
-        new_df = fetch_index_history(
-            full_code=full_code,
-            start_date=request_start_date,
-            end_date=end_date,
-            adjust_flag=adjust_flag,
-            source_name=source_name,
-        )
-    else:
-        symbol = full_code.split(".", 1)[1]
-        new_df = fetch_stock_history(
-            symbol=symbol,
-            start_date=request_start_date,
-            end_date=end_date,
-            adjust_flag=adjust_flag,
-            source_name=source_name,
+    for current_adjust_flag in SUPPORTED_ADJUST_FLAGS:
+        existing_df = extract_adjusted_history(existing_bundle_df, current_adjust_flag)
+        full_refresh = should_full_refresh_history(current_adjust_flag)
+        request_start_date = (
+            start_date
+            if full_refresh
+            else compute_incremental_start_date(existing_df, start_date)
         )
 
-    if new_df.empty:
-        logger.warning("%s 没有拉到数据", full_code)
-        return "empty"
+        if request_start_date > end_date:
+            logger.info("%s %s 已是最新，跳过该口径", full_code, current_adjust_flag)
+            merged_histories[current_adjust_flag] = existing_df
+            continue
 
-    new_df = attach_ex_right_close_for_sync(
-        new_df,
-        full_code=full_code,
-        start_date=request_start_date,
-        end_date=end_date,
-        adjust_flag=adjust_flag,
-        source_name=source_name,
-        is_index=full_code == CONFIG["benchmark_code"],
-    )
+        sync_mode = "全量刷新" if full_refresh else "增量回刷"
+        logger.info(
+            "开始同步 %s %s, 模式=%s, 区间 %s ~ %s",
+            full_code,
+            current_adjust_flag,
+            sync_mode,
+            request_start_date,
+            end_date,
+        )
 
-    write_count = merge_and_save_history(
-        csv_path,
-        existing_df,
-        new_df,
-        full_refresh=full_refresh,
-    )
-    logger.info("%s 同步完成，写入 %s 条", full_code, write_count)
+        if full_code == CONFIG["benchmark_code"]:
+            new_df = fetch_index_history(
+                full_code=full_code,
+                start_date=request_start_date,
+                end_date=end_date,
+                adjust_flag=current_adjust_flag,
+                source_name=source_name,
+            )
+        else:
+            symbol = full_code.split(".", 1)[1]
+            new_df = fetch_stock_history(
+                symbol=symbol,
+                start_date=request_start_date,
+                end_date=end_date,
+                adjust_flag=current_adjust_flag,
+                source_name=source_name,
+            )
+
+        if new_df.empty:
+            if existing_df.empty:
+                logger.warning("%s %s 没有拉到数据", full_code, current_adjust_flag)
+                return "empty"
+            merged_histories[current_adjust_flag] = existing_df
+            continue
+
+        total_write_count += len(new_df)
+        merged_histories[current_adjust_flag] = merge_history_frames(
+            existing_df,
+            new_df,
+            full_refresh=full_refresh,
+        )
+
+    cq_history_df = merged_histories.get("cq", pd.DataFrame(columns=STORAGE_COLUMNS)).copy()
+    if not cq_history_df.empty:
+        cq_history_df["ex_right_close"] = pd.to_numeric(cq_history_df["close"], errors="coerce")
+        merged_histories["cq"] = cq_history_df
+        cq_ex_right_df = cq_history_df[["date", "close"]].copy()
+        for current_adjust_flag in ("qfq", "hfq"):
+            if current_adjust_flag not in merged_histories:
+                continue
+            merged_histories[current_adjust_flag] = merge_ex_right_close_by_date(
+                merged_histories[current_adjust_flag],
+                cq_ex_right_df,
+            )
+
+    unified_df = build_unified_history_df(full_code, merged_histories)
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    unified_df.to_csv(csv_path, index=False, encoding="utf-8")
+    logger.info("%s 同步完成，合并写入 %s 条", full_code, total_write_count)
     return "success"
 
 
@@ -1633,12 +1918,12 @@ def main() -> None:
     target_codes = resolve_target_codes(code_args, sync_all_sh_main, source_name)
 
     if source_name == SYNC_SOURCE_AUTO:
-        logger.info("使用 东方财富直连 -> Baostock -> Akshare -> Tushare 的优先级同步所需数据")
+        logger.info("使用 同花顺 -> 东方财富直连 -> Akshare -> Baostock -> Tushare 的优先级同步所需数据")
     else:
         logger.info("优先使用用户指定的数据源同步，失败后按固定顺序回退: %s", source_name)
     logger.info("目标代码: %s", ", ".join(target_codes))
     logger.info("同步区间: %s ~ %s", start_date, end_date)
-    logger.info("数据复权口径: %s", adjust_flag)
+    logger.info("数据写入口径: cq + qfq + hfq（当前默认回测口径: %s）", adjust_flag)
 
     total_success, total_skipped, _, failed_codes = run_sync_batch(
         target_codes,

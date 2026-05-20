@@ -7,8 +7,12 @@ from backtest.strategy_registry import StrategySpec
 from run_single_backtest_gui import (
     AI_ANALYSIS_OFF,
     AI_ANALYSIS_ON,
+    MANUAL_MENU_VALUE,
+    choose_stock_interactively,
     parse_cli_args,
+    prompt_strategy_menu,
     resolve_ai_analysis_enabled,
+    sync_manual_stock_selection,
     write_family_dashboard_report,
 )
 
@@ -30,6 +34,15 @@ def _dummy_strategy_spec(strategy_id: str, display_name: str) -> StrategySpec:
 
 
 class FamilyDashboardReportTests(unittest.TestCase):
+    def test_prompt_strategy_menu_skips_second_level_for_single_version_family(self) -> None:
+        single_spec = _dummy_strategy_spec("base_backtest", "普通双均线")
+        with patch(
+            "run_single_backtest_gui.group_strategy_specs",
+            return_value=[("普通双均线", [single_spec])],
+        ):
+            with patch("builtins.input", side_effect=["1"]):
+                self.assertEqual(prompt_strategy_menu(), "base_backtest")
+
     def test_parse_cli_args_supports_ai_flag_with_strategy_and_stock(self) -> None:
         with patch(
             "sys.argv",
@@ -46,8 +59,53 @@ class FamilyDashboardReportTests(unittest.TestCase):
         self.assertEqual(stock_code, "sz.000100")
         self.assertEqual(ai_mode, AI_ANALYSIS_OFF)
 
+    def test_sync_manual_stock_selection_syncs_required_codes(self) -> None:
+        pair_spec = StrategySpec(
+            strategy_id="pair_trade_backtest",
+            module_name="test.module",
+            display_name="配对策略",
+            brief_description="测试版本",
+            family_id="pair_trade_backtest",
+            family_display_name="配对策略",
+            version_number=1,
+            config={},
+            test_cases=[],
+            run_backtest=lambda config, df: {},
+            validate_config=lambda config: None,
+        )
+        with patch(
+            "run_single_backtest_gui.sync_single_stock_data",
+            return_value=True,
+        ) as sync_mock:
+            result = sync_manual_stock_selection(
+                pair_spec,
+                "pair_auto|sz.000725|sz.002594",
+            )
+
+        self.assertTrue(result)
+        self.assertEqual(
+            [call.args[0] for call in sync_mock.call_args_list],
+            ["sz.000725", "sz.002594"],
+        )
+
+    def test_choose_stock_interactively_manual_input_syncs_before_return(self) -> None:
+        single_spec = _dummy_strategy_spec("base_backtest", "普通双均线")
+        with patch(
+            "run_single_backtest_gui.prompt_stock_menu",
+            side_effect=[MANUAL_MENU_VALUE],
+        ):
+            with patch("builtins.input", side_effect=["000725"]):
+                with patch(
+                    "run_single_backtest_gui.sync_manual_stock_selection",
+                    return_value=True,
+                ) as sync_mock:
+                    selected = choose_stock_interactively(single_spec)
+
+        self.assertEqual(selected, "sz.000725")
+        sync_mock.assert_called_once_with(single_spec, "sz.000725")
+
     def test_resolve_ai_analysis_enabled_honors_explicit_switch(self) -> None:
-        with patch("run_single_backtest_gui.is_llm_analysis_requested", return_value=False):
+        with patch("run_single_backtest_gui.is_llm_analysis_available", return_value=False):
             self.assertTrue(resolve_ai_analysis_enabled(AI_ANALYSIS_ON))
             self.assertFalse(resolve_ai_analysis_enabled(AI_ANALYSIS_OFF))
 

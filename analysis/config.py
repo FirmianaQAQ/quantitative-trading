@@ -75,6 +75,14 @@ def is_llm_analysis_requested() -> bool:
     return _is_true(os.getenv("QT_ENABLE_LLM_ANALYSIS"))
 
 
+def is_llm_analysis_available() -> bool:
+    try:
+        settings = load_llm_analysis_settings()
+    except ValueError:
+        return False
+    return bool(settings.enabled)
+
+
 def load_llm_analysis_settings() -> LLMAnalysisSettings:
     _load_local_env_files()
     enabled = is_llm_analysis_requested()

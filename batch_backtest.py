@@ -13,7 +13,7 @@ from backtest.strategy_registry import (
 from utils.project_utils import load_daily_data
 
 
-MULTI_VERSION_FAMILY_IDS = {"simple_ma_backtest"}
+MULTI_VERSION_FAMILY_IDS: frozenset[str] = frozenset()
 
 
 def _run_single_batch_strategy(
@@ -82,16 +82,13 @@ def _run_multi_version_batch(spec_family_id: str, cash: float | None = None) -> 
 def batch_backtest(strategy_id: str | None = None, cash: float | None = None) -> None:
     """
     批量测试多只股票，每只股票单独跑一次回测。
-    strategy_id 为空时，默认跑基础版 simple_ma_backtest。
+    strategy_id 为空时，默认跑基础版 base_backtest。
     """
     spec = (
         get_strategy_spec(strategy_id)
         if strategy_id is not None
         else get_default_strategy_spec()
     )
-    if spec.family_id in MULTI_VERSION_FAMILY_IDS:
-        _run_multi_version_batch(spec.family_id, cash)
-        return
     _run_single_batch_strategy(spec.strategy_id, cash)
 
 

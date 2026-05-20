@@ -6,16 +6,16 @@ from utils.default_stocks import DEFAULT_STOCK_CODES
 
 
 SPECIALIZED_DEFAULT_CASES = [
-    ("backtest.guiguan_simple_ma_backtest", "guiguan_simple_ma_backtest", "sh.600236", "sh.600036"),
-    ("backtest.cmb_simple_ma_backtest", "cmb_simple_ma_backtest", "sh.600036", "sh.600236"),
-    ("backtest.shandong_fiberglass_simple_ma_backtest", "shandong_fiberglass_simple_ma_backtest", "sh.605006", "sh.600236"),
-    ("backtest.southern_air_simple_ma_backtest", "southern_air_simple_ma_backtest", "sh.600029", "sh.600236"),
-    ("backtest.perfect_world_simple_ma_backtest", "perfect_world_simple_ma_backtest", "sh.002624", "sh.600236"),
-    ("backtest.haier_simple_ma_backtest", "haier_simple_ma_backtest", "sh.600690", "sh.600236"),
-    ("backtest.nari_simple_ma_backtest", "nari_simple_ma_backtest", "sh.600406", "sh.600236"),
-    ("backtest.wolong_simple_ma_backtest", "wolong_simple_ma_backtest", "sh.600580", "sh.600236"),
-    ("backtest.kangguan_simple_ma_backtest", "kangguan_simple_ma_backtest", "sz.001308", "sh.600236"),
-    ("backtest.byd_simple_ma_backtest", "byd_simple_ma_backtest", "sz.002594", "sh.600236"),
+    ("backtest.extended_strategies.guiguan_simple_ma_backtest", "guiguan_simple_ma_backtest", "sh.600236", "sh.600036"),
+    ("backtest.extended_strategies.cmb_simple_ma_backtest", "cmb_simple_ma_backtest", "sh.600036", "sh.600236"),
+    ("backtest.extended_strategies.shandong_fiberglass_simple_ma_backtest", "shandong_fiberglass_simple_ma_backtest", "sh.605006", "sh.600236"),
+    ("backtest.extended_strategies.southern_air_simple_ma_backtest", "southern_air_simple_ma_backtest", "sh.600029", "sh.600236"),
+    ("backtest.extended_strategies.perfect_world_simple_ma_backtest", "perfect_world_simple_ma_backtest", "sh.002624", "sh.600236"),
+    ("backtest.extended_strategies.haier_simple_ma_backtest", "haier_simple_ma_backtest", "sh.600690", "sh.600236"),
+    ("backtest.extended_strategies.nari_simple_ma_backtest", "nari_simple_ma_backtest", "sh.600406", "sh.600236"),
+    ("backtest.extended_strategies.wolong_simple_ma_backtest", "wolong_simple_ma_backtest", "sh.600580", "sh.600236"),
+    ("backtest.extended_strategies.kangguan_simple_ma_backtest", "kangguan_simple_ma_backtest", "sz.001308", "sh.600236"),
+    ("backtest.extended_strategies.byd_simple_ma_backtest", "byd_simple_ma_backtest", "sz.002594", "sh.600236"),
 ]
 
 

@@ -20,7 +20,7 @@ BACK_MENU_VALUE = "__back__"
 EXIT_ALL_MENU_VALUE = "__exit_all__"
 FULL_EXIT_CODE = 86
 DEFAULT_CASH = 100000.0
-MULTI_VERSION_FAMILY_IDS = {"simple_ma_backtest"}
+MULTI_VERSION_FAMILY_IDS: frozenset[str] = frozenset()
 
 
 def parse_cash_input(raw_value: str) -> float:
