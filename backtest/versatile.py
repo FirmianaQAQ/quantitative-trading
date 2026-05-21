@@ -107,6 +107,8 @@ CONFIG: dict[str, Any] = {
     "buy_trigger_window": 10,
     "buy_rise_window": 6,
     "buy_rise_days_required": 3,
+    # 买入封顶区间位置：达到区间高位后不追高
+    "buy_limit_position_pct": 0.90,
     # 卖出阈值略收紧，减少震荡利润回吐
     "sell_trigger_multiplier": 0.90,
     "stop_loss_pct": 0.12,

@@ -110,7 +110,9 @@ CONFIG: dict[str, Any] = {
     "buy_rise_window": 7,
     # 连续观察窗口内至少多少个上涨日才买入
     "buy_rise_days_required": 3,
-    # 卖出阈值的加权值
+    # 买入封顶：价格位于 recent_low~recent_high 区间的百分位达到该值后不再追高买入
+    "buy_limit_position_pct": 0.9,
+    # 卖出触发阈值的加权值（仅用于卖出）
     "sell_trigger_multiplier": 0.9,
     # 相对买入价的止损跌幅，例如 0.1 表示跌 10% 止损
     "stop_loss_pct": 0.5,
@@ -1007,12 +1009,18 @@ class SimpleMovingAverageStrategy(HStrategy):
             # 最近的最低价
             lowest_price = self.get_now_minmax_price(False) or lowest_price_previous
 
-            # 计算买入价封顶价格时，采用区间百分比的方法。
-            buy_limit = (highest_price_previous - lowest_price) * float(
-                self.param.get("sell_trigger_multiplier")
-            ) + lowest_price
+            # 计算买入价封顶价格时，采用区间百分位的方法：
+            # buy_limit = low + (high - low) * k，k 越大越容易追高买入。
+            buy_limit_position_pct = float(self.param.get("buy_limit_position_pct", 0.9))
+            buy_limit = (highest_price_previous - lowest_price) * buy_limit_position_pct + lowest_price
             if current_close >= buy_limit:
-                self.log(f"价格接近上周期最高价 {highest_price_previous:.2f}，不买了")
+                self.log(
+                    f"价格已到区间高位，放弃追高"
+                    f" 收盘价={current_close:.2f}"
+                    f" 区间=[{lowest_price:.2f},{highest_price_previous:.2f}]"
+                    f" 阈值位置={buy_limit_position_pct:.2f}"
+                    f" 封顶价={buy_limit:.2f}"
+                )
                 return
 
             rise_window = int(self.param.get("buy_rise_window"))
@@ -1080,7 +1088,9 @@ class SimpleMovingAverageStrategy(HStrategy):
                             f" 计划数量={size}"
                             f" 当前现金={self.broker.getcash():.2f}"
                             f" 上一个最低价={lowest_price_previous:.2f}"
-                            f" 买入价不高于 {highest_price_previous:.2f} * {float(self.param.get('sell_trigger_multiplier')):.1f} = {buy_limit:.2f}"
+                            f" 买入封顶价={buy_limit:.2f}"
+                            f" 区间=[{lowest_price:.2f},{highest_price_previous:.2f}]"
+                            f" 阈值位置={buy_limit_position_pct:.2f}"
                         )
                         self.reset_buy_setup()
                         return
@@ -1095,7 +1105,9 @@ class SimpleMovingAverageStrategy(HStrategy):
                         f" 下单数量={size}"
                         f" 当前现金={self.broker.getcash():.2f}"
                         f" 上一个最低价={lowest_price_previous:.2f}"
-                        f" 买入价不高于 {highest_price_previous:.2f} * {float(self.param.get('sell_trigger_multiplier')):.1f} = {buy_limit:.2f}"
+                        f" 买入封顶价={buy_limit:.2f}"
+                        f" 区间=[{lowest_price:.2f},{highest_price_previous:.2f}]"
+                        f" 阈值位置={buy_limit_position_pct:.2f}"
                     )
                     self.order = self.buy(size=size)
                     self.reset_buy_setup()
@@ -1121,7 +1133,7 @@ class SimpleMovingAverageStrategy(HStrategy):
             if self.buy_trigger_days_seen >= int(self.param.get("buy_trigger_window")):
                 self.log(
                     f"买入观察窗口到期，未出现窗口内金叉，或未满足"
-                    f"价格<Y*{float(self.param.get('sell_trigger_multiplier')):.1f}且"
+                    f"价格未触及可接受区间({float(self.param.get('buy_limit_position_pct', 0.9)):.2f})且"
                     f"{rise_window}日{rise_days_required}涨，放弃本次买入"
                 )
                 self.reset_buy_setup()
@@ -1505,6 +1517,10 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("buy_rise_days_required 必须大于 0")
     if int(config["buy_rise_days_required"]) > int(config["buy_rise_window"]):
         raise ValueError("buy_rise_days_required 不能大于 buy_rise_window")
+    if float(config.get("buy_limit_position_pct", 0.9)) <= 0 or float(
+        config.get("buy_limit_position_pct", 0.9)
+    ) >= 1:
+        raise ValueError("buy_limit_position_pct 必须大于 0 且小于 1")
     if float(config["sell_trigger_multiplier"]) <= 0:
         raise ValueError("sell_trigger_multiplier 必须大于 0")
     if float(config["stop_loss_pct"]) < 0 or float(config["stop_loss_pct"]) >= 1:

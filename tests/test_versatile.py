@@ -12,6 +12,7 @@ class VersatileConfigTests(unittest.TestCase):
 
     def test_atr_exit_period_cannot_exceed_breakout_period(self):
         config = copy.deepcopy(versatile.CONFIG)
+        config["patches"] = ["atr"]
         config["atr_breakout_period"] = 5
         config["atr_exit_period"] = 6
 
@@ -22,10 +23,20 @@ class VersatileConfigTests(unittest.TestCase):
 
     def test_atr_risk_pct_must_be_between_zero_and_one(self):
         config = copy.deepcopy(versatile.CONFIG)
+        config["patches"] = ["atr"]
         config["atr_risk_pct"] = 1
 
         with self.assertRaisesRegex(
             ValueError, "atr_risk_pct 必须大于 0 且小于 1"
+        ):
+            versatile.validate_config(config)
+
+    def test_buy_limit_position_pct_must_be_between_zero_and_one(self):
+        config = copy.deepcopy(versatile.CONFIG)
+        config["buy_limit_position_pct"] = 1
+
+        with self.assertRaisesRegex(
+            ValueError, "buy_limit_position_pct 必须大于 0 且小于 1"
         ):
             versatile.validate_config(config)
 
