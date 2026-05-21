@@ -971,6 +971,44 @@ def evaluate_stock_for_recommendation(
         return None
 
 
+def _recommendation_rank_key(item: tuple[str, str, dict]) -> tuple[float, float, float]:
+    summary = item[2]
+    annual_return = summary["annual_return_pct"]
+    sharpe_ratio = (
+        summary["sharpe_ratio"]
+        if summary["sharpe_ratio"] is not None
+        else float("-inf")
+    )
+    max_drawdown = (
+        summary["max_drawdown_pct"]
+        if summary["max_drawdown_pct"] is not None
+        else float("inf")
+    )
+    return (
+        annual_return,
+        sharpe_ratio,
+        -max_drawdown,
+    )
+
+
+def aggregate_recommendation_results_by_code(
+    ranked_results: list[tuple[str, str, dict]],
+) -> list[tuple[str, str, dict]]:
+    best_result_by_code: dict[str, tuple[str, str, dict]] = {}
+    for item in ranked_results:
+        code = item[0]
+        current_best = best_result_by_code.get(code)
+        if current_best is None or _recommendation_rank_key(item) > _recommendation_rank_key(
+            current_best
+        ):
+            best_result_by_code[code] = item
+    return sorted(
+        best_result_by_code.values(),
+        key=_recommendation_rank_key,
+        reverse=True,
+    )
+
+
 def choose_recommended_stock(spec: StrategySpec) -> tuple[str, str] | None:
     candidate_items = build_recommendation_candidates(spec)
     if not candidate_items:
@@ -990,15 +1028,11 @@ def choose_recommended_stock(spec: StrategySpec) -> tuple[str, str] | None:
         print("系统推荐失败，当前没有可用的回测结果")
         return None
 
-    ranked_results.sort(
-        key=lambda item: (
-            item[2]["annual_return_pct"],
-            item[2]["sharpe_ratio"] if item[2]["sharpe_ratio"] is not None else float("-inf"),
-            -(item[2]["max_drawdown_pct"] if item[2]["max_drawdown_pct"] is not None else float("inf")),
-        ),
-        reverse=True,
-    )
-    top_results = ranked_results[:5]
+    ranked_results.sort(key=_recommendation_rank_key, reverse=True)
+    if spec.family_id == "pair_trade_backtest":
+        top_results = ranked_results[:5]
+    else:
+        top_results = aggregate_recommendation_results_by_code(ranked_results)[:5]
 
     while True:
         print()
@@ -1017,7 +1051,12 @@ def choose_recommended_stock(spec: StrategySpec) -> tuple[str, str] | None:
             )
             print(
                 f"  {index}. {code}  {get_display_label(spec, code)}  "
-                f"[{adjust_flag}]  年化={annual_text}  回撤={drawdown_text}  夏普={sharpe_text}"
+                + (
+                    f"[{adjust_flag}]  "
+                    if spec.family_id == "pair_trade_backtest"
+                    else ""
+                )
+                + f"年化={annual_text}  回撤={drawdown_text}  夏普={sharpe_text}"
             )
         print("  b. 返回上一级")
         print("  q. 退出")

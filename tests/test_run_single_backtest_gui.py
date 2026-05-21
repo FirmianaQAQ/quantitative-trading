@@ -9,6 +9,7 @@ from run_single_backtest_gui import (
     AI_ANALYSIS_OFF,
     AI_ANALYSIS_ON,
     MANUAL_MENU_VALUE,
+    aggregate_recommendation_results_by_code,
     choose_stock_interactively,
     parse_cli_args,
     prompt_strategy_menu,
@@ -156,6 +157,44 @@ class FamilyDashboardReportTests(unittest.TestCase):
 
         if dashboard_path.exists():
             dashboard_path.unlink()
+
+    def test_aggregate_recommendation_results_by_code_keeps_best_adjust_flag_only(self) -> None:
+        ranked_results = [
+            (
+                "sz.000725",
+                "hfq",
+                {
+                    "annual_return_pct": 18.0,
+                    "sharpe_ratio": 1.1,
+                    "max_drawdown_pct": 12.0,
+                },
+            ),
+            (
+                "sz.000725",
+                "qfq",
+                {
+                    "annual_return_pct": 22.0,
+                    "sharpe_ratio": 1.3,
+                    "max_drawdown_pct": 10.0,
+                },
+            ),
+            (
+                "sh.600580",
+                "cq",
+                {
+                    "annual_return_pct": 20.0,
+                    "sharpe_ratio": 1.2,
+                    "max_drawdown_pct": 9.0,
+                },
+            ),
+        ]
+
+        aggregated = aggregate_recommendation_results_by_code(ranked_results)
+
+        self.assertEqual(len(aggregated), 2)
+        self.assertEqual(aggregated[0][0], "sz.000725")
+        self.assertEqual(aggregated[0][1], "qfq")
+        self.assertEqual(aggregated[1][0], "sh.600580")
 
 
 if __name__ == "__main__":
