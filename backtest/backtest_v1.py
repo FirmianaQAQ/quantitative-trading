@@ -1524,15 +1524,18 @@ def compute_optimization_score(summary: dict[str, Any], config: dict[str, Any]) 
     annual_return_pct = float(summary.get("annual_return_pct") or 0.0)
     max_drawdown_pct = float(summary.get("max_drawdown_pct") or 0.0)
     sharpe_ratio = float(summary.get("sharpe_ratio") or 0.0)
+    trades_total = float(summary.get("trades_total") or 0.0)
 
     annual_weight = float(config.get("opt_score_annual_weight", 1.0))
     drawdown_weight = float(config.get("opt_score_drawdown_weight", 1.0))
     sharpe_weight = float(config.get("opt_score_sharpe_weight", 10.0))
+    trade_penalty_weight = float(config.get("opt_score_trade_penalty_weight", 0.0))
 
     return (
         annual_return_pct * annual_weight
         - max_drawdown_pct * drawdown_weight
         + sharpe_ratio * sharpe_weight
+        - trades_total * trade_penalty_weight
     )
 
 
@@ -1578,6 +1581,11 @@ def validate_config(config: dict[str, Any]) -> None:
                 config["opt_buy_limit_position_pct"],
                 "opt_buy_limit_position_pct",
             )
+        if config.get("opt_protect_profit_floor_pct"):
+            parse_decimal_range(
+                config["opt_protect_profit_floor_pct"],
+                "opt_protect_profit_floor_pct",
+            )
         if config.get("opt_sell_trigger_multiplier"):
             parse_decimal_range(
                 config["opt_sell_trigger_multiplier"],
@@ -1587,6 +1595,8 @@ def validate_config(config: dict[str, Any]) -> None:
             raise ValueError("参数优化模式下不支持 plot=True")
         if config["top"] <= 0:
             raise ValueError("top 必须大于 0")
+        if float(config.get("opt_score_trade_penalty_weight", 0.0)) < 0:
+            raise ValueError("opt_score_trade_penalty_weight 不能小于 0")
         return
 
     if config["fast"] <= 0 or config["slow"] <= 0:
@@ -1647,6 +1657,9 @@ def _execute_backtest_once(
             "slow_period": strategy.params.slow_period,
             "buy_limit_position_pct": float(config.get("buy_limit_position_pct", 0.9)),
             "sell_trigger_multiplier": float(config.get("sell_trigger_multiplier", 0.9)),
+            "protect_profit_floor_pct": float(
+                config.get("protect_profit_floor_pct", 0.02)
+            ),
         }
     )
     return strategy, summary
@@ -1669,6 +1682,14 @@ def run_optimization(config: dict[str, Any], df: pd.DataFrame) -> None:
         if config.get("opt_buy_limit_position_pct")
         else [float(config.get("buy_limit_position_pct", 0.9))]
     )
+    protect_profit_floor_values = (
+        parse_decimal_range(
+            config["opt_protect_profit_floor_pct"],
+            "opt_protect_profit_floor_pct",
+        )
+        if config.get("opt_protect_profit_floor_pct")
+        else [float(config.get("protect_profit_floor_pct", 0.02))]
+    )
     sell_trigger_multiplier_values = (
         parse_decimal_range(
             config["opt_sell_trigger_multiplier"],
@@ -1682,17 +1703,19 @@ def run_optimization(config: dict[str, Any], df: pd.DataFrame) -> None:
             fast_period,
             slow_period,
             buy_limit_position_pct,
+            protect_profit_floor_pct,
             sell_trigger_multiplier,
         )
         for fast_period in fast_range
         for slow_period in slow_range
         for buy_limit_position_pct in buy_limit_position_values
+        for protect_profit_floor_pct in protect_profit_floor_values
         for sell_trigger_multiplier in sell_trigger_multiplier_values
         if fast_period < slow_period
     ]
     if not combinations:
         raise ValueError(
-            "没有可用的参数组合，请检查 opt_fast、opt_slow、opt_buy_limit_position_pct 和 opt_sell_trigger_multiplier"
+            "没有可用的参数组合，请检查 opt_fast、opt_slow、opt_buy_limit_position_pct、opt_protect_profit_floor_pct 和 opt_sell_trigger_multiplier"
         )
 
     print(f"开始参数优化: 股票={config['code']}，参数组合数={len(combinations)}")
@@ -1702,6 +1725,7 @@ def run_optimization(config: dict[str, Any], df: pd.DataFrame) -> None:
         fast_period,
         slow_period,
         buy_limit_position_pct,
+        protect_profit_floor_pct,
         sell_trigger_multiplier,
     ) in combinations:
         loop_config = copy.deepcopy(config)
@@ -1710,6 +1734,7 @@ def run_optimization(config: dict[str, Any], df: pd.DataFrame) -> None:
                 "fast": fast_period,
                 "slow": slow_period,
                 "buy_limit_position_pct": buy_limit_position_pct,
+                "protect_profit_floor_pct": protect_profit_floor_pct,
                 "sell_trigger_multiplier": sell_trigger_multiplier,
                 "plot": False,
                 "print_log": False,
@@ -1756,6 +1781,7 @@ def run_optimization(config: dict[str, Any], df: pd.DataFrame) -> None:
         print(
             f"{index}. 快线={item['fast_period']}, 慢线={item['slow_period']}, "
             f"买入封顶位置={item.get('buy_limit_position_pct', 0.0):.2f}, "
+            f"利润保底线={item.get('protect_profit_floor_pct', 0.0):.2f}, "
             f"卖出触发系数={item.get('sell_trigger_multiplier', 0.0):.2f}, "
             f"综合评分={score_text}, "
             f"年化收益率={annual_text}, "

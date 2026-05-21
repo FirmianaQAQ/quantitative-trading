@@ -46,6 +46,7 @@ class VersatileConfigTests(unittest.TestCase):
         config["optimize"] = True
         config["plot"] = False
         config["opt_buy_limit_position_pct"] = "0.75:0.95:0.05"
+        config["opt_protect_profit_floor_pct"] = "0.02:0.05:0.01"
         config["opt_sell_trigger_multiplier"] = "0.80:0.95:0.05"
 
         versatile.validate_config(config)
@@ -71,6 +72,27 @@ class VersatileConfigTests(unittest.TestCase):
         self.assertGreater(
             compute_optimization_score(better, config),
             compute_optimization_score(worse, config),
+        )
+
+    def test_compute_optimization_score_penalizes_overtrading(self):
+        config = copy.deepcopy(versatile.CONFIG)
+        config["opt_score_trade_penalty_weight"] = 0.1
+        calmer = {
+            "annual_return_pct": 10.0,
+            "max_drawdown_pct": 4.0,
+            "sharpe_ratio": 0.8,
+            "trades_total": 8,
+        }
+        noisier = {
+            "annual_return_pct": 10.0,
+            "max_drawdown_pct": 4.0,
+            "sharpe_ratio": 0.8,
+            "trades_total": 18,
+        }
+
+        self.assertGreater(
+            compute_optimization_score(calmer, config),
+            compute_optimization_score(noisier, config),
         )
 
 

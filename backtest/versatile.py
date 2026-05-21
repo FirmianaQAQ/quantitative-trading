@@ -18,7 +18,7 @@ Versatile回测使用说明
       - 设置 code、from_date、to_date、fast、slow 等参数
   3. 优化回测参数时：
       - 把 CONFIG["optimize"] 设为 True  
-      - 设置 optimize_params 里的 opt_fast、opt_slow、opt_buy_limit_position_pct、opt_sell_trigger_multiplier 等参数范围
+      - 设置 optimize_params 里的 opt_fast、opt_slow、opt_buy_limit_position_pct、opt_protect_profit_floor_pct、opt_sell_trigger_multiplier 等参数范围
       - 整数参数格式为 start:end:step，例如 5:20:5
       - 小数参数格式同样支持 start:end:step，例如 0.75:0.95:0.05
   4. 运行方式：
@@ -26,7 +26,7 @@ Versatile回测使用说明
   5. 常用参数：
       - code: 股票代码，例如 sh.000001
       - optimize: 是否进行参数优化，例如 True 或 False
-      - optimize_params: 参数优化的范围，例如 {"opt_fast": "5:20:5", "opt_slow": "20:50:10", "opt_buy_limit_position_pct": "0.75:0.95:0.05", "opt_sell_trigger_multiplier": "0.80:0.95:0.05"}  
+      - optimize_params: 参数优化的范围，例如 {"opt_fast": "5:20:5", "opt_slow": "20:50:10", "opt_buy_limit_position_pct": "0.75:0.95:0.05", "opt_protect_profit_floor_pct": "0.02:0.05:0.01", "opt_sell_trigger_multiplier": "0.80:0.95:0.05"}  
       - adjust_flag: 复权类型，例如 cq、qfq、hfq、dypre
       - from_date/to_date: 回测时间范围，格式 YYYY-MM-DD
       - cash: 初始资金
@@ -43,10 +43,12 @@ Versatile回测使用说明
       - slow: 慢速移动平均线周期，例如 20
       - opt_fast/opt_slow: 均线参数优化范围
       - opt_buy_limit_position_pct: 买入封顶区间位置优化范围
+      - opt_protect_profit_floor_pct: 利润保底线优化范围
       - opt_sell_trigger_multiplier: 卖出触发系数优化范围
       - opt_score_annual_weight: 综合评分中年化收益的权重
       - opt_score_drawdown_weight: 综合评分中最大回撤的扣分权重
       - opt_score_sharpe_weight: 综合评分中夏普比率的加分权重
+      - opt_score_trade_penalty_weight: 综合评分中交易次数的扣分权重
       - top: 参数优化结果显示前几名
   6. 输出指标包括：
       - 总收益率、年化收益率、最大回撤、最大回撤金额、夏普比率
@@ -217,6 +219,8 @@ CONFIG: dict[str, Any] = {
     "opt_fast": "8:21:1",
     # 优化时的买入封顶区间位置范围，小数参数同样支持 start:end:step。
     "opt_buy_limit_position_pct": "0.75:0.95:0.05",
+    # 优化时的利润保底线范围，小数参数同样支持 start:end:step。
+    "opt_protect_profit_floor_pct": "0.02:0.05:0.01",
     # 优化时的卖出触发系数范围，小数参数同样支持 start:end:step。
     "opt_sell_trigger_multiplier": "0.80:0.95:0.05",
     # 优化时的慢线取值范围，格式 start:end:step。
@@ -227,6 +231,8 @@ CONFIG: dict[str, Any] = {
     "opt_score_drawdown_weight": 1.0,
     # 综合评分：夏普比率加分权重。
     "opt_score_sharpe_weight": 10.0,
+    # 综合评分：交易次数扣分权重。越大越不鼓励高频交易。
+    "opt_score_trade_penalty_weight": 0.05,
     # 优化结果展示前几名。
     "top": 10,
 }
