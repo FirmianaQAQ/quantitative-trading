@@ -122,7 +122,10 @@ from utils.project_utils import load_daily_data
 # 7. 震荡市实战建议：
 #    - 先从 buy_limit_position_pct、sell_trigger_multiplier、fast/slow 开始
 #    - 不要一口气同时改 5 个以上参数，否则很难判断到底是谁起作用
-CONFIG: dict[str, Any] = {
+# 8. 预设使用方法：
+#    - 直接修改 ACTIVE_CONFIG_PRESET 为 conservative / balanced / aggressive
+#    - 如需在预设基础上小改，只改 PRESET_OVERRIDES，不要直接散改整段参数
+BASE_CONFIG: dict[str, Any] = {
     # 默认主标的代码。改这里会同时影响回测、同步数据和默认测试样本的首位。
     "code": DEFAULT_PRIMARY_STOCK_CODE,
     # 复权口径。dypre 表示信号用前复权、成交与持仓估值用不复权。
@@ -236,6 +239,118 @@ CONFIG: dict[str, Any] = {
     # 优化结果展示前几名。
     "top": 10,
 }
+
+
+CONFIG_PRESETS: dict[str, dict[str, Any]] = {
+    # 保守震荡版：少出手、少追高、止盈止损都更快，适合先求稳再求收益。
+    "conservative": {
+        "strategy_brief": "保守震荡版",
+        "buy_cash_ratio": 0.18,
+        "buy_trigger_multiplier": 1.01,
+        "buy_trigger_window": 8,
+        "buy_rise_window": 7,
+        "buy_rise_days_required": 4,
+        "buy_limit_position_pct": 0.82,
+        "sell_trigger_multiplier": 0.84,
+        "stop_loss_pct": 0.08,
+        "protect_profit_floor_pct": 0.02,
+        "underwater_take_profit_pct": 0.04,
+        "above_water_take_profit_pct": 0.12,
+        "fast": 15,
+        "slow": 169,
+        "atr_breakout_period": 6,
+        "atr_exit_period": 4,
+        "atr_risk_pct": 0.02,
+        "atr_max_units": 1,
+        "atr_add_unit_atr": 1.0,
+        "atr_stop_atr_multiplier": 1.2,
+        "atr_stop_loss_pct": 0.08,
+    },
+    # 均衡版：当前默认建议，适合大多数震荡市样本，强调风险收益平衡。
+    "balanced": {
+        "strategy_brief": "均衡震荡版",
+        "buy_cash_ratio": 0.25,
+        "buy_trigger_multiplier": 1.02,
+        "buy_trigger_window": 10,
+        "buy_rise_window": 6,
+        "buy_rise_days_required": 3,
+        "buy_limit_position_pct": 0.90,
+        "sell_trigger_multiplier": 0.90,
+        "stop_loss_pct": 0.12,
+        "protect_profit_floor_pct": 0.03,
+        "underwater_take_profit_pct": 0.06,
+        "above_water_take_profit_pct": 0.16,
+        "fast": 13,
+        "slow": 144,
+        "atr_breakout_period": 5,
+        "atr_exit_period": 5,
+        "atr_risk_pct": 0.03,
+        "atr_max_units": 2,
+        "atr_add_unit_atr": 0.8,
+        "atr_stop_atr_multiplier": 1.5,
+        "atr_stop_loss_pct": 0.12,
+    },
+    # 激进抢反弹版：更早出手、更高仓位、更能容忍波动，适合强势反弹阶段。
+    "aggressive": {
+        "strategy_brief": "激进抢反弹版",
+        "buy_cash_ratio": 0.35,
+        "buy_trigger_multiplier": 1.04,
+        "buy_trigger_window": 12,
+        "buy_rise_window": 5,
+        "buy_rise_days_required": 2,
+        "buy_limit_position_pct": 0.96,
+        "sell_trigger_multiplier": 0.95,
+        "stop_loss_pct": 0.16,
+        "protect_profit_floor_pct": 0.05,
+        "underwater_take_profit_pct": 0.08,
+        "above_water_take_profit_pct": 0.22,
+        "fast": 8,
+        "slow": 89,
+        "atr_breakout_period": 4,
+        "atr_exit_period": 4,
+        "atr_risk_pct": 0.04,
+        "atr_max_units": 3,
+        "atr_add_unit_atr": 0.6,
+        "atr_stop_atr_multiplier": 2.0,
+        "atr_stop_loss_pct": 0.16,
+    },
+}
+
+# 当前启用的预设：
+# - conservative: 更稳、更少交易
+# - balanced: 默认推荐
+# - aggressive: 更积极抢反弹
+ACTIVE_CONFIG_PRESET = "aggressive"
+
+# 预设覆盖项：只放“想在当前预设基础上额外修改”的参数。
+# 例如：
+# PRESET_OVERRIDES = {
+#     "code": "sz.000725",
+#     "from_date": "2022-01-01",
+#     "plot": False,
+# }
+PRESET_OVERRIDES: dict[str, Any] = {}
+
+
+def build_config_from_preset(
+    preset_name: str,
+    overrides: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    normalized_name = str(preset_name or "").strip().lower()
+    if normalized_name not in CONFIG_PRESETS:
+        choices_text = ", ".join(sorted(CONFIG_PRESETS))
+        raise ValueError(f"未知预设: {preset_name}，可选值: {choices_text}")
+    return {
+        **BASE_CONFIG,
+        **CONFIG_PRESETS[normalized_name],
+        **(overrides or {}),
+    }
+
+
+CONFIG: dict[str, Any] = build_config_from_preset(
+    ACTIVE_CONFIG_PRESET,
+    PRESET_OVERRIDES,
+)
 
 STRATEGY_ID = DEFAULT_BASE_STRATEGY_ID
 
