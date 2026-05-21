@@ -54,6 +54,96 @@ Versatile回测使用说明
       - 在回测过程中，注意风险管理，设置合理的止损和止盈水平，避免过度交易和情绪化决策
       - 可以参考/backtest/backtest_v1.py的参数配置、数据字段读取及回测逻辑，但是不要直接使用，结合Versatile回测的特点，进行策略开发和测试
       - 在回测结束后，仔细分析回测结果，识别策略的优势和不足，持续优化策略，适应不断变化的市场环境
-
+策略实现
+  - Versatile回测的核心策略是基于均线交叉的趋势跟踪策略，结合震荡市场的特点，调整了参数和逻辑，使其更适合在震荡市场中生存和盈利。
+  - 主要的策略逻辑包括：
+      1. 买入条件：当快速均线（例如 13 日）上穿慢速均线（例如 144 日）时，且满足震荡市场的特定条件（例如价格在一定范围内波动，或者近期没有明显的趋势），则触发买入信号。
+      2. 卖出条件：当快速均线下穿慢速均线时，或者价格跌破某个止损水平，或者达到某个止盈水平时，触发卖出信号。
+      3. 震荡市场的特定条件：可以根据价格的波动范围、近期的价格行为、技术指标的状态等因素来判断当前是否处于震荡市场，并调整买入和卖出的条件，使策略更适合在震荡市场中运行。
+  - 通过调整均线的周期、买入和卖出的条件，以及震荡市场的判断逻辑，Versatile回测能够帮助交易者找到适合震荡市场的交易策略，实现稳定的盈利。
+  - 在策略实现过程中，建议结合补丁中的示例代码，开发适合震荡市场的交易策略，优化参数，提升交易绩效。同时，在回测过程中，注意风险管理，设置合理的止损和止盈水平，避免过度交易和情绪化决策。 
 """
 
+from __future__ import annotations
+
+from typing import Any
+
+from backtest.backtest_v1 import (
+    main as run_main,
+    run_backtest,
+    run_optimization,
+    validate_config,
+)
+from utils.default_stocks import (
+    DEFAULT_BASE_STRATEGY_ID,
+    DEFAULT_BASE_STRATEGY_NAME,
+    DEFAULT_PRIMARY_STOCK_CODE,
+    build_default_stock_test_cases,
+)
+
+
+CONFIG: dict[str, Any] = {
+    # 股票代码，例如 sh.000001 或 sz.000725
+    "code": DEFAULT_PRIMARY_STOCK_CODE,
+    # Versatile 默认使用动态前复权，信号更平滑，适合震荡区间观察结构变化
+    "adjust_flag": "dypre",
+    # 回测时间范围
+    "from_date": "2020-01-01",
+    "to_date": None,
+    # 给慢线预留足够预热区间，避免震荡识别刚启动时失真
+    "data_from_date": "2019-01-01",
+    # 初始资金和 A 股费用模型
+    "cash": 100000.0,
+    "commission": 0.0000854,
+    "stamp_duty": 0,
+    "transfer_fee": 0,
+    "min_commission": 5.0,
+    # 震荡市默认更保守，留更多现金给二次确认
+    "buy_cash_ratio": 0.25,
+    "buy_price_buffer": 1.015,
+    "lot_size": 100,
+    # 买入观察窗口：更早关注低位，但要求更明确的回暖确认
+    "buy_trigger_multiplier": 1.03,
+    "buy_trigger_window": 10,
+    "buy_rise_window": 6,
+    "buy_rise_days_required": 3,
+    # 卖出阈值略收紧，减少震荡利润回吐
+    "sell_trigger_multiplier": 0.86,
+    "stop_loss_pct": 0.12,
+    "protect_profit_floor_pct": 0.03,
+    "underwater_take_profit_pct": 0.06,
+    "above_water_take_profit_pct": 0.16,
+    "print_log": True,
+    # 均线参数偏向震荡市，不再默认使用极慢的年线组合
+    "fast": 13,
+    "slow": 144,
+    "plot": True,
+    "benchmark_code": "sh.000001",
+    "report_dir": "logs/backtest",
+    "report_name": "base_backtest",
+    "strategy_name": DEFAULT_BASE_STRATEGY_NAME,
+    "strategy_brief": "震荡适配版",
+    "current_position": "auto",
+    "enable_llm_analysis": False,
+    # 默认启用 dypre 补丁做运行态校验，避免动态前复权数据异常静默通过
+    "patches": ["dypre", "atr"],
+    "patch_strict": False,
+    # 参数优化开关及范围
+    "optimize": False,
+    "opt_fast": "8:21:1",
+    "opt_slow": "89:233:8",
+    "top": 10,
+}
+
+STRATEGY_ID = DEFAULT_BASE_STRATEGY_ID
+
+# 测试用例跟随全局默认股票池；以后只维护 default_stocks 即可。
+TEST_CASES = build_default_stock_test_cases()
+
+
+def main(config: dict[str, Any]) -> None:
+    run_main(config)
+
+
+if __name__ == "__main__":
+    main(CONFIG)

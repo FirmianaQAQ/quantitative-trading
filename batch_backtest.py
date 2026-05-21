@@ -85,7 +85,8 @@ def _run_multi_version_batch(spec_family_id: str, cash: float | None = None) -> 
 def batch_backtest(strategy_id: str | None = None, cash: float | None = None) -> None:
     """
     批量测试多只股票，每只股票单独跑一次回测。
-    strategy_id 为空时，默认跑基础版 base_backtest。
+    strategy_id 为空时，默认跑当前默认基础策略。
+    默认策略 ID 由 utils/default_stocks.py 里的 DEFAULT_BASE_STRATEGY_ID 控制。
     """
     spec = (
         get_strategy_spec(strategy_id)

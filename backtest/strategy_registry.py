@@ -8,7 +8,12 @@ from types import ModuleType
 from typing import Any, Callable
 import re
 
-from utils.default_stocks import DEFAULT_BASE_STRATEGY_NAME
+from utils.default_stocks import (
+    DEFAULT_BASE_STRATEGY_FILE_STEM,
+    DEFAULT_BASE_STRATEGY_ID,
+    DEFAULT_BASE_STRATEGY_MODULE_NAME,
+    DEFAULT_BASE_STRATEGY_NAME,
+)
 
 
 @dataclass(frozen=True)
@@ -27,7 +32,7 @@ class StrategySpec:
 
 
 STRATEGY_FAMILY_DISPLAY_NAMES = {
-    "base_backtest": DEFAULT_BASE_STRATEGY_NAME,
+    DEFAULT_BASE_STRATEGY_ID: DEFAULT_BASE_STRATEGY_NAME,
     "pair_trade_backtest": "统计套利配对交易",
     "rotation_backtest": "多因子轮动策略",
     "cta_event_backtest": "CTA策略",
@@ -35,7 +40,7 @@ STRATEGY_FAMILY_DISPLAY_NAMES = {
     "asset_allocation_backtest": "大类资产配置",
 }
 STRATEGY_FAMILY_ORDER = {
-    "base_backtest": 0,
+    DEFAULT_BASE_STRATEGY_ID: 0,
     "pair_trade_backtest": 1,
     "rotation_backtest": 2,
     "cta_event_backtest": 3,
@@ -50,7 +55,7 @@ STRATEGY_FAMILY_ORDER = {
 STRATEGY_ID_WHITELIST: frozenset[str] = frozenset()
 STRATEGY_FAMILY_WHITELIST: frozenset[str] = frozenset(
     {
-        "base_backtest",
+        DEFAULT_BASE_STRATEGY_ID,
     }
 )
 
@@ -67,9 +72,18 @@ def _iter_candidate_strategy_modules() -> list[tuple[str, str]]:
             continue
         if "__pycache__" in path.parts:
             continue
-        if path.stem not in {"base_backtest", "backtest_v1"} and "_backtest" not in path.stem:
-            continue
         module_name = ".".join(path.relative_to(backtest_dir.parent).with_suffix("").parts)
+        is_configured_default_source = (
+            path.stem == DEFAULT_BASE_STRATEGY_FILE_STEM
+            and module_name == DEFAULT_BASE_STRATEGY_MODULE_NAME
+        )
+        if is_configured_default_source:
+            candidates.append((path.stem, module_name))
+            continue
+        if path.stem in {"base_backtest", "backtest_v1"}:
+            continue
+        if "_backtest" not in path.stem:
+            continue
         candidates.append((path.stem, module_name))
     return sorted(candidates, key=lambda item: (item[0], item[1]))
 
@@ -159,7 +173,7 @@ def get_strategy_spec(strategy_id: str) -> StrategySpec:
 def get_default_strategy_spec() -> StrategySpec:
     specs = list_strategy_specs()
     for spec in specs:
-        if spec.strategy_id == "base_backtest":
+        if spec.strategy_id == DEFAULT_BASE_STRATEGY_ID:
             return spec
     return specs[0]
 
