@@ -88,7 +88,7 @@ from utils.default_stocks import (
     DEFAULT_PRIMARY_STOCK_CODE,
     build_default_stock_test_cases,
 )
-from utils.project_utils import load_daily_data
+from utils.project_utils import load_daily_data, normalize_adjust_flag_name
 
 
 # 调参指南（先看这里，再改 CONFIG）：
@@ -216,26 +216,30 @@ BASE_CONFIG: dict[str, Any] = {
     "atr_stop_atr_multiplier": 1.5,
     # ATR 补丁对应的固定止损比例。建议与 stop_loss_pct 保持同一量级。
     "atr_stop_loss_pct": 0.12,
+    # ATR 突破未确认时，是否继续保留当前买入观察窗口，而不是立刻当作失败。
+    "patch_retry_on_breakout_block": False,
     # 是否执行参数优化。
     "optimize": False,
     # 优化时的快线取值范围，格式 start:end:step。
     "opt_fast": "8:21:1",
     # 优化时的买入封顶区间位置范围，小数参数同样支持 start:end:step。
-    "opt_buy_limit_position_pct": "0.75:0.95:0.05",
+    "opt_buy_limit_position_pct": "0.85:0.95:0.05",
     # 优化时的利润保底线范围，小数参数同样支持 start:end:step。
     "opt_protect_profit_floor_pct": "0.02:0.05:0.01",
     # 优化时的卖出触发系数范围，小数参数同样支持 start:end:step。
-    "opt_sell_trigger_multiplier": "0.80:0.95:0.05",
+    "opt_sell_trigger_multiplier": "0.88:0.96:0.04",
     # 优化时的慢线取值范围，格式 start:end:step。
     "opt_slow": "89:233:8",
     # 综合评分：年化收益加分权重。
     "opt_score_annual_weight": 1.0,
     # 综合评分：最大回撤扣分权重。
-    "opt_score_drawdown_weight": 1.0,
+    "opt_score_drawdown_weight": 1.1,
     # 综合评分：夏普比率加分权重。
     "opt_score_sharpe_weight": 10.0,
     # 综合评分：交易次数扣分权重。越大越不鼓励高频交易。
     "opt_score_trade_penalty_weight": 0.05,
+    # 综合评分：补丁阻止买入次数扣分权重。越大越不鼓励基础信号和补丁节奏严重错位。
+    "opt_score_blocked_buy_penalty_weight": 0.02,
     # 优化结果展示前几名。
     "top": 10,
 }
@@ -425,6 +429,15 @@ TEST_CASES = build_default_stock_test_cases()
 
 def validate_config(config: dict[str, Any]) -> None:
     validate_base_config(config)
+
+    raw_adjust_flag = str(config.get("adjust_flag", "")).strip().lower()
+    normalized_adjust_flag = (
+        "dypre"
+        if raw_adjust_flag == "dypre"
+        else normalize_adjust_flag_name(raw_adjust_flag)
+    )
+    if normalized_adjust_flag == "hfq":
+        raise ValueError("versatile 不支持后复权（hfq），请使用 dypre、qfq 或 cq")
 
     patches = {str(name).strip().lower() for name in config.get("patches", [])}
     if "atr" not in patches:

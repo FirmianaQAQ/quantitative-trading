@@ -1,7 +1,11 @@
 import copy
 import unittest
 
-from backtest.backtest_v1 import compute_optimization_score, parse_decimal_range
+from backtest.backtest_v1 import (
+    compute_optimization_score,
+    parse_decimal_range,
+    should_defer_buy_patch_block,
+)
 from backtest import versatile
 
 
@@ -94,6 +98,59 @@ class VersatileConfigTests(unittest.TestCase):
             compute_optimization_score(calmer, config),
             compute_optimization_score(noisier, config),
         )
+
+    def test_compute_optimization_score_penalizes_blocked_buys(self):
+        config = copy.deepcopy(versatile.CONFIG)
+        config["opt_score_blocked_buy_penalty_weight"] = 0.05
+        cleaner = {
+            "annual_return_pct": 10.0,
+            "max_drawdown_pct": 4.0,
+            "sharpe_ratio": 0.8,
+            "buy_signals_blocked": 5,
+        }
+        noisier = {
+            "annual_return_pct": 10.0,
+            "max_drawdown_pct": 4.0,
+            "sharpe_ratio": 0.8,
+            "buy_signals_blocked": 20,
+        }
+
+        self.assertGreater(
+            compute_optimization_score(cleaner, config),
+            compute_optimization_score(noisier, config),
+        )
+
+    def test_should_defer_buy_patch_block_only_for_atr_breakout_blocks(self):
+        self.assertTrue(
+            should_defer_buy_patch_block(
+                "未突破4日高点 close=10.00 level=10.20",
+                ["dypre", "atr"],
+                {"patch_retry_on_breakout_block": True},
+            )
+        )
+        self.assertFalse(
+            should_defer_buy_patch_block(
+                "ATR风控后可买数量为0",
+                ["dypre", "atr"],
+                {"patch_retry_on_breakout_block": True},
+            )
+        )
+        self.assertFalse(
+            should_defer_buy_patch_block(
+                "未突破4日高点 close=10.00 level=10.20",
+                ["dypre"],
+                {"patch_retry_on_breakout_block": True},
+            )
+        )
+
+    def test_versatile_rejects_hfq_adjust_flag(self):
+        config = copy.deepcopy(versatile.CONFIG)
+        config["adjust_flag"] = "hfq"
+
+        with self.assertRaisesRegex(
+            ValueError, "versatile 不支持后复权（hfq）"
+        ):
+            versatile.validate_config(config)
 
 
 if __name__ == "__main__":

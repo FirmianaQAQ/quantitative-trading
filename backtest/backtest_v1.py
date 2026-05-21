@@ -369,6 +369,9 @@ class SimpleMovingAverageStrategy(HStrategy):
         self.buy_trigger_active = False
         self.buy_trigger_days_seen = 0
         self.buy_trigger_up_days: list[int] = []
+        self.buy_patch_deferred_reason: str | None = None
+        self.last_buy_patch_block_reason: str | None = None
+        self.last_buy_patch_block_bar: int | None = None
         self.last_buy_price: float | None = None
         self.last_buy_turnover: float | None = None
         self.last_trade_bar: int | None = None
@@ -595,22 +598,48 @@ class SimpleMovingAverageStrategy(HStrategy):
     def reset_buy_setup(self) -> None:
         self.buy_trigger_active = False
         self.buy_trigger_days_seen = 0
+        self.buy_patch_deferred_reason = None
 
     def reset_sell_setup(self) -> None:
         self.sell_trigger_active = False
         self.sell_trigger_days_seen = 0
 
-    def _allow_buy_by_patches(self, **extra: Any) -> bool:
+    def _allow_buy_by_patches(self, **extra: Any) -> tuple[bool, str | None]:
         allow, reason = self.patch_manager.allow_buy(**extra)
         if not allow:
             self.log(f"补丁阻止买入 | 原因={reason or '未提供'}")
-        return allow
+        return allow, reason
 
     def _allow_sell_by_patches(self, **extra: Any) -> bool:
         allow, reason = self.patch_manager.allow_sell(**extra)
         if not allow:
             self.log(f"补丁阻止卖出 | 原因={reason or '未提供'}")
         return allow
+
+    def _should_count_buy_patch_block(self, reason: str | None) -> bool:
+        reason_text = str(reason or "").strip()
+        current_bar = len(self)
+        if not should_defer_buy_patch_block(
+            reason_text,
+            self.patch_manager.active_patch_names,
+            {"patch_retry_on_breakout_block": True},
+        ):
+            self.last_buy_patch_block_reason = reason_text or None
+            self.last_buy_patch_block_bar = current_bar
+            return True
+
+        if (
+            reason_text
+            and reason_text == self.last_buy_patch_block_reason
+            and self.last_buy_patch_block_bar is not None
+            and current_bar - self.last_buy_patch_block_bar
+            <= int(self.param.get("buy_trigger_window", 10))
+        ):
+            return False
+
+        self.last_buy_patch_block_reason = reason_text
+        self.last_buy_patch_block_bar = current_bar
+        return True
 
     def record_water_up_down_days(self) -> str:
         """
@@ -1065,7 +1094,7 @@ class SimpleMovingAverageStrategy(HStrategy):
                         )
                         self.reset_buy_setup()
                         return
-                    if not self._allow_buy_by_patches(
+                    allow_buy, block_reason = self._allow_buy_by_patches(
                         current_close=current_close,
                         candidate_size=size,
                         trigger_price=buy_trigger_price,
@@ -1077,8 +1106,24 @@ class SimpleMovingAverageStrategy(HStrategy):
                         rise_days_required=rise_days_required,
                         power=power,
                         plan_b=plan_b,
-                    ):
-                        self.buy_signals_blocked += 1
+                    )
+                    if not allow_buy:
+                        if should_defer_buy_patch_block(
+                            block_reason,
+                            self.patch_manager.active_patch_names,
+                            self.param,
+                        ):
+                            if block_reason != self.buy_patch_deferred_reason:
+                                self.log(
+                                    "补丁延后买入确认"
+                                    f" | 原因={block_reason or '未提供'}"
+                                    f" | 继续保留观察窗口={self.buy_trigger_days_seen}/"
+                                    f"{int(self.param.get('buy_trigger_window'))}"
+                                )
+                                self.buy_patch_deferred_reason = block_reason
+                            return
+                        if self._should_count_buy_patch_block(block_reason):
+                            self.buy_signals_blocked += 1
                         self.log(
                             "买点满足但被补丁拦截"
                             + (
@@ -1096,6 +1141,7 @@ class SimpleMovingAverageStrategy(HStrategy):
                         )
                         self.reset_buy_setup()
                         return
+                    self.buy_patch_deferred_reason = None
                     self.log(
                         "买点满足，提交买单"
                         + (
@@ -1525,18 +1571,43 @@ def compute_optimization_score(summary: dict[str, Any], config: dict[str, Any]) 
     max_drawdown_pct = float(summary.get("max_drawdown_pct") or 0.0)
     sharpe_ratio = float(summary.get("sharpe_ratio") or 0.0)
     trades_total = float(summary.get("trades_total") or 0.0)
+    buy_signals_blocked = float(summary.get("buy_signals_blocked") or 0.0)
 
     annual_weight = float(config.get("opt_score_annual_weight", 1.0))
     drawdown_weight = float(config.get("opt_score_drawdown_weight", 1.0))
     sharpe_weight = float(config.get("opt_score_sharpe_weight", 10.0))
     trade_penalty_weight = float(config.get("opt_score_trade_penalty_weight", 0.0))
+    blocked_buy_penalty_weight = float(
+        config.get("opt_score_blocked_buy_penalty_weight", 0.0)
+    )
 
     return (
         annual_return_pct * annual_weight
         - max_drawdown_pct * drawdown_weight
         + sharpe_ratio * sharpe_weight
         - trades_total * trade_penalty_weight
+        - buy_signals_blocked * blocked_buy_penalty_weight
     )
+
+
+def should_defer_buy_patch_block(
+    reason: str | None,
+    active_patches: Any,
+    config: dict[str, Any] | None = None,
+) -> bool:
+    patch_names = normalize_requested_patch_names(active_patches)
+    if "atr" not in patch_names:
+        return False
+
+    reason_text = str(reason or "").strip()
+    if not reason_text:
+        return False
+    is_breakout_block = "未突破" in reason_text and "日高点" in reason_text
+    if not is_breakout_block:
+        return False
+
+    resolved_config = config or {}
+    return bool(resolved_config.get("patch_retry_on_breakout_block", True))
 
 
 def validate_config(config: dict[str, Any]) -> None:
