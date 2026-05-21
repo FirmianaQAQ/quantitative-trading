@@ -240,24 +240,50 @@ BASE_CONFIG: dict[str, Any] = {
     "top": 10,
 }
 
-
+# 预设参数库：
+# - 这里只放“风格差异化参数”，没有出现的字段继续沿用 BASE_CONFIG
+# - 三套预设的关系不是谁更高级，而是分别对应不同的风险偏好和行情阶段
+# - 推荐流程：
+#   1. 先选最接近当前行情的预设
+#   2. 再通过 PRESET_OVERRIDES 做少量局部修正
+#   3. 不要把所有个性化参数都塞回预设里，否则后面会越来越难维护
 CONFIG_PRESETS: dict[str, dict[str, Any]] = {
-    # 保守震荡版：少出手、少追高、止盈止损都更快，适合先求稳再求收益。
+    # conservative
+    # 适用行情：
+    # - 震荡偏弱
+    # - 反弹不持续
+    # - 你更在意先控制回撤
+    # 核心取舍：
+    # - 更少出手
+    # - 更不追高
+    # - 更快止盈止损
+    # - 宁可错过一段，也尽量不在错误位置重仓
     "conservative": {
+        # 报告里显示的预设名称。
         "strategy_brief": "保守震荡版",
+        # 仓位控制：单次下注更轻，优先保护净值曲线。
         "buy_cash_ratio": 0.18,
+        # 入场触发：更接近前低才启动观察，不抢模糊位置。
         "buy_trigger_multiplier": 1.01,
+        # 观察窗口：确认时间更短，等不到就放弃。
         "buy_trigger_window": 8,
+        # 反弹确认：看更长窗口，要求更扎实的回暖。
         "buy_rise_window": 7,
         "buy_rise_days_required": 4,
+        # 追高限制：只接受区间偏低位置的买点。
         "buy_limit_position_pct": 0.82,
+        # 出场节奏：更早落袋，不恋战。
         "sell_trigger_multiplier": 0.84,
+        # 固定风控：止损更紧，回撤容忍度更低。
         "stop_loss_pct": 0.08,
+        # 利润保护：小幅盈利也尽快锁住。
         "protect_profit_floor_pct": 0.02,
         "underwater_take_profit_pct": 0.04,
         "above_water_take_profit_pct": 0.12,
+        # 均线节奏：快线更慢、慢线更长，减少假突破信号。
         "fast": 15,
         "slow": 169,
+        # ATR 补丁：整体更保守，不鼓励频繁追单和层层加仓。
         "atr_breakout_period": 6,
         "atr_exit_period": 4,
         "atr_risk_pct": 0.02,
@@ -266,22 +292,41 @@ CONFIG_PRESETS: dict[str, dict[str, Any]] = {
         "atr_stop_atr_multiplier": 1.2,
         "atr_stop_loss_pct": 0.08,
     },
-    # 均衡版：当前默认建议，适合大多数震荡市样本，强调风险收益平衡。
+    # balanced
+    # 适用行情：
+    # - 普通震荡市
+    # - 反弹有延续，但强度一般
+    # - 你还不确定当前该更保守还是更激进
+    # 核心取舍：
+    # - 风险收益尽量平衡
+    # - 尽量避免明显短板
+    # - 作为默认起点最合适
     "balanced": {
+        # 报告里显示的预设名称。
         "strategy_brief": "均衡震荡版",
+        # 仓位控制：不过轻也不过重。
         "buy_cash_ratio": 0.25,
+        # 入场触发：既要接近低位，也允许适度提前观察。
         "buy_trigger_multiplier": 1.02,
+        # 观察窗口：给信号正常确认空间，不追求极快也不拖太久。
         "buy_trigger_window": 10,
+        # 反弹确认：对连续性要求中等。
         "buy_rise_window": 6,
         "buy_rise_days_required": 3,
+        # 追高限制：不明显追高，但也不过度苛刻。
         "buy_limit_position_pct": 0.90,
+        # 出场节奏：止盈节奏中性。
         "sell_trigger_multiplier": 0.90,
+        # 固定风控：允许正常震荡，但不容忍深套。
         "stop_loss_pct": 0.12,
+        # 利润保护：已有盈利后开始逐步锁盈。
         "protect_profit_floor_pct": 0.03,
         "underwater_take_profit_pct": 0.06,
         "above_water_take_profit_pct": 0.16,
+        # 均线节奏：兼顾灵敏度和稳定性，是当前默认推荐参数。
         "fast": 13,
         "slow": 144,
+        # ATR 补丁：保留波动率风控，但不过度压制震荡低吸。
         "atr_breakout_period": 5,
         "atr_exit_period": 5,
         "atr_risk_pct": 0.03,
@@ -290,22 +335,42 @@ CONFIG_PRESETS: dict[str, dict[str, Any]] = {
         "atr_stop_atr_multiplier": 1.5,
         "atr_stop_loss_pct": 0.12,
     },
-    # 激进抢反弹版：更早出手、更高仓位、更能容忍波动，适合强势反弹阶段。
+    # aggressive
+    # 适用行情：
+    # - 强势反弹初期
+    # - 波动放大但资金回流明显
+    # - 你愿意承担更大回撤换更高弹性
+    # 核心取舍：
+    # - 更早出手
+    # - 更高仓位
+    # - 更能容忍波动
+    # - 更容易抓住第一波，但也更容易买早买高
     "aggressive": {
+        # 报告里显示的预设名称。
         "strategy_brief": "激进抢反弹版",
+        # 仓位控制：单次仓位更重，放大收益也放大回撤。
         "buy_cash_ratio": 0.35,
+        # 入场触发：更容易启动观察，争取抢到第一波反弹。
         "buy_trigger_multiplier": 1.04,
+        # 观察窗口：允许给更长时间等待反弹延续。
         "buy_trigger_window": 12,
+        # 反弹确认：更看重短期转强，不等太久。
         "buy_rise_window": 5,
         "buy_rise_days_required": 2,
+        # 追高限制：允许买到更靠近区间高位的位置。
         "buy_limit_position_pct": 0.96,
+        # 出场节奏：更愿意让利润继续跑。
         "sell_trigger_multiplier": 0.95,
+        # 固定风控：止损更宽，接受更大波动。
         "stop_loss_pct": 0.16,
+        # 利润保护：锁盈更晚，给趋势更多空间。
         "protect_profit_floor_pct": 0.05,
         "underwater_take_profit_pct": 0.08,
         "above_water_take_profit_pct": 0.22,
+        # 均线节奏：快线更敏感、慢线更短，更偏中短线抢反弹。
         "fast": 8,
         "slow": 89,
+        # ATR 补丁：响应更快、容忍更宽，并允许更多层级加仓。
         "atr_breakout_period": 4,
         "atr_exit_period": 4,
         "atr_risk_pct": 0.04,
@@ -320,7 +385,7 @@ CONFIG_PRESETS: dict[str, dict[str, Any]] = {
 # - conservative: 更稳、更少交易
 # - balanced: 默认推荐
 # - aggressive: 更积极抢反弹
-ACTIVE_CONFIG_PRESET = "aggressive"
+ACTIVE_CONFIG_PRESET = "balanced"
 
 # 预设覆盖项：只放“想在当前预设基础上额外修改”的参数。
 # 例如：
