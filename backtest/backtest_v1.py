@@ -58,7 +58,6 @@ from utils.backtest_report_builder import (
 from analysis.service import maybe_generate_single_stock_analysis
 from utils.default_stocks import (
     DEFAULT_PRIMARY_STOCK_CODE,
-    DEFAULT_BASE_STRATEGY_BRIEF,
     DEFAULT_BASE_STRATEGY_NAME,
     build_default_stock_test_cases,
 )
@@ -127,7 +126,7 @@ CONFIG: dict[str, Any] = {
     "report_dir": "logs/backtest",
     "report_name": "base_backtest",
     "strategy_name": DEFAULT_BASE_STRATEGY_NAME,
-    "strategy_brief": DEFAULT_BASE_STRATEGY_BRIEF,
+    "strategy_brief": 'v1',
     "current_position": "auto",
     "enable_llm_analysis": False,
     # 启用的策略增强补丁，按 backtest/patches/*.py 的模块名填写
