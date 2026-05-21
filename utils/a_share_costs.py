@@ -5,7 +5,8 @@ from typing import Any
 import backtrader as bt
 
 
-DEFAULT_BROKER_COMMISSION = 0.0001
+# A 股默认佣金：按成交金额双边收取万分之 0.854（含规费），单笔最低 5 元
+DEFAULT_BROKER_COMMISSION = 0.0000854
 DEFAULT_STAMP_DUTY = 0.0005
 DEFAULT_TRANSFER_FEE = 0.00001
 DEFAULT_MIN_COMMISSION = 5.0

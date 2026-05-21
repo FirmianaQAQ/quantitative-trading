@@ -335,36 +335,6 @@ def prompt_initial_cash() -> float:
             print(f"输入无效: {exc}")
 
 
-def prompt_current_position() -> str:
-    while True:
-        print()
-        print("请选择当前实际持仓状态：")
-        print("  1. 自动按回测信号推断（默认）")
-        print("  2. 当前空仓")
-        print("  3. 当前持仓")
-        print("  q. 退出")
-
-        raw_value = input("请输入编号，直接回车默认 1: ").strip().lower()
-        if not raw_value or raw_value == "1":
-            return DEFAULT_CURRENT_POSITION
-        if raw_value == "2":
-            return "empty"
-        if raw_value == "3":
-            return "hold"
-        if raw_value == "q":
-            raise SystemExit(FULL_EXIT_CODE)
-        print("输入无效，请重新输入")
-
-
-def get_current_position_label(current_position: str) -> str:
-    label_map = {
-        "auto": "自动按回测信号推断",
-        "empty": "当前空仓",
-        "hold": "当前持仓",
-    }
-    return label_map.get(current_position, current_position)
-
-
 def resolve_ai_analysis_enabled(ai_analysis_mode: str | None) -> bool:
     if ai_analysis_mode == AI_ANALYSIS_ON:
         return True
@@ -1195,7 +1165,7 @@ def main() -> None:
             continue
         break
     cash = prompt_initial_cash()
-    current_position = prompt_current_position()
+    current_position = DEFAULT_CURRENT_POSITION
     enable_llm_analysis = resolve_ai_analysis_enabled(cli_ai_analysis_mode)
     if cli_ai_analysis_mode is None:
         print()

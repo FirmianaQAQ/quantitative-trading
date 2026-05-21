@@ -137,6 +137,8 @@ def summarize_result(strategy: bt.Strategy, initial_value: float) -> dict[str, A
         "sharpe_ratio": safe_round(sharpe_analysis.get("sharperatio")),
         "position_days_total": int(getattr(strategy, "position_days_total", 0) or 0),
         "idle_cash_days_total": int(getattr(strategy, "idle_cash_days_total", 0) or 0),
+        "buy_signals_total": int(getattr(strategy, "buy_signals_total", 0) or 0),
+        "buy_signals_blocked": int(getattr(strategy, "buy_signals_blocked", 0) or 0),
     }
     result.update(extract_trade_metrics(trade_analysis))
     return result
@@ -272,6 +274,8 @@ def build_backtest_report_data(
             "value": summary["avg_trade_profit"],
             "kind": "number",
         },
+        {"label": "买点触发次数", "value": summary["buy_signals_total"]},
+        {"label": "补丁阻止买入次数", "value": summary["buy_signals_blocked"]},
         {"label": "资金占用天数", "value": summary["position_days_total"]},
         {"label": "资金占用天数占比", "value": (summary["position_days_total"] / total_days * 100) if total_days > 0 else 0, "kind": "percent"},
         {"label": "资金空闲天数", "value": summary["idle_cash_days_total"]},
@@ -334,7 +338,7 @@ def build_backtest_report_data(
         report_data.append(
             {
                 "chart_name": "优化买卖点",
-                "subtitle": "基于原策略增加趋势确认、回撤保护、不追高过滤，并结合新闻、资金流和财报约束修正后的统一优化建议。",
+                "subtitle": "基于动态前复权主策略叠加趋势确认、回撤保护、不追高过滤，并结合新闻、资金流和财报约束的增强视角。",
                 "chart_data": optimized_chart_data,
             }
         )
@@ -1005,11 +1009,11 @@ def build_enhanced_trade_chart_data(
     if not enhancement_patch:
         return optimized_chart_data
 
-    latest_entry["action"] = enhancement_patch["action"]
-    latest_entry["title"] = enhancement_patch["title"]
-    latest_entry["summary"] = enhancement_patch["summary"]
-    latest_entry["reason"] = enhancement_patch["reason"]
-    latest_entry["is_signal"] = enhancement_patch["action"] in {"buy", "sell", "watch_buy"}
+    latest_entry["enhancement_action"] = enhancement_patch.get("action")
+    latest_entry["enhancement_title"] = enhancement_patch.get("title")
+    latest_entry["enhancement_summary"] = enhancement_patch.get("summary")
+    latest_entry["enhancement_reason"] = enhancement_patch.get("reason")
+    latest_entry["enhancement_display_action"] = enhancement_patch.get("display_action")
     latest_entry["enhancement_score"] = enhancement_patch.get("enhancement_score")
     latest_entry["enhancement_label"] = enhancement_patch.get("enhancement_label")
     latest_entry["news_sentiment_label"] = enhancement_patch.get("news_sentiment_label")

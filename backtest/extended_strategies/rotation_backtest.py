@@ -73,7 +73,7 @@ CONFIG: dict[str, Any] = {
     "to_date": None,
     "data_from_date": "2019-01-01",
     "cash": 100000.0,
-    "commission": 0.0001,
+    "commission": 0.0000854,
     "stamp_duty": 0.0005,
     "transfer_fee": 0.00001,
     "min_commission": 5.0,

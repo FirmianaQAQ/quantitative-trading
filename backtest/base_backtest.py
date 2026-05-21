@@ -18,7 +18,7 @@ r"""
    - adjust_flag: 复权类型，例如 cq、qfq、hfq、dypre
    - from_date/to_date: 回测时间范围，格式 YYYY-MM-DD
    - cash: 初始资金
-   - commission: 券商佣金率，例如万 1 就是 0.0001
+   - commission: 券商佣金率，例如万分之 0.854 就是 0.0000854
    - stamp_duty: 卖出印花税率，A 股当前默认 0.0005
    - transfer_fee: 双边过户费率，A 股当前默认 0.00001
    - min_commission: 单笔最低佣金，A 股当前默认 5 元
@@ -87,16 +87,16 @@ CONFIG: dict[str, Any] = {
     "data_from_date": "2018-01-01",
     # 初始资金和 A 股实盘费用模型
     "cash": 100000.0,
-    # 券商佣金，万 1
-    "commission": 0.0001,
+    # 券商佣金，按成交金额双边收取万分之 0.854（含规费）
+    "commission": 0.0000854,
     # 卖出印花税，千 0.5
-    "stamp_duty": 0.0005,
+    "stamp_duty": 0,
     # 双边过户费，万 0.1
-    "transfer_fee": 0.00001,
+    "transfer_fee": 0,
     # 单笔最低佣金 5 元
     "min_commission": 5.0,
     # 买入时使用现金的比例，给跳空和手续费留缓冲
-    "buy_cash_ratio": 0.95,
+    "buy_cash_ratio": 0.30,
     # 按更高的估算成交价计算仓位，避免次日高开导致资金不足
     "buy_price_buffer": 1.01,
     # 每次买入按多少股的整数倍下单，A 股通常为 100
@@ -104,15 +104,15 @@ CONFIG: dict[str, Any] = {
     # 买入触发阈值：价格 <= X * buy_trigger_multiplier
     "buy_trigger_multiplier": 1.05,
     # 价格触发后，最多等待多少个交易日寻找买点
-    "buy_trigger_window": 10,
+    "buy_trigger_window": 7,
     # 连续观察窗口长度，例如 5 表示统计最近 5 个交易日
-    "buy_rise_window": 5,
+    "buy_rise_window": 7,
     # 连续观察窗口内至少多少个上涨日才买入
-    "buy_rise_days_required": 4,
+    "buy_rise_days_required": 3,
     # 卖出阈值的加权值
     "sell_trigger_multiplier": 0.9,
     # 相对买入价的止损跌幅，例如 0.1 表示跌 10% 止损
-    "stop_loss_pct": 0.1,
+    "stop_loss_pct": 0.5,
     "print_log": True,
     # 单次回测使用的均线周期
     "fast": 8,  # 这个试过5，感觉还是很容易反复切割年线
@@ -125,11 +125,11 @@ CONFIG: dict[str, Any] = {
     "report_dir": "logs/backtest",
     "report_name": "base_backtest",
     "strategy_name": "S-BMK策略",
-    "strategy_brief": "Sea Turtle + BMK",
+    "strategy_brief": "BMK",
     "current_position": "auto",
     "enable_llm_analysis": False,
     # 启用的策略增强补丁，按 backtest/patches/*.py 的模块名填写
-    "patches": ["sea_turtle", "bmk"],
+    "patches": [],
     # 为 True 时，补丁不存在或执行失败会直接报错
     "patch_strict": False,
 }
@@ -381,6 +381,8 @@ class SimpleMovingAverageStrategy(HStrategy):
         self.position_days_total = 0
         self.idle_cash_days_total = 0
         self.has_completed_sell = False
+        self.buy_signals_total = 0
+        self.buy_signals_blocked = 0
         self.patch_manager = StrategyPatchManager(
             self,
             self.param.get("patches"),
@@ -979,6 +981,7 @@ class SimpleMovingAverageStrategy(HStrategy):
                 )
                 if rise_days_num >= rise_days_required or plan_b:
                     # 上涨天数够，或者差1天，但上涨金额够
+                    self.buy_signals_total += 1
                     size = self.calculate_buy_size()
                     if size <= 0:
                         self.log(
@@ -986,18 +989,6 @@ class SimpleMovingAverageStrategy(HStrategy):
                         )
                         self.reset_buy_setup()
                         return
-                    self.log(
-                        "买点满足"
-                        + (
-                            f"(差1天，但上涨金额够)"
-                            if plan_b
-                            else f"({rise_window}日{rise_days_required}涨power={power})，"
-                        )
-                        + f"下单买入 收盘价={current_close:.2f} "
-                        f"数量={size} 当前现金={self.broker.getcash():.2f} "
-                        f"上一个最低价={lowest_price_previous:.2f} "
-                        f"买入价不高于 {highest_price_previous:.2f} * {float(self.param.get('sell_trigger_multiplier')):.1f} = {buy_limit:.2f}"
-                    )
                     if not self._allow_buy_by_patches(
                         current_close=current_close,
                         candidate_size=size,
@@ -1011,8 +1002,35 @@ class SimpleMovingAverageStrategy(HStrategy):
                         power=power,
                         plan_b=plan_b,
                     ):
+                        self.buy_signals_blocked += 1
+                        self.log(
+                            "买点满足但被补丁拦截"
+                            + (
+                                "(差1天，但上涨金额够)"
+                                if plan_b
+                                else f"({rise_window}日{rise_days_required}涨power={power})"
+                            )
+                            + f" 收盘价={current_close:.2f}"
+                            f" 计划数量={size}"
+                            f" 当前现金={self.broker.getcash():.2f}"
+                            f" 上一个最低价={lowest_price_previous:.2f}"
+                            f" 买入价不高于 {highest_price_previous:.2f} * {float(self.param.get('sell_trigger_multiplier')):.1f} = {buy_limit:.2f}"
+                        )
                         self.reset_buy_setup()
                         return
+                    self.log(
+                        "买点满足，提交买单"
+                        + (
+                            "(差1天，但上涨金额够)"
+                            if plan_b
+                            else f"({rise_window}日{rise_days_required}涨power={power})"
+                        )
+                        + f" 收盘价={current_close:.2f}"
+                        f" 下单数量={size}"
+                        f" 当前现金={self.broker.getcash():.2f}"
+                        f" 上一个最低价={lowest_price_previous:.2f}"
+                        f" 买入价不高于 {highest_price_previous:.2f} * {float(self.param.get('sell_trigger_multiplier')):.1f} = {buy_limit:.2f}"
+                    )
                     self.order = self.buy(size=size)
                     self.reset_buy_setup()
                     return
@@ -1291,6 +1309,8 @@ def print_summary(summary: dict[str, Any]) -> None:
         if avg_trade_profit is not None
         else "  平均每笔净利润: N/A"
     )
+    print(f"  买点触发次数: {summary['buy_signals_total']}")
+    print(f"  补丁阻止买入次数: {summary['buy_signals_blocked']}")
     print(f"  资金占用天数: {summary['position_days_total']}")
     print(f"  资金空闲天数: {summary['idle_cash_days_total']}")
     next_trade_plan_by_position = summary.get("next_trade_plan_by_position")

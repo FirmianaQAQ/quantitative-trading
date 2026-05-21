@@ -1,6 +1,7 @@
 import unittest
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 import pandas as pd
 
@@ -152,6 +153,61 @@ class BacktestReportAdviceTests(unittest.TestCase):
         )
 
         self.assertEqual(result, optimized_chart_data)
+
+    def test_build_enhanced_trade_chart_data_preserves_main_strategy_signal(self) -> None:
+        filtered_df = pd.DataFrame(
+            [
+                {"date": "2026-05-19", "close": 10.2},
+            ]
+        )
+        optimized_chart_data = {
+            "x_axis": ["2026-05-19"],
+            "candles": [[10.0, 10.1, 9.9, 10.2]],
+            "buy_points": [],
+            "sell_points": [],
+            "indicator_lines": [],
+            "advice_entries": [
+                {
+                    "date": "2026-05-19",
+                    "action": "watch_buy",
+                    "title": "优化观察",
+                    "summary": "等待更好的入场点。",
+                    "reason": "趋势转暖，但不追高。",
+                    "is_signal": True,
+                }
+            ],
+        }
+
+        with patch(
+            "utils.backtest_report_builder.build_strategy_enhancement_patch",
+            return_value={
+                "action": "observe",
+                "title": "优化观望",
+                "display_action": "优化观望",
+                "summary": "外部因子明显转弱，暂缓偏多信号。",
+                "reason": "新闻面偏谨慎，资金面偏流出。",
+                "enhancement_score": -3,
+                "enhancement_label": "偏谨慎",
+                "news_sentiment_label": "偏负面",
+                "fund_flow_label": "偏流出",
+                "financial_label": "中性",
+            },
+        ):
+            result = build_enhanced_trade_chart_data(
+                filtered_df=filtered_df,
+                optimized_chart_data=optimized_chart_data,
+                external_context={"news": {"status": "ok"}},
+            )
+
+        latest_entry = result["advice_entries"][-1]
+        self.assertEqual(latest_entry["action"], "watch_buy")
+        self.assertEqual(latest_entry["title"], "优化观察")
+        self.assertEqual(latest_entry["summary"], "等待更好的入场点。")
+        self.assertEqual(latest_entry["reason"], "趋势转暖，但不追高。")
+        self.assertTrue(latest_entry["is_signal"])
+        self.assertEqual(latest_entry["enhancement_action"], "observe")
+        self.assertEqual(latest_entry["enhancement_title"], "优化观望")
+        self.assertEqual(latest_entry["enhancement_score"], -3)
 
     def test_extract_next_trade_plan_from_chart_data_maps_latest_advice(self) -> None:
         plan = extract_next_trade_plan_from_chart_data(
@@ -324,7 +380,7 @@ class BacktestReportAdviceTests(unittest.TestCase):
         )
         self.assertIn("当前实际持仓", html)
 
-    def test_advice_panel_contains_optimized_strategy_source(self) -> None:
+    def test_advice_panel_keeps_enhanced_source_available_but_defaults_to_strategy(self) -> None:
         report_data = build_buy_sell_report(
             dates=["2026-05-13", "2026-05-14"],
             buy_points=[["2026-05-13", 10.0]],
@@ -360,12 +416,13 @@ class BacktestReportAdviceTests(unittest.TestCase):
             current_position="auto",
         )
 
+        self.assertIn('data-advice-source="strategy"', html)
         self.assertIn('data-advice-source="optimized"', html)
-        self.assertIn('data-default-advice-source="optimized"', html)
+        self.assertIn('data-default-advice-source="strategy"', html)
         self.assertIn("优化策略", html)
         self.assertIn("优化观察", html)
 
-    def test_advice_panel_uses_single_optimized_strategy_source_after_external_patch(self) -> None:
+    def test_advice_panel_defaults_to_main_strategy_even_after_external_patch(self) -> None:
         report_data = build_buy_sell_report(
             dates=["2026-05-13", "2026-05-14"],
             buy_points=[["2026-05-13", 10.0]],
@@ -401,8 +458,9 @@ class BacktestReportAdviceTests(unittest.TestCase):
         )
 
         self.assertNotIn('data-advice-source="enhanced"', html)
+        self.assertIn('data-advice-source="strategy"', html)
         self.assertIn('data-advice-source="optimized"', html)
-        self.assertIn('data-default-advice-source="optimized"', html)
+        self.assertIn('data-default-advice-source="strategy"', html)
         self.assertIn("优化策略", html)
         self.assertIn("优化观望", html)
 

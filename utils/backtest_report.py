@@ -242,7 +242,7 @@ def _extract_daily_advice_entries(
             "连续3天下跌",
             "已经等了10天",
         ],
-        "buy": ["买入成交", "下单买入", "买点满足"],
+        "buy": ["买入成交"],
         "hold": [
             "继续持有观察",
             "获利已有",
@@ -250,6 +250,10 @@ def _extract_daily_advice_entries(
             "可能只是震荡",
         ],
         "watch_buy": [
+            "买点满足但被补丁拦截",
+            "提交买单",
+            "下单买入",
+            "买点满足",
             "价格触发买入观察窗口",
             "切到水上",
             "切到水下",
@@ -427,8 +431,8 @@ def _build_advice_panel(
     if not available_sources:
         return ""
     default_source = (
-        ADVICE_SOURCE_OPTIMIZED
-        if ADVICE_SOURCE_OPTIMIZED in available_sources
+        ADVICE_SOURCE_STRATEGY
+        if ADVICE_SOURCE_STRATEGY in available_sources
         else available_sources[0]
     )
 
@@ -802,7 +806,13 @@ def _resolve_metric_card_tone(label: str) -> str:
         return "positive"
     if normalized in {"最大回撤", "最大回撤金额", "最大回撤周期", "亏损次数"}:
         return "risk"
-    if normalized in {"总交易次数", "资金占用天数", "资金占用天数占比"}:
+    if normalized in {
+        "总交易次数",
+        "资金占用天数",
+        "资金占用天数占比",
+        "买点触发次数",
+        "补丁阻止买入次数",
+    }:
         return "focus"
     return "default"
 
