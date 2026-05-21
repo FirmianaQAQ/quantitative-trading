@@ -204,6 +204,8 @@ BASE_CONFIG: dict[str, Any] = {
     "atr_breakout_period": 5,
     # 突破确认百分比，0 表示收盘价直接高于突破线即可。
     "atr_breakout_confirm_pct": 0.0,
+    # 接近突破线时的放行容差。例如 0.02 表示离突破线 2% 以内也允许买入。
+    "atr_breakout_tolerance_pct": 0.02,
     # ATR 退出周期。越短越容易退出，越长越能容忍回踩。
     "atr_exit_period": 5,
     # ATR 风险预算占账户总资产比例。越大单笔仓位可能越重，回撤也更大。
@@ -217,7 +219,7 @@ BASE_CONFIG: dict[str, Any] = {
     # ATR 补丁对应的固定止损比例。建议与 stop_loss_pct 保持同一量级。
     "atr_stop_loss_pct": 0.12,
     # ATR 突破未确认时，是否继续保留当前买入观察窗口，而不是立刻当作失败。
-    "patch_retry_on_breakout_block": False,
+    "patch_retry_on_breakout_block": True,
     # 是否执行参数优化。
     "optimize": False,
     # 优化时的快线取值范围，格式 start:end:step。
@@ -308,36 +310,37 @@ CONFIG_PRESETS: dict[str, dict[str, Any]] = {
     "balanced": {
         # 报告里显示的预设名称。
         "strategy_brief": "均衡震荡版",
-        # 仓位控制：不过轻也不过重。
-        "buy_cash_ratio": 0.25,
-        # 入场触发：既要接近低位，也允许适度提前观察。
-        "buy_trigger_multiplier": 1.02,
+        # 仓位控制：略微提高下注力度，换取更高收益弹性。
+        "buy_cash_ratio": 0.28,
+        # 入场触发：比原来再早半步，减少低位机会漏掉。
+        "buy_trigger_multiplier": 1.03,
         # 观察窗口：给信号正常确认空间，不追求极快也不拖太久。
         "buy_trigger_window": 10,
         # 反弹确认：对连续性要求中等。
         "buy_rise_window": 6,
         "buy_rise_days_required": 3,
-        # 追高限制：不明显追高，但也不过度苛刻。
-        "buy_limit_position_pct": 0.90,
-        # 出场节奏：止盈节奏中性。
-        "sell_trigger_multiplier": 0.90,
+        # 追高限制：略微放宽，减少已经转强却因太谨慎买不到。
+        "buy_limit_position_pct": 0.93,
+        # 出场节奏：略放宽，让盈利单多跑一段。
+        "sell_trigger_multiplier": 0.92,
         # 固定风控：允许正常震荡，但不容忍深套。
         "stop_loss_pct": 0.12,
         # 利润保护：已有盈利后开始逐步锁盈。
         "protect_profit_floor_pct": 0.03,
         "underwater_take_profit_pct": 0.06,
-        "above_water_take_profit_pct": 0.16,
+        "above_water_take_profit_pct": 0.18,
         # 均线节奏：兼顾灵敏度和稳定性，是当前默认推荐参数。
-        "fast": 13,
+        "fast": 11,
         "slow": 144,
-        # ATR 补丁：保留波动率风控，但不过度压制震荡低吸。
-        "atr_breakout_period": 5,
-        "atr_exit_period": 5,
-        "atr_risk_pct": 0.03,
+        # ATR 补丁：缩短突破确认，并允许接近突破时放行。
+        "atr_breakout_period": 4,
+        "atr_exit_period": 4,
+        "atr_risk_pct": 0.035,
         "atr_max_units": 2,
-        "atr_add_unit_atr": 0.8,
+        "atr_add_unit_atr": 0.7,
         "atr_stop_atr_multiplier": 1.5,
         "atr_stop_loss_pct": 0.12,
+        "atr_breakout_tolerance_pct": 0.02,
     },
     # aggressive
     # 适用行情：
@@ -355,16 +358,16 @@ CONFIG_PRESETS: dict[str, dict[str, Any]] = {
         # 仓位控制：单次仓位更重，放大收益也放大回撤。
         "buy_cash_ratio": 0.35,
         # 入场触发：更容易启动观察，争取抢到第一波反弹。
-        "buy_trigger_multiplier": 1.04,
+        "buy_trigger_multiplier": 1.05,
         # 观察窗口：允许给更长时间等待反弹延续。
         "buy_trigger_window": 12,
         # 反弹确认：更看重短期转强，不等太久。
         "buy_rise_window": 5,
         "buy_rise_days_required": 2,
         # 追高限制：允许买到更靠近区间高位的位置。
-        "buy_limit_position_pct": 0.96,
+        "buy_limit_position_pct": 0.97,
         # 出场节奏：更愿意让利润继续跑。
-        "sell_trigger_multiplier": 0.95,
+        "sell_trigger_multiplier": 0.96,
         # 固定风控：止损更宽，接受更大波动。
         "stop_loss_pct": 0.16,
         # 利润保护：锁盈更晚，给趋势更多空间。
@@ -375,13 +378,14 @@ CONFIG_PRESETS: dict[str, dict[str, Any]] = {
         "fast": 8,
         "slow": 89,
         # ATR 补丁：响应更快、容忍更宽，并允许更多层级加仓。
-        "atr_breakout_period": 4,
-        "atr_exit_period": 4,
-        "atr_risk_pct": 0.04,
+        "atr_breakout_period": 3,
+        "atr_exit_period": 3,
+        "atr_risk_pct": 0.045,
         "atr_max_units": 3,
-        "atr_add_unit_atr": 0.6,
+        "atr_add_unit_atr": 0.5,
         "atr_stop_atr_multiplier": 2.0,
         "atr_stop_loss_pct": 0.16,
+        "atr_breakout_tolerance_pct": 0.03,
     },
 }
 
@@ -453,6 +457,10 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("atr_exit_period 不能大于 atr_breakout_period")
     if float(config.get("atr_breakout_confirm_pct", 0)) < 0:
         raise ValueError("atr_breakout_confirm_pct 不能小于 0")
+    if float(config.get("atr_breakout_tolerance_pct", 0)) < 0 or float(
+        config.get("atr_breakout_tolerance_pct", 0)
+    ) >= 1:
+        raise ValueError("atr_breakout_tolerance_pct 必须大于等于 0 且小于 1")
     if float(config.get("atr_risk_pct", 0)) <= 0 or float(
         config["atr_risk_pct"]
     ) >= 1:

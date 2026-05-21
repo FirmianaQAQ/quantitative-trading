@@ -113,7 +113,20 @@ def allow_buy(strategy: Any, context: dict[str, Any]) -> dict[str, Any]:
     breakout_level = _breakout_level(strategy)
     current_close = _current_close(strategy)
     confirm_pct = cfg_float(strategy, "atr_breakout_confirm_pct", 0.0)
-    if current_close <= breakout_level * (1 + confirm_pct):
+    breakout_threshold = breakout_level * (1 + confirm_pct)
+    breakout_tolerance_pct = cfg_float(strategy, "atr_breakout_tolerance_pct", 0.0)
+    near_breakout_threshold = breakout_level * max(1 - breakout_tolerance_pct, 0.0)
+    if current_close <= breakout_threshold:
+        if breakout_tolerance_pct > 0 and current_close >= near_breakout_threshold:
+            return {
+                "allow": True,
+                "reason": (
+                    f"接近{cfg_int(strategy, 'atr_breakout_period', 20)}日高点"
+                    f" close={current_close:.2f}"
+                    f" level={breakout_level:.2f}"
+                    f" tolerance={breakout_tolerance_pct:.2%}"
+                ),
+            }
         return {
             "allow": False,
             "reason": (

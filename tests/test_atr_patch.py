@@ -142,6 +142,17 @@ class AtrPatchTests(unittest.TestCase):
         self.assertFalse(decision["allow"])
         self.assertIn("未突破20日高点", decision["reason"])
 
+    def test_allow_buy_accepts_near_breakout_with_tolerance(self):
+        strategy = DummyStrategy()
+        strategy.param["atr_breakout_tolerance_pct"] = 0.02
+        strategy._signal_prices["close"][0] = 9.85
+        strategy.atr_patch_breakout_high = DummyLine({-1: 10.0})
+
+        decision = atr.allow_buy(strategy, {})
+
+        self.assertTrue(decision["allow"])
+        self.assertIn("接近20日高点", decision["reason"])
+
     def test_exit_reason_uses_stop_and_exit_floor(self):
         strategy = DummyStrategy()
         strategy.position = DummyPosition(size=1000, price=10.0)

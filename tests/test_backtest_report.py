@@ -16,6 +16,7 @@ from utils.backtest_report import (
     merge_backtest_html_with_ai_report,
 )
 from utils.backtest_report_builder import (
+    build_buy_trade_detail_rows,
     build_enhanced_trade_chart_data,
     build_empty_entry_timing_plan,
     build_next_trade_plan,
@@ -107,6 +108,27 @@ class BacktestReportAdviceTests(unittest.TestCase):
         self.assertEqual(metrics["latest_buy_turnover"], 18000.5)
         self.assertEqual(metrics["avg_buy_turnover"], 21500.25)
 
+    def test_build_buy_trade_detail_rows_adds_ratio_column(self) -> None:
+        strategy = SimpleNamespace(
+            buy_trade_records=[
+                {
+                    "date": "2026-05-19",
+                    "signal_price": 10.0,
+                    "trade_price": 10.2,
+                    "size": 1000.0,
+                    "turnover": 10200.0,
+                    "commission": 5.0,
+                    "cash_after_trade": 89800.0,
+                }
+            ]
+        )
+
+        rows = build_buy_trade_detail_rows(strategy, 100000.0)
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["买入资金额"], 10200.0)
+        self.assertEqual(rows[0]["占初始资金比例"], 10.2)
+
     def test_metric_cards_hide_redundant_strategy_and_forecast_cards(self) -> None:
         html = _build_metric_cards(
             [
@@ -129,6 +151,8 @@ class BacktestReportAdviceTests(unittest.TestCase):
                         "资金面判断": "偏流入",
                         "财报面判断": "中性",
                         "最近一次买入资金额": "18,000.50",
+                        "平均单次买入资金额": "19,500.25",
+                        "最近一次买入资金额占初始资金比例": "18.00%",
                     },
                 }
             ]
@@ -136,6 +160,8 @@ class BacktestReportAdviceTests(unittest.TestCase):
 
         self.assertIn("总收益率", html)
         self.assertIn("最近一次买入资金额", html)
+        self.assertIn("平均单次买入资金额", html)
+        self.assertIn("最近一次买入资金额占初始资金比例", html)
         self.assertNotIn('data-metric-label="股票代码"', html)
         self.assertNotIn("策略名称", html)
         self.assertNotIn("复权口径", html)
@@ -613,6 +639,59 @@ class BacktestReportAdviceTests(unittest.TestCase):
         self.assertIn("如果你当前空仓", html)
         self.assertIn("如果你当前持仓", html)
         self.assertIn("含策略预判", html)
+
+    def test_html_report_renders_buy_trade_detail_table(self) -> None:
+        report_data = build_buy_sell_report(
+            dates=["2026-05-19"],
+            buy_points=[["2026-05-19", 10.2, {"turnover": 10200.0}]],
+            sell_points=[],
+        )
+        report_data.insert(
+            0,
+            {
+                "chart_name": "指标概览",
+                "chart_data": {
+                    "最近一次买入资金额": "10,200.00",
+                    "平均单次买入资金额": "10,200.00",
+                    "最近一次买入资金额占初始资金比例": "10.20%",
+                },
+            },
+        )
+        report_data.append(
+            {
+                "chart_name": "买入交易明细表",
+                "subtitle": "逐笔展示每次买入实际动用资金。",
+                "chart_data": [
+                    {
+                        "日期": "2026-05-19",
+                        "信号价": 10.0,
+                        "成交价": 10.2,
+                        "买入数量": 1000.0,
+                        "买入资金额": 10200.0,
+                        "手续费": 5.0,
+                        "买后现金余额": 89800.0,
+                        "占初始资金比例": 10.2,
+                    }
+                ],
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_path = Path(temp_dir) / "report.html"
+            generate_backtest_html(
+                report_data=report_data,
+                output_path=str(output_path),
+                benchmarks=[],
+                title="测试回测报告",
+            )
+            html = output_path.read_text(encoding="utf-8")
+
+        self.assertIn("买入交易明细表", html)
+        self.assertIn('class="detail-table"', html)
+        self.assertIn("平均单次买入资金额", html)
+        self.assertIn("最近一次买入资金额占初始资金比例", html)
+        self.assertIn("10,200.00", html)
+        self.assertIn("10.20%", html)
 
     def test_html_report_can_embed_ai_report_into_single_file(self) -> None:
         report_data = build_buy_sell_report(

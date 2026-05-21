@@ -811,6 +811,8 @@ def _resolve_metric_card_tone(label: str) -> str:
         "资金占用天数",
         "资金占用天数占比",
         "最近一次买入资金额",
+        "平均单次买入资金额",
+        "最近一次买入资金额占初始资金比例",
         "买点触发次数",
         "补丁阻止买入次数",
     }:
@@ -1205,6 +1207,55 @@ def _build_chart_block(chart_id: str, title: str, subtitle: str = "") -> str:
         {subtitle_html}
       </div>
       <div id="{chart_id}" class="chart"></div>
+    </section>
+    """
+
+
+def _build_table_block(
+    title: str,
+    subtitle: str,
+    rows: list[dict[str, Any]] | None,
+) -> str:
+    resolved_rows = list(rows or [])
+    subtitle_html = f'<p class="chart-subtitle">{subtitle}</p>' if subtitle else ""
+    if not resolved_rows:
+        body_html = '<div class="table-empty">暂无交易明细</div>'
+    else:
+        columns = list(resolved_rows[0].keys())
+        header_html = "".join(
+            f"<th>{html_escape(str(column))}</th>" for column in columns
+        )
+        row_html_parts: list[str] = []
+        for row in resolved_rows:
+            cells = []
+            for column in columns:
+                value = row.get(column)
+                if _is_missing(value):
+                    display = "N/A"
+                elif isinstance(value, (int, float)) and "比例" in str(column):
+                    display = f"{float(value):.2f}%"
+                elif isinstance(value, (int, float)):
+                    display = f"{float(value):,.2f}"
+                else:
+                    display = str(value)
+                cells.append(f"<td>{html_escape(display)}</td>")
+            row_html_parts.append(f"<tr>{''.join(cells)}</tr>")
+        body_html = (
+            '<div class="table-scroll">'
+            '<table class="detail-table">'
+            f"<thead><tr>{header_html}</tr></thead>"
+            f"<tbody>{''.join(row_html_parts)}</tbody>"
+            "</table>"
+            "</div>"
+        )
+
+    return f"""
+    <section class="chart-card">
+      <div class="chart-header">
+        <h2>{title}</h2>
+        {subtitle_html}
+      </div>
+      {body_html}
     </section>
     """
 
@@ -2328,6 +2379,16 @@ def _build_report_bootstrap_script() -> str:
           Array.isArray(latestBuyPoint) && latestBuyPoint.length >= 3 && latestBuyPoint[2] && typeof latestBuyPoint[2] === 'object'
             ? latestBuyPoint[2]
             : null;
+        const visibleBuyTurnovers = visibleBuyPoints
+          .map((item) => (
+            Array.isArray(item) && item.length >= 3 && item[2] && typeof item[2] === 'object'
+              ? Number(item[2].turnover)
+              : NaN
+          ))
+          .filter((value) => Number.isFinite(value));
+        const avgBuyTurnover = visibleBuyTurnovers.length
+          ? visibleBuyTurnovers.reduce((sum, value) => sum + value, 0) / visibleBuyTurnovers.length
+          : null;
 
         setMetricValue('初始资金', formatMetricNumber(initialValue));
         setMetricValue('期末资产', formatMetricNumber(finalValue));
@@ -2347,6 +2408,16 @@ def _build_report_bootstrap_script() -> str:
           '最近一次买入资金额',
           latestBuyMeta && latestBuyMeta.turnover != null
             ? formatMetricNumber(latestBuyMeta.turnover)
+            : 'N/A'
+        );
+        setMetricValue(
+          '平均单次买入资金额',
+          avgBuyTurnover != null ? formatMetricNumber(avgBuyTurnover) : 'N/A'
+        );
+        setMetricValue(
+          '最近一次买入资金额占初始资金比例',
+          latestBuyMeta && latestBuyMeta.turnover != null && initialValue > 0
+            ? formatMetricPercent((Number(latestBuyMeta.turnover) / initialValue) * 100)
             : 'N/A'
         );
 
@@ -2679,6 +2750,16 @@ def html(
             payload = _normalize_kline_payload(chart_data)
             chart_sections.append(_build_chart_block(chart_id, chart_name, subtitle))
             chart_scripts.append(_build_buy_sell_chart_script(chart_id, payload))
+            continue
+
+        if chart_name in {"买入交易明细表", "买入交易明细", "buy_trade_detail_table"}:
+            chart_sections.append(
+                _build_table_block(
+                    "买入交易明细表",
+                    subtitle,
+                    chart_data if isinstance(chart_data, list) else [],
+                )
+            )
             continue
 
         if chart_name in {"累计收益率", "累计收益", "cumulative_returns"}:
@@ -3312,6 +3393,50 @@ def html(
       margin-bottom: 20px;
       padding: 20px 20px 12px;
       box-shadow: var(--shadow);
+    }}
+    .table-scroll {{
+      width: 100%;
+      overflow-x: auto;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: #fff;
+    }}
+    .detail-table {{
+      width: 100%;
+      border-collapse: collapse;
+      min-width: 860px;
+      font-variant-numeric: tabular-nums;
+    }}
+    .detail-table th,
+    .detail-table td {{
+      padding: 12px 14px;
+      text-align: left;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }}
+    .detail-table th {{
+      position: sticky;
+      top: 0;
+      background: #f8fafc;
+      color: var(--heading);
+      font-size: 13px;
+      font-weight: 600;
+      z-index: 1;
+    }}
+    .detail-table td {{
+      color: var(--text);
+      font-size: 13px;
+    }}
+    .detail-table tbody tr:hover {{
+      background: rgba(83, 58, 253, 0.035);
+    }}
+    .table-empty {{
+      padding: 18px;
+      color: var(--muted);
+      border: 1px dashed var(--border-strong);
+      border-radius: 16px;
+      background: #fff;
+      text-align: center;
     }}
     .chart-header {{
       margin-bottom: 14px;

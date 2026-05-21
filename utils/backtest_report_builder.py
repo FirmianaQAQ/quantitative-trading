@@ -202,6 +202,33 @@ def extract_buy_execution_metrics(strategy: bt.Strategy | None = None) -> dict[s
     }
 
 
+def build_buy_trade_detail_rows(
+    strategy: bt.Strategy | None,
+    initial_value: float,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for item in list(getattr(strategy, "buy_trade_records", []) or []):
+        turnover = item.get("turnover")
+        ratio_pct = (
+            safe_round(float(turnover) / float(initial_value) * 100)
+            if turnover is not None and initial_value
+            else None
+        )
+        rows.append(
+            {
+                "日期": item.get("date"),
+                "信号价": safe_round(item.get("signal_price")),
+                "成交价": safe_round(item.get("trade_price")),
+                "买入数量": safe_round(item.get("size"), 0),
+                "买入资金额": safe_round(turnover),
+                "手续费": safe_round(item.get("commission")),
+                "买后现金余额": safe_round(item.get("cash_after_trade")),
+                "占初始资金比例": ratio_pct,
+            }
+        )
+    return rows
+
+
 def build_backtest_report_data(
     strategy: bt.Strategy,
     config: dict[str, Any],
@@ -334,6 +361,16 @@ def build_backtest_report_data(
             "kind": "number",
         },
         {"label": "最近一次买入资金额", "value": summary["latest_buy_turnover"], "kind": "number"},
+        {"label": "平均单次买入资金额", "value": summary["avg_buy_turnover"], "kind": "number"},
+        {
+            "label": "最近一次买入资金额占初始资金比例",
+            "value": (
+                summary["latest_buy_turnover"] / summary["initial_value"] * 100
+                if summary.get("latest_buy_turnover") is not None and summary.get("initial_value")
+                else None
+            ),
+            "kind": "percent",
+        },
         {"label": "买点触发次数", "value": summary["buy_signals_total"]},
         {"label": "补丁阻止买入次数", "value": summary["buy_signals_blocked"]},
         {"label": "资金占用天数", "value": summary["position_days_total"]},
@@ -409,6 +446,15 @@ def build_backtest_report_data(
                 "chart_name": "优化买卖点",
                 "subtitle": "基于动态前复权主策略叠加趋势确认、回撤保护、不追高过滤，并结合新闻、资金流和财报约束的增强视角。",
                 "chart_data": optimized_chart_data,
+            }
+        )
+    buy_trade_detail_rows = build_buy_trade_detail_rows(strategy, config["cash"])
+    if buy_trade_detail_rows:
+        report_data.append(
+            {
+                "chart_name": "买入交易明细表",
+                "subtitle": "逐笔展示每次买入实际动用资金，便于核对 buy_cash_ratio 的落地效果。",
+                "chart_data": buy_trade_detail_rows,
             }
         )
     return report_data
