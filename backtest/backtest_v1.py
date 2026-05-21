@@ -369,6 +369,7 @@ class SimpleMovingAverageStrategy(HStrategy):
         self.buy_trigger_active = False
         self.buy_trigger_days_seen = 0
         self.buy_trigger_up_days: list[int] = []
+        self.buy_trade_records: list[dict[str, float | str]] = []
         self.buy_patch_deferred_reason: str | None = None
         self.last_buy_patch_block_reason: str | None = None
         self.last_buy_patch_block_bar: int | None = None
@@ -522,6 +523,17 @@ class SimpleMovingAverageStrategy(HStrategy):
                 self.last_buy_turnover = turnover
                 self._dust_position_logged = False
                 self.buy_markers.append((executed_at, signal_price))
+                self.buy_trade_records.append(
+                    {
+                        "date": executed_at.strftime("%Y-%m-%d"),
+                        "signal_price": round(float(signal_price), 4),
+                        "trade_price": round(float(trade_price), 4),
+                        "size": round(float(executed_size), 4),
+                        "turnover": round(float(turnover), 4),
+                        "commission": round(float(order.executed.comm), 4),
+                        "cash_after_trade": round(float(cash_after_trade), 4),
+                    }
+                )
                 self.log(
                     "买入成交"
                     f" | 价格={trade_price:.2f}"

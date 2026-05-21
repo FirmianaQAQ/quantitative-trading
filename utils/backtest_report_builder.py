@@ -177,6 +177,31 @@ def summarize_result(strategy: bt.Strategy, initial_value: float) -> dict[str, A
     return result
 
 
+def extract_buy_execution_metrics(strategy: bt.Strategy | None = None) -> dict[str, Any]:
+    buy_trade_records = list(getattr(strategy, "buy_trade_records", []) or [])
+    if not buy_trade_records:
+        return {
+            "latest_buy_turnover": None,
+            "avg_buy_turnover": None,
+        }
+
+    turnovers = [
+        float(item.get("turnover"))
+        for item in buy_trade_records
+        if item.get("turnover") is not None
+    ]
+    latest_turnover = turnovers[-1] if turnovers else None
+    avg_turnover = (
+        sum(turnovers) / len(turnovers)
+        if turnovers
+        else None
+    )
+    return {
+        "latest_buy_turnover": safe_round(latest_turnover),
+        "avg_buy_turnover": safe_round(avg_turnover),
+    }
+
+
 def build_backtest_report_data(
     strategy: bt.Strategy,
     config: dict[str, Any],
@@ -195,6 +220,7 @@ def build_backtest_report_data(
         return report_data
     
     summary = summarize_result(strategy, config["cash"])
+    summary.update(extract_buy_execution_metrics(strategy))
     total_days = summary["position_days_total"] + summary["idle_cash_days_total"]
     
     # 加载标的股票日线数据并进行日期过滤
@@ -307,6 +333,7 @@ def build_backtest_report_data(
             "value": summary["avg_trade_profit"],
             "kind": "number",
         },
+        {"label": "最近一次买入资金额", "value": summary["latest_buy_turnover"], "kind": "number"},
         {"label": "买点触发次数", "value": summary["buy_signals_total"]},
         {"label": "补丁阻止买入次数", "value": summary["buy_signals_blocked"]},
         {"label": "资金占用天数", "value": summary["position_days_total"]},
@@ -347,14 +374,23 @@ def build_backtest_report_data(
     benchmark_returns = build_stock_returns_series(
         config.get("benchmark_code", ""), config["adjust_flag"], config["from_date"], config["to_date"]
     )
+    buy_trade_records = list(getattr(strategy, "buy_trade_records", []) or [])
     
     report_data = build_backtrader_report_payload(
         price_data=filtered_df,
         returns_series=returns_series,
         summary_metrics=summary_metrics,
         buy_points=[
-            [pd.Timestamp(dt).strftime("%Y-%m-%d"), round(float(price), 4)]
-            for dt, price in strategy.buy_markers
+            [
+                pd.Timestamp(dt).strftime("%Y-%m-%d"),
+                round(float(price), 4),
+                {
+                    key: value
+                    for key, value in (buy_trade_records[index] if index < len(buy_trade_records) else {}).items()
+                    if key != "date"
+                },
+            ]
+            for index, (dt, price) in enumerate(strategy.buy_markers)
         ],
         sell_points=[
             [pd.Timestamp(dt).strftime("%Y-%m-%d"), round(float(price), 4)]

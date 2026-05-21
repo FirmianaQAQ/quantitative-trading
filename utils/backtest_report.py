@@ -810,6 +810,7 @@ def _resolve_metric_card_tone(label: str) -> str:
         "总交易次数",
         "资金占用天数",
         "资金占用天数占比",
+        "最近一次买入资金额",
         "买点触发次数",
         "补丁阻止买入次数",
     }:
@@ -1727,6 +1728,7 @@ def _build_report_bootstrap_script() -> str:
           ...payload,
           x_axis: keepIndexes.map((index) => xAxis[index]),
           candles: keepIndexes.map((index) => (payload.candles || [])[index]),
+          ex_right_closes: keepIndexes.map((index) => (payload.ex_right_closes || [])[index]),
           volumes: keepIndexes.map((index) => (payload.volumes || [])[index]),
           indicator_lines: (payload.indicator_lines || []).map((line) => ({
             ...line,
@@ -1805,15 +1807,15 @@ def _build_report_bootstrap_script() -> str:
         const buyMap = Object.fromEntries(
           (payload.buy_points || [])
             .filter((item) => Array.isArray(item) && item.length >= 2)
-            .map((item) => [String(item[0]), item[1]])
+            .map((item) => [String(item[0]), item])
         );
         const sellMap = Object.fromEntries(
           (payload.sell_points || [])
             .filter((item) => Array.isArray(item) && item.length >= 2)
-            .map((item) => [String(item[0]), item[1]])
+            .map((item) => [String(item[0]), item])
         );
-        const buySeries = xAxis.filter((date) => date in buyMap).map((date) => [date, buyMap[date]]);
-        const sellSeries = xAxis.filter((date) => date in sellMap).map((date) => [date, sellMap[date]]);
+        const buySeries = xAxis.filter((date) => date in buyMap).map((date) => buyMap[date]);
+        const sellSeries = xAxis.filter((date) => date in sellMap).map((date) => sellMap[date]);
         const legendLabels = ['K线', '买点', '卖点', '成交量'].concat(
           indicatorLines.map((item) => item.name || 'Indicator')
         );
@@ -1852,11 +1854,19 @@ def _build_report_bootstrap_script() -> str:
                   const color = point.seriesName === '卖点' ? THEME.sell : THEME.primary;
                   const pointDate = point.data[0];
                   const pointPrice = Number(point.data[1]).toFixed(2);
+                  const pointMeta = point.data.length >= 3 && point.data[2] && typeof point.data[2] === 'object'
+                    ? point.data[2]
+                    : null;
+                  const turnoverHtml =
+                    point.seriesName === '买点' && pointMeta && pointMeta.turnover != null
+                      ? `<span style="color:#475467;"> 金额=${Number(pointMeta.turnover).toFixed(2)}</span>`
+                      : '';
                   htmls.push(
                     `<div style="margin:4px 0 0;">`
                     + `<span style="display:inline-block; min-width:52px; color:${color}; font-weight:700;">${point.seriesName}</span>`
                     + `<span style="color:#475467;"> 日期=${pointDate}</span>`
                     + `<span style="color:${color}; font-weight:700;"> 价格=${pointPrice}</span>`
+                    + turnoverHtml
                     + `</div>`
                   );
                 } else {
@@ -2310,6 +2320,14 @@ def _build_report_bootstrap_script() -> str:
         const drawdownStats = computeDrawdownStats(assetValues);
         const tradeStats = computeTradeStatsFromLogs();
         const positionStats = computePositionStats();
+        const buySellItem = getPrimaryBuySellItem();
+        const filteredBuySellPayload = buySellItem ? getFilteredPayload(buySellItem) : null;
+        const visibleBuyPoints = filteredBuySellPayload?.buy_points || [];
+        const latestBuyPoint = visibleBuyPoints.length ? visibleBuyPoints[visibleBuyPoints.length - 1] : null;
+        const latestBuyMeta =
+          Array.isArray(latestBuyPoint) && latestBuyPoint.length >= 3 && latestBuyPoint[2] && typeof latestBuyPoint[2] === 'object'
+            ? latestBuyPoint[2]
+            : null;
 
         setMetricValue('初始资金', formatMetricNumber(initialValue));
         setMetricValue('期末资产', formatMetricNumber(finalValue));
@@ -2325,6 +2343,12 @@ def _build_report_bootstrap_script() -> str:
         setMetricValue('胜率', formatMetricPercent(tradeStats.winRatePct));
         setMetricValue('净利润', formatMetricNumber(tradeStats.netProfit));
         setMetricValue('平均每笔净利润', formatMetricNumber(tradeStats.avgTradeProfit));
+        setMetricValue(
+          '最近一次买入资金额',
+          latestBuyMeta && latestBuyMeta.turnover != null
+            ? formatMetricNumber(latestBuyMeta.turnover)
+            : 'N/A'
+        );
 
         if (positionStats) {
           setMetricValue('资金占用天数', String(positionStats.positionDays));

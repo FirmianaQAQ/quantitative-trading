@@ -20,6 +20,7 @@ from utils.backtest_report_builder import (
     build_empty_entry_timing_plan,
     build_next_trade_plan,
     describe_adjust_flag,
+    extract_buy_execution_metrics,
     extract_trade_metrics,
     extract_next_trade_plan_from_chart_data,
 )
@@ -93,6 +94,19 @@ class BacktestReportAdviceTests(unittest.TestCase):
         self.assertIn("不复权", description)
         self.assertIn("调整持仓股数", description)
 
+    def test_extract_buy_execution_metrics_uses_latest_turnover(self) -> None:
+        strategy = SimpleNamespace(
+            buy_trade_records=[
+                {"turnover": 25000.0},
+                {"turnover": 18000.5},
+            ]
+        )
+
+        metrics = extract_buy_execution_metrics(strategy)
+
+        self.assertEqual(metrics["latest_buy_turnover"], 18000.5)
+        self.assertEqual(metrics["avg_buy_turnover"], 21500.25)
+
     def test_metric_cards_hide_redundant_strategy_and_forecast_cards(self) -> None:
         html = _build_metric_cards(
             [
@@ -114,12 +128,14 @@ class BacktestReportAdviceTests(unittest.TestCase):
                         "新闻主题": "订单合同",
                         "资金面判断": "偏流入",
                         "财报面判断": "中性",
+                        "最近一次买入资金额": "18,000.50",
                     },
                 }
             ]
         )
 
         self.assertIn("总收益率", html)
+        self.assertIn("最近一次买入资金额", html)
         self.assertNotIn('data-metric-label="股票代码"', html)
         self.assertNotIn("策略名称", html)
         self.assertNotIn("复权口径", html)
@@ -363,7 +379,7 @@ class BacktestReportAdviceTests(unittest.TestCase):
     def test_latest_advice_respects_empty_position_when_backtest_is_holding(self) -> None:
         report_data = build_buy_sell_report(
             dates=["2026-05-13", "2026-05-14"],
-            buy_points=[["2026-05-13", 10.0]],
+            buy_points=[["2026-05-13", 10.0, {"turnover": 18000.5}]],
         )
 
         entries = _extract_daily_advice_entries(
