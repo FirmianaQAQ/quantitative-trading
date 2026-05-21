@@ -18,13 +18,15 @@ Versatile回测使用说明
       - 设置 code、from_date、to_date、fast、slow 等参数
   3. 优化回测参数时：
       - 把 CONFIG["optimize"] 设为 True  
-      - 设置 optimize_params 里的opt_fast 和 opt_slow等参数范围，格式为 start:end:step，例如 5:20:5
+      - 设置 optimize_params 里的 opt_fast、opt_slow、opt_buy_limit_position_pct、opt_sell_trigger_multiplier 等参数范围
+      - 整数参数格式为 start:end:step，例如 5:20:5
+      - 小数参数格式同样支持 start:end:step，例如 0.75:0.95:0.05
   4. 运行方式：
       - venv\Scripts\python.exe backtest\versatile.py
   5. 常用参数：
       - code: 股票代码，例如 sh.000001
       - optimize: 是否进行参数优化，例如 True 或 False
-      - optimize_params: 参数优化的范围，例如 {"opt_fast": "5:20:5", "opt_slow": "20:50:10"}  
+      - optimize_params: 参数优化的范围，例如 {"opt_fast": "5:20:5", "opt_slow": "20:50:10", "opt_buy_limit_position_pct": "0.75:0.95:0.05", "opt_sell_trigger_multiplier": "0.80:0.95:0.05"}  
       - adjust_flag: 复权类型，例如 cq、qfq、hfq、dypre
       - from_date/to_date: 回测时间范围，格式 YYYY-MM-DD
       - cash: 初始资金
@@ -39,7 +41,12 @@ Versatile回测使用说明
       - plot: 是否绘图
       - fast: 快速移动平均线周期，例如 5
       - slow: 慢速移动平均线周期，例如 20
-      - opt_fast/opt_slow: 参数优化范围
+      - opt_fast/opt_slow: 均线参数优化范围
+      - opt_buy_limit_position_pct: 买入封顶区间位置优化范围
+      - opt_sell_trigger_multiplier: 卖出触发系数优化范围
+      - opt_score_annual_weight: 综合评分中年化收益的权重
+      - opt_score_drawdown_weight: 综合评分中最大回撤的扣分权重
+      - opt_score_sharpe_weight: 综合评分中夏普比率的加分权重
       - top: 参数优化结果显示前几名
   6. 输出指标包括：
       - 总收益率、年化收益率、最大回撤、最大回撤金额、夏普比率
@@ -82,68 +89,145 @@ from utils.default_stocks import (
 from utils.project_utils import load_daily_data
 
 
+# 调参指南（先看这里，再改 CONFIG）：
+# 1. 想“更容易买到”：
+#    - 调大 buy_trigger_multiplier
+#    - 调小 buy_rise_days_required
+#    - 调大 buy_limit_position_pct
+# 2. 想“更谨慎，不乱追高”：
+#    - 调小 buy_cash_ratio
+#    - 调小 buy_limit_position_pct
+#    - 调大 buy_rise_days_required
+# 3. 想“拿得更久”：
+#    - 调大 sell_trigger_multiplier
+#    - 调大 above_water_take_profit_pct
+#    - 调大 atr_stop_atr_multiplier
+# 4. 想“止盈止损更快”：
+#    - 调小 sell_trigger_multiplier
+#    - 调小 underwater_take_profit_pct / above_water_take_profit_pct
+#    - 调小 stop_loss_pct / atr_stop_atr_multiplier
+# 5. 推荐优先调这 5 个：
+#    - fast / slow：决定策略节奏，是最核心的结构参数
+#    - buy_limit_position_pct：决定是否追高
+#    - sell_trigger_multiplier：决定止盈是否果断
+#    - stop_loss_pct：决定容忍回撤的上限
+#    - buy_cash_ratio：决定单次下注力度
+# 6. 常见联动关系：
+#    - fast 调快后，通常要同步调小 buy_trigger_window，否则信号会变多但确认太慢
+#    - slow 调慢后，通常要把 data_from_date 再往前拉，避免预热不足
+#    - buy_rise_window 调大后，buy_rise_days_required 通常也要跟着调大
+#    - 开启 atr 补丁后，stop_loss_pct 与 atr_stop_loss_pct 最好保持同一风险级别
+# 7. 震荡市实战建议：
+#    - 先从 buy_limit_position_pct、sell_trigger_multiplier、fast/slow 开始
+#    - 不要一口气同时改 5 个以上参数，否则很难判断到底是谁起作用
 CONFIG: dict[str, Any] = {
-    # 股票代码，例如 sh.000001 或 sz.000725
+    # 默认主标的代码。改这里会同时影响回测、同步数据和默认测试样本的首位。
     "code": DEFAULT_PRIMARY_STOCK_CODE,
-    # Versatile 默认使用动态前复权，信号更平滑，适合震荡区间观察结构变化
+    # 复权口径。dypre 表示信号用前复权、成交与持仓估值用不复权。
     "adjust_flag": "dypre",
-    # 回测时间范围
+    # 回测起始日期。
     "from_date": "2020-01-01",
+    # 回测结束日期。None 表示取到最新数据。
     "to_date": None,
-    # 给慢线预留足够预热区间，避免震荡识别刚启动时失真
+    # 预热数据起始日期。要早于 from_date，避免均线和窗口指标失真。
     "data_from_date": "2019-01-01",
-    # 初始资金和 A 股费用模型
+    # 初始资金。
     "cash": 100000.0,
+    # 券商佣金率，按成交额双边收取。
     "commission": 0.0000854,
+    # 卖出印花税率。
     "stamp_duty": 0,
+    # 双边过户费率。
     "transfer_fee": 0,
+    # 单笔最低佣金。
     "min_commission": 5.0,
-    # 震荡市默认更保守，留更多现金给二次确认
+    # 买入时使用的现金比例。越小越保守，越大越激进；如果经常满仓后被套，这里先往下调。
     "buy_cash_ratio": 0.25,
+    # 买入仓位计算时的价格缓冲，防止次日高开导致资金不足；如果经常下单失败可适当调大。
     "buy_price_buffer": 1.015,
+    # 每次下单的最小股数单位，A 股通常是 100。
     "lot_size": 100,
-    # 买入观察窗口：更早关注低位，但要求更明确的回暖确认
+    # 买入触发阈值。越大越容易启动观察窗口，越小越强调“真低位”。
     "buy_trigger_multiplier": 1.02,
+    # 买入观察窗口长度，单位是交易日。越大越愿意等确认，越小越偏快进快出。
     "buy_trigger_window": 10,
+    # 最近多少个交易日参与上涨天数统计。越大越看中连续性，越小越看重短促反弹。
     "buy_rise_window": 6,
+    # 观察窗口内至少需要多少个上涨日才允许买入。越大越严格，越小越容易出手。
     "buy_rise_days_required": 3,
-    # 买入封顶区间位置：达到区间高位后不追高
+    # 买入封顶位置百分比。取值越小越不追高，越大越允许追到区间高位附近。
     "buy_limit_position_pct": 0.90,
-    # 卖出阈值略收紧，减少震荡利润回吐
+    # 卖出触发阈值。越小越容易提前落袋，越大越愿意拿利润去博更高空间。
     "sell_trigger_multiplier": 0.90,
+    # 相对买入价的止损跌幅。越小止损越快，越大越能扛波动但回撤也会变大。
     "stop_loss_pct": 0.12,
+    # 持仓时的保底盈利线。越大越容易把浮盈锁住，但也更容易被正常波动洗出去。
     "protect_profit_floor_pct": 0.03,
+    # 股价仍在水下时的止盈阈值。建议比水上止盈更小，避免弱势反弹利润回吐。
     "underwater_take_profit_pct": 0.06,
+    # 股价已经在水上时的止盈阈值。越大越偏趋势持有，越小越偏震荡止盈。
     "above_water_take_profit_pct": 0.16,
+    # 是否打印交易日志。
     "print_log": True,
-    # 均线参数偏向震荡市，不再默认使用极慢的年线组合
+    # 快均线周期。越小越敏感、信号越多；越大越钝化、信号越少。
     "fast": 13,
+    # 慢均线周期。越大越偏中长期结构，越小越贴近中短线节奏。
     "slow": 144,
+    # 是否生成 HTML 图表。
     "plot": True,
+    # 绘图基准指数代码。空字符串表示不显示基准曲线。
     "benchmark_code": "sh.000001",
+    # 回测报告输出目录。
     "report_dir": "logs/backtest",
+    # 回测报告文件名前缀。
     "report_name": "base_backtest",
+    # 报告里展示的策略名称。
     "strategy_name": DEFAULT_BASE_STRATEGY_NAME,
+    # 报告里的策略简述。
     "strategy_brief": "震荡适配 + ATR短确认",
+    # 当前持仓状态。auto / empty / hold。
     "current_position": "auto",
+    # 是否启用大模型分析。
     "enable_llm_analysis": False,
-    # 默认启用 dypre 补丁做运行态校验，避免动态前复权数据异常静默通过
+    # 启用的补丁列表。dypre 负责数据校验，atr 负责波动率风控。
     "patches": ["dypre", "atr"],
+    # 补丁严格模式。True 时补丁缺失或执行失败会直接报错。
     "patch_strict": False,
-    # ATR 补丁继续保留，但使用短周期确认，避免用趋势突破逻辑过度拦截震荡低吸。
+    # ATR 周期。越小越跟着短期波动走，越大越平滑。
     "atr_period": 14,
+    # ATR 突破确认周期。越短越敏感，越长越保守；震荡市通常不建议太大。
     "atr_breakout_period": 5,
+    # 突破确认百分比，0 表示收盘价直接高于突破线即可。
     "atr_breakout_confirm_pct": 0.0,
+    # ATR 退出周期。越短越容易退出，越长越能容忍回踩。
     "atr_exit_period": 5,
+    # ATR 风险预算占账户总资产比例。越大单笔仓位可能越重，回撤也更大。
     "atr_risk_pct": 0.03,
+    # ATR 补丁最多允许加仓几次。震荡市不建议太高，否则容易越涨越追。
     "atr_max_units": 2,
+    # 每次加仓使用的 ATR 倍数。越小越容易加仓，越大越要等更明显的扩展。
     "atr_add_unit_atr": 0.8,
+    # ATR 止损倍数。越小越紧，越大越宽；和 atr_risk_pct 一起决定整体风险。
     "atr_stop_atr_multiplier": 1.5,
+    # ATR 补丁对应的固定止损比例。建议与 stop_loss_pct 保持同一量级。
     "atr_stop_loss_pct": 0.12,
-    # 参数优化开关及范围
+    # 是否执行参数优化。
     "optimize": False,
+    # 优化时的快线取值范围，格式 start:end:step。
     "opt_fast": "8:21:1",
+    # 优化时的买入封顶区间位置范围，小数参数同样支持 start:end:step。
+    "opt_buy_limit_position_pct": "0.75:0.95:0.05",
+    # 优化时的卖出触发系数范围，小数参数同样支持 start:end:step。
+    "opt_sell_trigger_multiplier": "0.80:0.95:0.05",
+    # 优化时的慢线取值范围，格式 start:end:step。
     "opt_slow": "89:233:8",
+    # 综合评分：年化收益加分权重。
+    "opt_score_annual_weight": 1.0,
+    # 综合评分：最大回撤扣分权重。
+    "opt_score_drawdown_weight": 1.0,
+    # 综合评分：夏普比率加分权重。
+    "opt_score_sharpe_weight": 10.0,
+    # 优化结果展示前几名。
     "top": 10,
 }
 

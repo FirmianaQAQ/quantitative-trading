@@ -35,8 +35,10 @@ r"""
    - 总交易次数、盈利次数、亏损次数、胜率、净利润、平均每笔净利润
 """
 
+import copy
 import sys
 import os
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
@@ -1495,6 +1497,45 @@ def parse_range(expr: str, label: str) -> range:
     return range(start, end + 1, step)
 
 
+def parse_decimal_range(expr: str, label: str) -> list[float]:
+    parts = [part.strip() for part in expr.split(":")]
+    if len(parts) not in (2, 3):
+        raise ValueError(f"{label} 格式错误，应为 start:end 或 start:end:step")
+
+    start = Decimal(parts[0])
+    end = Decimal(parts[1])
+    step = Decimal(parts[2]) if len(parts) == 3 else Decimal("1")
+
+    if start <= 0 or end <= 0 or step <= 0:
+        raise ValueError(f"{label} 的 start、end、step 都必须大于 0")
+    if start > end:
+        raise ValueError(f"{label} 的 start 不能大于 end")
+
+    values: list[float] = []
+    current = start
+    epsilon = step / Decimal("1000000")
+    while current <= end + epsilon:
+        values.append(float(current))
+        current += step
+    return values
+
+
+def compute_optimization_score(summary: dict[str, Any], config: dict[str, Any]) -> float:
+    annual_return_pct = float(summary.get("annual_return_pct") or 0.0)
+    max_drawdown_pct = float(summary.get("max_drawdown_pct") or 0.0)
+    sharpe_ratio = float(summary.get("sharpe_ratio") or 0.0)
+
+    annual_weight = float(config.get("opt_score_annual_weight", 1.0))
+    drawdown_weight = float(config.get("opt_score_drawdown_weight", 1.0))
+    sharpe_weight = float(config.get("opt_score_sharpe_weight", 10.0))
+
+    return (
+        annual_return_pct * annual_weight
+        - max_drawdown_pct * drawdown_weight
+        + sharpe_ratio * sharpe_weight
+    )
+
+
 def validate_config(config: dict[str, Any]) -> None:
     config["patches"] = normalize_requested_patch_names(config.get("patches"))
     config["patch_strict"] = bool(config.get("patch_strict", False))
@@ -1532,6 +1573,16 @@ def validate_config(config: dict[str, Any]) -> None:
     if config.get("optimize"):
         parse_range(config["opt_fast"], "opt_fast")
         parse_range(config["opt_slow"], "opt_slow")
+        if config.get("opt_buy_limit_position_pct"):
+            parse_decimal_range(
+                config["opt_buy_limit_position_pct"],
+                "opt_buy_limit_position_pct",
+            )
+        if config.get("opt_sell_trigger_multiplier"):
+            parse_decimal_range(
+                config["opt_sell_trigger_multiplier"],
+                "opt_sell_trigger_multiplier",
+            )
         if config["plot"]:
             raise ValueError("参数优化模式下不支持 plot=True")
         if config["top"] <= 0:
@@ -1545,35 +1596,10 @@ def validate_config(config: dict[str, Any]) -> None:
 
 
 def run_backtest(config: dict[str, Any], df: pd.DataFrame) -> dict[str, Any]:
-    cerebro = create_cerebro(config)
-    # 设置策略 (Strategy)：添加你定义的交易策略类（注意是类，不是实例）
-    cerebro.addstrategy(
-        SimpleMovingAverageStrategy,
-        fast_period=config["fast"],
-        slow_period=config["slow"],
-        printlog=config["print_log"],
-        p=config,
-        df=df,
-    )
-    # 添加股票日线数据
-    cerebro.adddata(build_data_feed(df, config["data_from_date"], config["to_date"]))
-    # 添加分析器 (Analyzer)：添加你需要的分析器来评估策略表现
-    add_analyzers(cerebro)
-
-    initial_value = cerebro.broker.getvalue()
-    print(f"开始回测: 股票={config['code']}，初始资金={initial_value:.2f}")
-    strategies = cerebro.run()
-    strategy = strategies[0]
-    summary = summarize_result(strategy, initial_value)
-    summary.update(
-        {
-            "fast_period": strategy.params.fast_period,
-            "slow_period": strategy.params.slow_period,
-        }
-    )
+    strategy, summary = _execute_backtest_once(config, df)
+    print(f"开始回测: 股票={config['code']}，初始资金={config['cash']:.2f}")
     print_summary(summary)
 
-    # 绘图
     ai_report_path = maybe_generate_single_stock_analysis(config, summary, df)
 
     if config["plot"]:
@@ -1592,49 +1618,106 @@ def run_backtest(config: dict[str, Any], df: pd.DataFrame) -> dict[str, Any]:
     return summary
 
 
+def _execute_backtest_once(
+    config: dict[str, Any],
+    df: pd.DataFrame,
+) -> tuple[bt.Strategy, dict[str, Any]]:
+    cerebro = create_cerebro(config)
+    # 设置策略 (Strategy)：添加你定义的交易策略类（注意是类，不是实例）
+    cerebro.addstrategy(
+        SimpleMovingAverageStrategy,
+        fast_period=config["fast"],
+        slow_period=config["slow"],
+        printlog=config["print_log"],
+        p=config,
+        df=df,
+    )
+    # 添加股票日线数据
+    cerebro.adddata(build_data_feed(df, config["data_from_date"], config["to_date"]))
+    # 添加分析器 (Analyzer)：添加你需要的分析器来评估策略表现
+    add_analyzers(cerebro)
+
+    initial_value = float(config["cash"])
+    strategies = cerebro.run()
+    strategy = strategies[0]
+    summary = summarize_result(strategy, initial_value)
+    summary.update(
+        {
+            "fast_period": strategy.params.fast_period,
+            "slow_period": strategy.params.slow_period,
+            "buy_limit_position_pct": float(config.get("buy_limit_position_pct", 0.9)),
+            "sell_trigger_multiplier": float(config.get("sell_trigger_multiplier", 0.9)),
+        }
+    )
+    return strategy, summary
+
+
 def run_optimization(config: dict[str, Any], df: pd.DataFrame) -> None:
     """
     参数优化的核心思想是通过穷举法（Grid Search）系统地测试不同的参数组合，
     以找到在历史数据上表现最好的参数设置。
-    目前只是找到最适合的两条均线组合
+    当前使用手动网格回测，避免 optstrategy 在复权/自定义参数场景下统计失真。
     """
 
     fast_range = parse_range(config["opt_fast"], "opt_fast")
     slow_range = parse_range(config["opt_slow"], "opt_slow")
+    buy_limit_position_values = (
+        parse_decimal_range(
+            config["opt_buy_limit_position_pct"],
+            "opt_buy_limit_position_pct",
+        )
+        if config.get("opt_buy_limit_position_pct")
+        else [float(config.get("buy_limit_position_pct", 0.9))]
+    )
+    sell_trigger_multiplier_values = (
+        parse_decimal_range(
+            config["opt_sell_trigger_multiplier"],
+            "opt_sell_trigger_multiplier",
+        )
+        if config.get("opt_sell_trigger_multiplier")
+        else [float(config.get("sell_trigger_multiplier", 0.9))]
+    )
     combinations = [
-        (fast_period, slow_period)
+        (
+            fast_period,
+            slow_period,
+            buy_limit_position_pct,
+            sell_trigger_multiplier,
+        )
         for fast_period in fast_range
         for slow_period in slow_range
+        for buy_limit_position_pct in buy_limit_position_values
+        for sell_trigger_multiplier in sell_trigger_multiplier_values
         if fast_period < slow_period
     ]
     if not combinations:
-        raise ValueError("没有可用的均线参数组合，请检查 opt_fast 和 opt_slow")
-
-    cerebro = create_cerebro(config)
-    cerebro.optstrategy(
-        SimpleMovingAverageStrategy,
-        fast_period=sorted({item[0] for item in combinations}),
-        slow_period=sorted({item[1] for item in combinations}),
-        printlog=False,
-    )
-    cerebro.adddata(build_data_feed(df, config["from_date"], config["to_date"]))
-    add_analyzers(cerebro)
+        raise ValueError(
+            "没有可用的参数组合，请检查 opt_fast、opt_slow、opt_buy_limit_position_pct 和 opt_sell_trigger_multiplier"
+        )
 
     print(f"开始参数优化: 股票={config['code']}，参数组合数={len(combinations)}")
-    optimized_runs = cerebro.run(maxcpus=1)
 
     results: list[dict[str, Any]] = []
-    for run_group in optimized_runs:
-        strategy = run_group[0]
-        if strategy.params.fast_period >= strategy.params.slow_period:
-            continue
-        summary = summarize_result(strategy, config["cash"])
-        summary.update(
+    for (
+        fast_period,
+        slow_period,
+        buy_limit_position_pct,
+        sell_trigger_multiplier,
+    ) in combinations:
+        loop_config = copy.deepcopy(config)
+        loop_config.update(
             {
-                "fast_period": strategy.params.fast_period,
-                "slow_period": strategy.params.slow_period,
+                "fast": fast_period,
+                "slow": slow_period,
+                "buy_limit_position_pct": buy_limit_position_pct,
+                "sell_trigger_multiplier": sell_trigger_multiplier,
+                "plot": False,
+                "print_log": False,
+                "enable_llm_analysis": False,
             }
         )
+        _, summary = _execute_backtest_once(loop_config, df)
+        summary["optimization_score"] = compute_optimization_score(summary, config)
         results.append(summary)
 
     if not results:
@@ -1643,6 +1726,7 @@ def run_optimization(config: dict[str, Any], df: pd.DataFrame) -> None:
     top_results = sorted(
         results,
         key=lambda item: (
+            item.get("optimization_score", float("-inf")),
             (
                 item["annual_return_pct"]
                 if item["annual_return_pct"] is not None
@@ -1653,7 +1737,7 @@ def run_optimization(config: dict[str, Any], df: pd.DataFrame) -> None:
         reverse=True,
     )[: config["top"]]
 
-    print("参数优化结果(按总收益率排序):")
+    print("参数优化结果(按综合评分排序):")
     for index, item in enumerate(top_results, start=1):
         annual_text = (
             f"{item['annual_return_pct']:.2f}%"
@@ -1668,11 +1752,12 @@ def run_optimization(config: dict[str, Any], df: pd.DataFrame) -> None:
             if item["max_drawdown_pct"] is not None
             else "N/A"
         )
+        score_text = f"{float(item.get('optimization_score', 0.0)):.2f}"
         print(
             f"{index}. 快线={item['fast_period']}, 慢线={item['slow_period']}, "
-            # 应该是 Backtrader 的optstrategy参数调优有bug，返回的期末资金所有都是最后一组参数的结果，
-            # 以后改成我自己遍历所有参数组合的方式来跑，就不会有这个问题了
-            # f"总收益率={item['total_return_pct']:.2f}%, "
+            f"买入封顶位置={item.get('buy_limit_position_pct', 0.0):.2f}, "
+            f"卖出触发系数={item.get('sell_trigger_multiplier', 0.0):.2f}, "
+            f"综合评分={score_text}, "
             f"年化收益率={annual_text}, "
             f"最大回撤={max_drawdown_text}, 夏普比率={sharpe_text}, "
             f"胜率={item['win_rate_pct']:.2f}%, 交易次数={item['trades_total']}"
