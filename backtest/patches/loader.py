@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from importlib import import_module
 from pathlib import Path
 import re
@@ -58,10 +59,95 @@ def discover_available_patch_names() -> list[str]:
     patch_dir = Path(__file__).resolve().parent
     names: list[str] = []
     for path in sorted(patch_dir.glob("*.py")):
-        if path.stem in IGNORED_PATCH_MODULES:
+        if path.stem in IGNORED_PATCH_MODULES or path.stem.startswith("_"):
             continue
         names.append(path.stem)
     return names
+
+
+def build_patch_analysis_context(config: dict[str, Any] | None) -> dict[str, Any]:
+    resolved_config = config or {}
+    requested_names = normalize_requested_patch_names(resolved_config.get("patches"))
+    available_names = discover_available_patch_names()
+    available_catalog = [
+        describe_patch_module(name, enabled=name in requested_names)
+        for name in available_names
+    ]
+    return {
+        "requested_patches": requested_names,
+        "patch_strict": bool(resolved_config.get("patch_strict", False)),
+        "active_patch_count": len(requested_names),
+        "available_patch_count": len(available_catalog),
+        "active_patches": [
+            item for item in available_catalog if item["name"] in requested_names
+        ],
+        "available_patches": available_catalog,
+        "missing_requested_patches": [
+            name for name in requested_names if name not in set(available_names)
+        ],
+    }
+
+
+def describe_patch_module(name: str, *, enabled: bool = False) -> dict[str, Any]:
+    patch_path = Path(__file__).resolve().parent / f"{name}.py"
+    summary = None
+    hooks: list[str] = []
+    if patch_path.exists():
+        source = patch_path.read_text(encoding="utf-8")
+        summary = _extract_patch_summary(source)
+        hooks = _extract_supported_hooks(source)
+    return {
+        "name": name,
+        "enabled": bool(enabled),
+        "summary": summary or f"{name} 补丁",
+        "supported_hooks": hooks,
+        "path": str(patch_path),
+    }
+
+
+def _extract_patch_summary(source: str) -> str | None:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        tree = None
+
+    if tree is not None:
+        docstring = ast.get_docstring(tree)
+        if docstring:
+            first_line = next(
+                (line.strip() for line in docstring.splitlines() if line.strip()),
+                "",
+            )
+            if first_line:
+                return first_line
+
+    comment_lines: list[str] = []
+    for raw_line in source.splitlines():
+        line = raw_line.strip()
+        if not line and not comment_lines:
+            continue
+        if line.startswith("#"):
+            comment_text = line.removeprefix("#").strip()
+            if comment_text:
+                comment_lines.append(comment_text)
+            continue
+        break
+    if comment_lines:
+        return " ".join(comment_lines)
+    return None
+
+
+def _extract_supported_hooks(source: str) -> list[str]:
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return []
+    hooks: list[str] = []
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name in SUPPORTED_HOOKS:
+                hooks.append(node.name)
+    return hooks
 
 
 class StrategyPatchManager:

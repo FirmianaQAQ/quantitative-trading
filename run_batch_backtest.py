@@ -55,7 +55,7 @@ def prompt_strategy_menu() -> str:
         for family_name, family_specs in grouped_specs:
             print(f"  [{family_name}]")
             if is_multi_version_family(family_specs):
-                print(f"  {index}. 联跑全部版本（生成全部普通双均线版本结果）")
+                print(f"  {index}. 联跑全部版本（生成全部 S-BMK 版本结果）")
                 menu_items.append(family_specs[0].family_id)
                 index += 1
                 continue

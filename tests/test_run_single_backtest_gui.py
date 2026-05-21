@@ -35,10 +35,10 @@ def _dummy_strategy_spec(strategy_id: str, display_name: str) -> StrategySpec:
 
 class FamilyDashboardReportTests(unittest.TestCase):
     def test_prompt_strategy_menu_skips_second_level_for_single_version_family(self) -> None:
-        single_spec = _dummy_strategy_spec("base_backtest", "普通双均线")
+        single_spec = _dummy_strategy_spec("base_backtest", "S-BMK策略")
         with patch(
             "run_single_backtest_gui.group_strategy_specs",
-            return_value=[("普通双均线", [single_spec])],
+            return_value=[("S-BMK策略", [single_spec])],
         ):
             with patch("builtins.input", side_effect=["1"]):
                 self.assertEqual(prompt_strategy_menu(), "base_backtest")
@@ -49,14 +49,14 @@ class FamilyDashboardReportTests(unittest.TestCase):
             [
                 "run_single_backtest_gui.py",
                 "--ai=off",
-                "tcl_simple_ma_backtest",
-                "sz.000100",
+                "base_backtest",
+                "sz.000725",
             ],
         ):
             strategy_id, stock_code, ai_mode = parse_cli_args()
 
-        self.assertEqual(strategy_id, "tcl_simple_ma_backtest")
-        self.assertEqual(stock_code, "sz.000100")
+        self.assertEqual(strategy_id, "base_backtest")
+        self.assertEqual(stock_code, "sz.000725")
         self.assertEqual(ai_mode, AI_ANALYSIS_OFF)
 
     def test_sync_manual_stock_selection_syncs_required_codes(self) -> None:
@@ -89,7 +89,7 @@ class FamilyDashboardReportTests(unittest.TestCase):
         )
 
     def test_choose_stock_interactively_manual_input_syncs_before_return(self) -> None:
-        single_spec = _dummy_strategy_spec("base_backtest", "普通双均线")
+        single_spec = _dummy_strategy_spec("base_backtest", "S-BMK策略")
         with patch(
             "run_single_backtest_gui.prompt_stock_menu",
             side_effect=[MANUAL_MENU_VALUE],

@@ -50,7 +50,7 @@ AI_ANALYSIS_OFF = "off"
 AI_ANALYSIS_AUTO = "auto"
 PAIR_AUTO_PREFIX = "pair_auto|"
 MULTI_VERSION_FAMILY_IDS: frozenset[str] = frozenset()
-DIRECT_REPORT_FAMILY_IDS: frozenset[str] = frozenset({"specialized_ma_backtest"})
+DIRECT_REPORT_FAMILY_IDS: frozenset[str] = frozenset()
 
 
 def normalize_code(raw_code: str) -> str:
@@ -1126,7 +1126,7 @@ def run_simple_ma_family(
 ) -> Path:
     family_specs = list_family_strategy_specs(selected_spec.family_id)
     if not family_specs:
-        raise RuntimeError("未找到普通双均线家族策略")
+        raise RuntimeError("未找到 S-BMK 策略家族")
 
     selected_config = resolve_config(
         selected_spec,
@@ -1188,26 +1188,14 @@ def main() -> None:
     stock_code: str | tuple[str, str]
     while True:
         spec = choose_strategy_spec(cli_strategy_id)
-        if is_direct_report_strategy(spec):
-            stock_code = resolve_strategy_default_stock_selection(spec, cli_stock_code)
-            print()
-            print(f"已选择专版策略：{spec.display_name}，将直接生成报告")
-            print(f"固定股票: {stock_code} {get_display_label(spec, str(stock_code))}")
-            break
         stock_code = normalize_cli_stock_selection(spec, cli_stock_code) or choose_stock_interactively(spec)
         if stock_code == BACK_MENU_VALUE:
             cli_strategy_id = None
             cli_stock_code = None
             continue
         break
-    if is_direct_report_strategy(spec):
-        cash = resolve_strategy_default_cash(spec)
-        current_position = resolve_strategy_default_current_position(spec)
-        print(f"默认初始资金: {cash:.2f}")
-        print(f"默认持仓状态: {get_current_position_label(current_position)}")
-    else:
-        cash = prompt_initial_cash()
-        current_position = prompt_current_position()
+    cash = prompt_initial_cash()
+    current_position = prompt_current_position()
     enable_llm_analysis = resolve_ai_analysis_enabled(cli_ai_analysis_mode)
     if cli_ai_analysis_mode is None:
         print()

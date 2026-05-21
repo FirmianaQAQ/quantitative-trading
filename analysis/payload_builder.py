@@ -4,6 +4,8 @@ from typing import Any
 
 import pandas as pd
 
+from backtest.patches.loader import build_patch_analysis_context
+
 
 def _to_builtin(value: Any) -> Any:
     if isinstance(value, dict):
@@ -77,6 +79,7 @@ def build_single_stock_analysis_payload(
     turn_series = filtered_df["turn"].astype(float)
     volume_series = filtered_df["volume"].astype(float)
     daily_returns = close_series.pct_change().dropna() * 100
+    patch_context = build_patch_analysis_context(config)
 
     payload = {
         "task_type": "single_stock_backtest_analysis",
@@ -84,29 +87,8 @@ def build_single_stock_analysis_payload(
             "report_name": config.get("report_name"),
             "strategy_name": config.get("strategy_name"),
             "strategy_brief": config.get("strategy_brief"),
-            "parameters": {
-                key: value
-                for key, value in config.items()
-                if key
-                in {
-                    "fast",
-                    "slow",
-                    "lookback",
-                    "entry_z",
-                    "exit_z",
-                    "stop_z",
-                    "pair_stop_loss_pct",
-                    "max_holding_days",
-                    "buy_trigger_multiplier",
-                    "buy_trigger_window",
-                    "buy_rise_window",
-                    "buy_rise_days_required",
-                    "sell_trigger_multiplier",
-                    "stop_loss_pct",
-                    "cash",
-                    "adjust_flag",
-                }
-            },
+            "parameters": _collect_strategy_parameters(config, patch_context),
+            "patch_context": patch_context,
         },
         "asset": {
             "code": config.get("code"),
@@ -256,14 +238,18 @@ def build_batch_analysis_payload(
             "win_rate_pct": item.get("win_rate_pct"),
             "net_profit": item.get("net_profit"),
             "trades_total": item.get("trades_total"),
+            "patches": item.get("patches", []),
+            "patch_context": item.get("patch_context", {}),
         }
         for item in ranked_results[:10]
     ]
+    batch_patch_context = ranked_results[0].get("patch_context") or {}
     payload = {
         "task_type": "batch_backtest_analysis",
         "strategy": {
             "strategy_id": strategy_id,
             "strategy_name": strategy_name,
+            "patch_context": batch_patch_context,
         },
         "batch_summary": summary_stats,
         "candidates": top_candidates,
@@ -275,3 +261,43 @@ def _round_or_none(value: Any, digits: int) -> float | None:
     if value is None or pd.isna(value):
         return None
     return round(float(value), digits)
+
+
+def _collect_strategy_parameters(
+    config: dict[str, Any],
+    patch_context: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    base_keys = {
+        "fast",
+        "slow",
+        "lookback",
+        "entry_z",
+        "exit_z",
+        "stop_z",
+        "pair_stop_loss_pct",
+        "max_holding_days",
+        "buy_trigger_multiplier",
+        "buy_trigger_window",
+        "buy_rise_window",
+        "buy_rise_days_required",
+        "sell_trigger_multiplier",
+        "stop_loss_pct",
+        "cash",
+        "adjust_flag",
+        "patch_strict",
+    }
+    parameters = {
+        key: value
+        for key, value in config.items()
+        if key in base_keys
+    }
+
+    active_patches = []
+    if isinstance(patch_context, dict):
+        active_patches = patch_context.get("requested_patches") or []
+    for patch_name in active_patches:
+        prefix = f"{patch_name}_"
+        for key, value in config.items():
+            if key.startswith(prefix):
+                parameters[key] = value
+    return parameters

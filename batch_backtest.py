@@ -4,6 +4,7 @@ from typing import Any
 
 from analysis.config import is_llm_analysis_requested
 from analysis.service import maybe_generate_batch_analysis
+from backtest.patches.loader import build_patch_analysis_context
 from backtest.strategy_registry import (
     get_default_strategy_spec,
     get_required_codes,
@@ -57,6 +58,8 @@ def _run_single_batch_strategy(
                 "strategy_id": spec.strategy_id,
                 "strategy_name": spec.display_name,
                 "enable_llm_analysis": bool(config.get("enable_llm_analysis")),
+                "patches": list(config.get("patches") or []),
+                "patch_context": build_patch_analysis_context(config),
             }
         )
     maybe_generate_batch_analysis(

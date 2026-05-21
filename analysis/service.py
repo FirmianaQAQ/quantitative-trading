@@ -213,6 +213,7 @@ def _build_system_prompt() -> str:
     return (
         "你是资深量化研究员。"
         "你只能基于用户提供的结构化回测数据和补充上下文做分析，不允许编造不存在的行情、财务、新闻或资金流信息。"
+        "如果输入里包含 strategy.patch_context、active_patches、available_patches 或补丁参数，你必须把补丁视为策略本体的一部分，明确分析它们对信号过滤、仓位控制、持有管理和退出机制的影响。"
         "你必须输出 JSON 对象，字段固定为："
         "score, conclusion, strengths, risks, regime_fit, next_action, confidence。"
         "其中 strengths 和 risks 必须是字符串数组，score 和 confidence 是 0 到 100 的整数。"
@@ -226,6 +227,7 @@ def _build_user_prompt(task_title: str, payload: dict[str, Any]) -> str:
         f"任务：{task_title}\n"
         "请严格基于下面的 JSON 数据输出分析结果。\n"
         "如果数据不足以支撑强结论，请在 risks 和 next_action 里明确指出。\n"
+        "如果 strategy.patch_context 存在，必须把补丁逻辑与基础策略一起分析，不能忽略 active_patches、补丁摘要、支持的 hook 和补丁参数。\n"
         "若 external_context 中部分字段缺失、为空或标记为 unavailable，只能如实说明，不能脑补。\n"
         "若 external_context 提供了新闻、财报或资金流，请把它们当作对策略表现的辅助解释，而不是确定性因果。\n"
         "输入 JSON：\n"

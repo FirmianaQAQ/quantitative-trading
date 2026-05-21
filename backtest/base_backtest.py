@@ -124,12 +124,12 @@ CONFIG: dict[str, Any] = {
     # 报告的配置
     "report_dir": "logs/backtest",
     "report_name": "base_backtest",
-    "strategy_name": "普通双均线",
-    "strategy_brief": "基础版",
+    "strategy_name": "S-BMK策略",
+    "strategy_brief": "Sea Turtle + BMK",
     "current_position": "auto",
     "enable_llm_analysis": False,
     # 启用的策略增强补丁，按 backtest/patches/*.py 的模块名填写
-    "patches": [],
+    "patches": ["sea_turtle", "bmk"],
     # 为 True 时，补丁不存在或执行失败会直接报错
     "patch_strict": False,
 }

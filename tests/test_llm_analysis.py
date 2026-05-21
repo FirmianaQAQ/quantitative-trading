@@ -15,6 +15,7 @@ from analysis.payload_builder import (
 )
 from analysis.context_enricher import enrich_single_stock_context
 from analysis.service import (
+    _build_user_prompt,
     maybe_generate_batch_analysis,
     maybe_generate_single_stock_analysis,
 )
@@ -75,7 +76,7 @@ class LLMAnalysisTests(unittest.TestCase):
             config={
                 "code": "sz.000725",
                 "report_name": "base_backtest",
-                "strategy_name": "普通双均线",
+                "strategy_name": "S-BMK策略",
                 "strategy_brief": "基础版",
                 "adjust_flag": DEFAULT_A_SHARE_ADJUST,
                 "from_date": "2024-01-01",
@@ -83,6 +84,8 @@ class LLMAnalysisTests(unittest.TestCase):
                 "fast": 8,
                 "slow": 250,
                 "cash": 100000.0,
+                "patches": ["sea_turtle"],
+                "sea_turtle_qr_threshold": 0.7,
             },
             summary={
                 "annual_return_pct": 18.3,
@@ -104,6 +107,14 @@ class LLMAnalysisTests(unittest.TestCase):
         self.assertIsNotNone(payload["market_snapshot"]["return_20d_pct"])
         self.assertIsNotNone(payload["market_snapshot"]["ma20"])
         self.assertEqual(
+            payload["strategy"]["patch_context"]["requested_patches"],
+            ["sea_turtle"],
+        )
+        self.assertEqual(
+            payload["strategy"]["parameters"]["sea_turtle_qr_threshold"],
+            0.7,
+        )
+        self.assertEqual(
             payload["performance_summary"]["next_trade_plan"]["action"],
             "watch_buy",
         )
@@ -113,7 +124,7 @@ class LLMAnalysisTests(unittest.TestCase):
             config={
                 "code": "sz.000725",
                 "report_name": "base_backtest",
-                "strategy_name": "普通双均线",
+                "strategy_name": "S-BMK策略",
                 "strategy_brief": "基础版",
                 "adjust_flag": DEFAULT_A_SHARE_ADJUST,
                 "from_date": "2024-01-01",
@@ -236,7 +247,7 @@ class LLMAnalysisTests(unittest.TestCase):
     def test_build_batch_analysis_payload_ranks_best_candidate_first(self) -> None:
         payload = build_batch_analysis_payload(
             strategy_id="base_backtest",
-            strategy_name="普通双均线",
+            strategy_name="S-BMK策略",
             batch_results=[
                 {
                     "code": "sz.000725",
@@ -247,6 +258,11 @@ class LLMAnalysisTests(unittest.TestCase):
                     "win_rate_pct": 55.0,
                     "net_profit": 8000.0,
                     "trades_total": 8,
+                    "patches": ["sea_turtle"],
+                    "patch_context": {
+                        "requested_patches": ["sea_turtle"],
+                        "active_patches": [{"name": "sea_turtle"}],
+                    },
                 },
                 {
                     "code": "sz.000100",
@@ -257,6 +273,11 @@ class LLMAnalysisTests(unittest.TestCase):
                     "win_rate_pct": 60.0,
                     "net_profit": 12000.0,
                     "trades_total": 10,
+                    "patches": ["sea_turtle"],
+                    "patch_context": {
+                        "requested_patches": ["sea_turtle"],
+                        "active_patches": [{"name": "sea_turtle"}],
+                    },
                 },
             ],
         )
@@ -264,12 +285,31 @@ class LLMAnalysisTests(unittest.TestCase):
         self.assertEqual(payload["task_type"], "batch_backtest_analysis")
         self.assertEqual(payload["candidates"][0]["code"], "sz.000100")
         self.assertEqual(payload["batch_summary"]["sample_size"], 2)
+        self.assertEqual(
+            payload["strategy"]["patch_context"]["requested_patches"],
+            ["sea_turtle"],
+        )
+
+    def test_build_user_prompt_requires_model_to_consider_patch_context(self) -> None:
+        prompt = _build_user_prompt(
+            "单策略回测分析",
+            {
+                "strategy": {
+                    "patch_context": {
+                        "requested_patches": ["sea_turtle"],
+                    }
+                }
+            },
+        )
+
+        self.assertIn("strategy.patch_context", prompt)
+        self.assertIn("不能忽略 active_patches", prompt)
 
     def test_single_analysis_writes_markdown_report(self) -> None:
         config = {
             "code": "sz.000725",
                 "report_name": "base_backtest",
-            "strategy_name": "普通双均线",
+            "strategy_name": "S-BMK策略",
             "strategy_brief": "基础版",
             "adjust_flag": DEFAULT_A_SHARE_ADJUST,
             "from_date": "2024-01-01",
@@ -326,7 +366,7 @@ class LLMAnalysisTests(unittest.TestCase):
             self.assertEqual(report_path, output_path)
             self.assertTrue(output_path.exists())
             content = output_path.read_text(encoding="utf-8")
-            self.assertIn("普通双均线 sz.000725 大模型分析报告", content)
+            self.assertIn("S-BMK策略 sz.000725 大模型分析报告", content)
             self.assertIn("<!DOCTYPE html>", content)
             self.assertIn("模型提供方：deepseek", content)
             self.assertIn("模型名称：deepseek-chat", content)
@@ -337,7 +377,7 @@ class LLMAnalysisTests(unittest.TestCase):
         config = {
             "code": "sz.000725",
             "report_name": "base_backtest",
-            "strategy_name": "普通双均线",
+            "strategy_name": "S-BMK策略",
             "strategy_brief": "基础版",
             "adjust_flag": DEFAULT_A_SHARE_ADJUST,
             "from_date": "2024-01-01",
@@ -346,6 +386,8 @@ class LLMAnalysisTests(unittest.TestCase):
             "slow": 250,
             "cash": 100000.0,
             "enable_llm_analysis": True,
+            "patches": ["sea_turtle"],
+            "sea_turtle_qr_threshold": 0.72,
         }
         summary = {
             "annual_return_pct": 18.3,
@@ -400,6 +442,14 @@ class LLMAnalysisTests(unittest.TestCase):
         self.assertEqual(len(captured_payloads), 1)
         self.assertIn("external_context", captured_payloads[0])
         self.assertEqual(
+            captured_payloads[0]["strategy"]["patch_context"]["requested_patches"],
+            ["sea_turtle"],
+        )
+        self.assertEqual(
+            captured_payloads[0]["strategy"]["parameters"]["sea_turtle_qr_threshold"],
+            0.72,
+        )
+        self.assertEqual(
             captured_payloads[0]["external_context"]["financials"]["report_date"],
             "2023-12-31",
         )
@@ -407,7 +457,7 @@ class LLMAnalysisTests(unittest.TestCase):
     def test_batch_analysis_skips_when_disabled(self) -> None:
         report_path = maybe_generate_batch_analysis(
             strategy_id="base_backtest",
-            strategy_name="普通双均线",
+            strategy_name="S-BMK策略",
             batch_results=[
                 {
                     "code": "sz.000725",
@@ -421,9 +471,9 @@ class LLMAnalysisTests(unittest.TestCase):
     def test_single_analysis_failure_does_not_raise_and_writes_failure_report(self) -> None:
         config = {
             "code": "sz.000100",
-            "report_name": "tcl_simple_ma_backtest",
-            "strategy_name": "TCL双均线专版",
-            "strategy_brief": "稳健增强版",
+            "report_name": "base_backtest",
+            "strategy_name": "S-BMK策略",
+            "strategy_brief": "Sea Turtle + BMK",
             "adjust_flag": DEFAULT_A_SHARE_ADJUST,
             "from_date": "2024-01-01",
             "to_date": "2024-03-30",

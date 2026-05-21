@@ -36,8 +36,22 @@
     "enable_llm_analysis": "是否在回测后触发大模型分析。",
     "patches": "策略增强补丁列表。填写 backtest/patches 目录下的模块名，例如 [\"macd\", \"boll\"]。",
     "patch_strict": "是否严格校验补丁。为 true 时，补丁缺失、没有 hook 或 hook 执行失败会直接报错；否则仅记录并跳过。",
-    "breakout_power_threshold": "V2/专版中的趋势突破强度阈值。越高表示越要求强趋势。",
-    "breakout_buy_limit_multiplier": "V2/专版突破买入时允许价格相对前高的上限倍率。",
+    "sea_turtle_atr_period": "海龟补丁计算 ATR 的周期。",
+    "sea_turtle_risk_pct": "海龟补丁单次建仓允许承担的账户风险比例。",
+    "sea_turtle_stop_loss_pct": "海龟补丁固定止损比例；未设置时复用 stop_loss_pct。",
+    "sea_turtle_stop_atr_multiplier": "海龟补丁 ATR 止损倍数，实际止损取 ATR 止损与固定止损中更紧的一侧。",
+    "sea_turtle_add_unit_atr": "海龟补丁每上涨多少个 ATR 触发一次加仓。",
+    "sea_turtle_max_units": "海龟补丁最多允许持有的单位数。",
+    "sea_turtle_qr_threshold": "海龟补丁 QR 强过滤阈值，越高表示越只接受强势突破。",
+    "sea_turtle_volume_window": "海龟补丁成交量确认均线窗口。",
+    "sea_turtle_volume_confirm_ratio": "海龟补丁突破确认要求的最小量能比例。",
+    "sea_turtle_breakout_confirm_pct": "海龟补丁 CDVA 确认所需的最小突破幅度。",
+    "sea_turtle_short_fish_period": "海龟补丁短鱼验证使用的短周期均线。",
+    "sea_turtle_belt_fish_period": "海龟补丁带鱼验证使用的中周期均线。",
+    "sea_turtle_filter_period": "海龟补丁趋势过滤使用的长周期均线。",
+    "sea_turtle_profit_target_pct": "海龟补丁达到该收益率后触发止盈退出。",
+    "breakout_power_threshold": "扩展趋势策略中的趋势突破强度阈值。越高表示越要求强趋势。",
+    "breakout_buy_limit_multiplier": "扩展趋势策略中突破买入时允许价格相对前高的上限倍率。",
     "trend_slope_window": "V3 判断慢线斜率时向前看的窗口天数。",
     "trend_min_slope_pct": "V3 要求慢线至少达到的最小斜率。",
     "trend_entry_buffer_pct": "V3 允许价格相对慢线回落的缓冲比例。",
@@ -114,11 +128,11 @@
       "benchmark_code": "sh.000001",
       "report_dir": "logs/backtest",
       "report_name": "base_backtest",
-      "strategy_name": "普通双均线",
-      "strategy_brief": "基础版",
+      "strategy_name": "S-BMK策略",
+      "strategy_brief": "Sea Turtle + BMK",
       "current_position": "auto",
       "enable_llm_analysis": false,
-      "patches": [],
+      "patches": ["sea_turtle", "bmk"],
       "patch_strict": false
     },
     "simple_ma_v2_base": {
@@ -148,49 +162,13 @@
       "benchmark_code": "",
       "report_dir": "logs/backtest",
       "report_name": "base_backtest_v2",
-      "strategy_name": "普通双均线V2",
+      "strategy_name": "S-BMK趋势版V2",
       "strategy_brief": "稳健轮动版",
       "current_position": "auto",
       "enable_llm_analysis": false,
       "patches": [],
       "patch_strict": false,
       "breakout_power_threshold": 0.6,
-      "breakout_buy_limit_multiplier": 1.0
-    },
-    "specialized_ma_tcl_template": {
-      "code": "sz.000100",
-      "adjust_flag": "cq",
-      "from_date": "2020-01-01",
-      "to_date": null,
-      "data_from_date": "2018-01-01",
-      "cash": 100000.0,
-      "commission": 0.0001,
-      "stamp_duty": 0.0005,
-      "transfer_fee": 1e-05,
-      "min_commission": 5.0,
-      "buy_cash_ratio": 0.99,
-      "buy_price_buffer": 1.01,
-      "lot_size": 100,
-      "buy_trigger_multiplier": 1.03,
-      "buy_trigger_window": 8,
-      "buy_rise_window": 4,
-      "buy_rise_days_required": 1,
-      "sell_trigger_multiplier": 0.93,
-      "stop_loss_pct": 0.08,
-      "print_log": true,
-      "fast": 10,
-      "slow": 250,
-      "plot": true,
-      "benchmark_code": "",
-      "report_dir": "logs/backtest",
-      "report_name": "tcl_simple_ma_backtest",
-      "strategy_name": "TCL双均线专版",
-      "strategy_brief": "sz.000100",
-      "current_position": "auto",
-      "enable_llm_analysis": false,
-      "patches": [],
-      "patch_strict": false,
-      "breakout_power_threshold": 0.55,
       "breakout_buy_limit_multiplier": 1.0
     },
     "simple_ma_v3_base": {
@@ -220,7 +198,7 @@
       "benchmark_code": "",
       "report_dir": "logs/backtest",
       "report_name": "base_backtest_v3",
-      "strategy_name": "普通双均线V3",
+      "strategy_name": "S-BMK趋势版V3",
       "strategy_brief": "趋势突破融合版",
       "current_position": "auto",
       "enable_llm_analysis": false,
@@ -359,167 +337,11 @@
   },
   "strategies": {
     "base_backtest": {
-      "display_name": "普通双均线",
+      "display_name": "S-BMK策略",
       "family_id": "base_backtest",
       "menu_enabled": true,
       "template": "simple_ma_base",
       "overrides": {}
-    },
-    "boe_simple_ma_backtest": {
-      "display_name": "京东方双均线专版",
-      "family_id": "specialized_ma_backtest",
-      "menu_enabled": true,
-      "template": "specialized_ma_tcl_template",
-      "overrides": {
-        "code": "sz.000725",
-        "report_name": "boe_simple_ma_backtest",
-        "strategy_name": "京东方双均线专版",
-        "strategy_brief": "sz.000725"
-      }
-    },
-    "byd_simple_ma_backtest": {
-      "display_name": "比亚迪双均线专版",
-      "family_id": "specialized_ma_backtest",
-      "menu_enabled": true,
-      "template": "specialized_ma_tcl_template",
-      "overrides": {
-        "code": "sz.002594",
-        "report_name": "byd_simple_ma_backtest",
-        "strategy_name": "比亚迪双均线专版",
-        "strategy_brief": "sz.002594"
-      }
-    },
-    "cmb_simple_ma_backtest": {
-      "display_name": "招商银行双均线专版",
-      "family_id": "specialized_ma_backtest",
-      "menu_enabled": true,
-      "template": "specialized_ma_tcl_template",
-      "overrides": {
-        "code": "sh.600036",
-        "report_name": "cmb_simple_ma_backtest",
-        "strategy_name": "招商银行双均线专版",
-        "strategy_brief": "sh.600036"
-      }
-    },
-    "datang_simple_ma_backtest": {
-      "display_name": "大唐发电双均线专版",
-      "family_id": "specialized_ma_backtest",
-      "menu_enabled": true,
-      "template": "specialized_ma_tcl_template",
-      "overrides": {
-        "code": "sh.601991",
-        "report_name": "datang_simple_ma_backtest",
-        "strategy_name": "大唐发电双均线专版",
-        "strategy_brief": "sh.601991"
-      }
-    },
-    "guiguan_simple_ma_backtest": {
-      "display_name": "桂冠电力双均线专版",
-      "family_id": "specialized_ma_backtest",
-      "menu_enabled": true,
-      "template": "specialized_ma_tcl_template",
-      "overrides": {
-        "code": "sh.600236",
-        "report_name": "guiguan_simple_ma_backtest",
-        "strategy_name": "桂冠电力双均线专版",
-        "strategy_brief": "sh.600236"
-      }
-    },
-    "haier_simple_ma_backtest": {
-      "display_name": "海尔智家双均线专版",
-      "family_id": "specialized_ma_backtest",
-      "menu_enabled": true,
-      "template": "specialized_ma_tcl_template",
-      "overrides": {
-        "code": "sh.600690",
-        "report_name": "haier_simple_ma_backtest",
-        "strategy_name": "海尔智家双均线专版",
-        "strategy_brief": "sh.600690"
-      }
-    },
-    "kangguan_simple_ma_backtest": {
-      "display_name": "康冠科技双均线专版",
-      "family_id": "specialized_ma_backtest",
-      "menu_enabled": true,
-      "template": "specialized_ma_tcl_template",
-      "overrides": {
-        "code": "sz.001308",
-        "report_name": "kangguan_simple_ma_backtest",
-        "strategy_name": "康冠科技双均线专版",
-        "strategy_brief": "sz.001308"
-      }
-    },
-    "nari_simple_ma_backtest": {
-      "display_name": "国电南瑞双均线专版",
-      "family_id": "specialized_ma_backtest",
-      "menu_enabled": true,
-      "template": "specialized_ma_tcl_template",
-      "overrides": {
-        "code": "sh.600406",
-        "report_name": "nari_simple_ma_backtest",
-        "strategy_name": "国电南瑞双均线专版",
-        "strategy_brief": "sh.600406"
-      }
-    },
-    "perfect_world_simple_ma_backtest": {
-      "display_name": "完美世界双均线专版",
-      "family_id": "specialized_ma_backtest",
-      "menu_enabled": true,
-      "template": "specialized_ma_tcl_template",
-      "overrides": {
-        "code": "sh.002624",
-        "report_name": "perfect_world_simple_ma_backtest",
-        "strategy_name": "完美世界双均线专版",
-        "strategy_brief": "sh.002624"
-      }
-    },
-    "shandong_fiberglass_simple_ma_backtest": {
-      "display_name": "山东玻纤双均线专版",
-      "family_id": "specialized_ma_backtest",
-      "menu_enabled": true,
-      "template": "specialized_ma_tcl_template",
-      "overrides": {
-        "code": "sh.605006",
-        "report_name": "shandong_fiberglass_simple_ma_backtest",
-        "strategy_name": "山东玻纤双均线专版",
-        "strategy_brief": "sh.605006"
-      }
-    },
-    "southern_air_simple_ma_backtest": {
-      "display_name": "南方航空双均线专版",
-      "family_id": "specialized_ma_backtest",
-      "menu_enabled": true,
-      "template": "specialized_ma_tcl_template",
-      "overrides": {
-        "code": "sh.600029",
-        "report_name": "southern_air_simple_ma_backtest",
-        "strategy_name": "南方航空双均线专版",
-        "strategy_brief": "sh.600029"
-      }
-    },
-    "tcl_simple_ma_backtest": {
-      "display_name": "TCL双均线专版",
-      "family_id": "specialized_ma_backtest",
-      "menu_enabled": true,
-      "template": "specialized_ma_tcl_template",
-      "overrides": {
-        "code": "sz.000100",
-        "report_name": "tcl_simple_ma_backtest",
-        "strategy_name": "TCL双均线专版",
-        "strategy_brief": "sz.000100"
-      }
-    },
-    "wolong_simple_ma_backtest": {
-      "display_name": "卧龙电驱双均线专版",
-      "family_id": "specialized_ma_backtest",
-      "menu_enabled": true,
-      "template": "specialized_ma_tcl_template",
-      "overrides": {
-        "code": "sh.600580",
-        "report_name": "wolong_simple_ma_backtest",
-        "strategy_name": "卧龙电驱双均线专版",
-        "strategy_brief": "sh.600580"
-      }
     },
     "pair_trade_backtest": {
       "display_name": "统计套利配对交易",
