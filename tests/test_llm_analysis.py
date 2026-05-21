@@ -8,6 +8,7 @@ from contextlib import redirect_stdout
 import pandas as pd
 
 from utils.config import DEFAULT_A_SHARE_ADJUST
+from utils.default_stocks import DEFAULT_BASE_STRATEGY_NAME
 from analysis.config import LLMAnalysisSettings, load_llm_analysis_settings
 from analysis.payload_builder import (
     build_batch_analysis_payload,
@@ -76,7 +77,7 @@ class LLMAnalysisTests(unittest.TestCase):
             config={
                 "code": "sz.000725",
                 "report_name": "base_backtest",
-                "strategy_name": "S-BMK策略",
+                "strategy_name": DEFAULT_BASE_STRATEGY_NAME,
                 "strategy_brief": "基础版",
                 "adjust_flag": DEFAULT_A_SHARE_ADJUST,
                 "from_date": "2024-01-01",
@@ -124,7 +125,7 @@ class LLMAnalysisTests(unittest.TestCase):
             config={
                 "code": "sz.000725",
                 "report_name": "base_backtest",
-                "strategy_name": "S-BMK策略",
+                "strategy_name": DEFAULT_BASE_STRATEGY_NAME,
                 "strategy_brief": "基础版",
                 "adjust_flag": DEFAULT_A_SHARE_ADJUST,
                 "from_date": "2024-01-01",
@@ -247,7 +248,7 @@ class LLMAnalysisTests(unittest.TestCase):
     def test_build_batch_analysis_payload_ranks_best_candidate_first(self) -> None:
         payload = build_batch_analysis_payload(
             strategy_id="base_backtest",
-            strategy_name="S-BMK策略",
+            strategy_name=DEFAULT_BASE_STRATEGY_NAME,
             batch_results=[
                 {
                     "code": "sz.000725",
@@ -309,7 +310,7 @@ class LLMAnalysisTests(unittest.TestCase):
         config = {
             "code": "sz.000725",
                 "report_name": "base_backtest",
-            "strategy_name": "S-BMK策略",
+            "strategy_name": DEFAULT_BASE_STRATEGY_NAME,
             "strategy_brief": "基础版",
             "adjust_flag": DEFAULT_A_SHARE_ADJUST,
             "from_date": "2024-01-01",
@@ -366,7 +367,7 @@ class LLMAnalysisTests(unittest.TestCase):
             self.assertEqual(report_path, output_path)
             self.assertTrue(output_path.exists())
             content = output_path.read_text(encoding="utf-8")
-            self.assertIn("S-BMK策略 sz.000725 大模型分析报告", content)
+            self.assertIn(f"{DEFAULT_BASE_STRATEGY_NAME} sz.000725 大模型分析报告", content)
             self.assertIn("<!DOCTYPE html>", content)
             self.assertIn("模型提供方：deepseek", content)
             self.assertIn("模型名称：deepseek-chat", content)
@@ -377,7 +378,7 @@ class LLMAnalysisTests(unittest.TestCase):
         config = {
             "code": "sz.000725",
             "report_name": "base_backtest",
-            "strategy_name": "S-BMK策略",
+            "strategy_name": DEFAULT_BASE_STRATEGY_NAME,
             "strategy_brief": "基础版",
             "adjust_flag": DEFAULT_A_SHARE_ADJUST,
             "from_date": "2024-01-01",
@@ -457,7 +458,7 @@ class LLMAnalysisTests(unittest.TestCase):
     def test_batch_analysis_skips_when_disabled(self) -> None:
         report_path = maybe_generate_batch_analysis(
             strategy_id="base_backtest",
-            strategy_name="S-BMK策略",
+            strategy_name=DEFAULT_BASE_STRATEGY_NAME,
             batch_results=[
                 {
                     "code": "sz.000725",
@@ -472,7 +473,7 @@ class LLMAnalysisTests(unittest.TestCase):
         config = {
             "code": "sz.000100",
             "report_name": "base_backtest",
-            "strategy_name": "S-BMK策略",
+            "strategy_name": DEFAULT_BASE_STRATEGY_NAME,
             "strategy_brief": "Sea Turtle + BMK",
             "adjust_flag": DEFAULT_A_SHARE_ADJUST,
             "from_date": "2024-01-01",

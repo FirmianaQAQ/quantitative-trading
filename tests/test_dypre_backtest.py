@@ -3,7 +3,7 @@ import unittest
 import backtrader as bt
 import pandas as pd
 
-from backtest.base_backtest import build_data_feed, create_cerebro
+from backtest.backtest_v1 import build_data_feed, create_cerebro
 
 
 class HoldThroughCorporateActionStrategy(bt.Strategy):

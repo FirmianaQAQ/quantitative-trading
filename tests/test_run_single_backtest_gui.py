@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from backtest.strategy_registry import StrategySpec
+from utils.default_stocks import DEFAULT_BASE_STRATEGY_NAME
 from run_single_backtest_gui import (
     AI_ANALYSIS_OFF,
     AI_ANALYSIS_ON,
@@ -35,10 +36,10 @@ def _dummy_strategy_spec(strategy_id: str, display_name: str) -> StrategySpec:
 
 class FamilyDashboardReportTests(unittest.TestCase):
     def test_prompt_strategy_menu_skips_second_level_for_single_version_family(self) -> None:
-        single_spec = _dummy_strategy_spec("base_backtest", "S-BMK策略")
+        single_spec = _dummy_strategy_spec("base_backtest", DEFAULT_BASE_STRATEGY_NAME)
         with patch(
             "run_single_backtest_gui.group_strategy_specs",
-            return_value=[("S-BMK策略", [single_spec])],
+            return_value=[(DEFAULT_BASE_STRATEGY_NAME, [single_spec])],
         ):
             with patch("builtins.input", side_effect=["1"]):
                 self.assertEqual(prompt_strategy_menu(), "base_backtest")
@@ -89,7 +90,7 @@ class FamilyDashboardReportTests(unittest.TestCase):
         )
 
     def test_choose_stock_interactively_manual_input_syncs_before_return(self) -> None:
-        single_spec = _dummy_strategy_spec("base_backtest", "S-BMK策略")
+        single_spec = _dummy_strategy_spec("base_backtest", DEFAULT_BASE_STRATEGY_NAME)
         with patch(
             "run_single_backtest_gui.prompt_stock_menu",
             side_effect=[MANUAL_MENU_VALUE],

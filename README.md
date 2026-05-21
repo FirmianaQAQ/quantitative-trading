@@ -279,12 +279,12 @@ logs/llm_analysis/base_backtest-batch.html
 
 当你不传股票代码，也不传 `--all-sh-main` 时，脚本会同步当前默认配置需要的数据，主要来自：
 
-- `backtest/base_backtest.py` 里的默认标的
+- `backtest/backtest_v1.py` 里的默认标的
 - 对应测试用例股票池
 
 当前目录结构里：
 
-- `backtest/base_backtest.py`：基础策略
+- `backtest/backtest_v1.py`：基础策略
 - `backtest/extended_strategies/`：各类扩展策略
 
 当前默认股票主要包括：

@@ -8,6 +8,8 @@ from types import ModuleType
 from typing import Any, Callable
 import re
 
+from utils.default_stocks import DEFAULT_BASE_STRATEGY_NAME
+
 
 @dataclass(frozen=True)
 class StrategySpec:
@@ -25,7 +27,7 @@ class StrategySpec:
 
 
 STRATEGY_FAMILY_DISPLAY_NAMES = {
-    "base_backtest": "S-BMK策略",
+    "base_backtest": DEFAULT_BASE_STRATEGY_NAME,
     "pair_trade_backtest": "统计套利配对交易",
     "rotation_backtest": "多因子轮动策略",
     "cta_event_backtest": "CTA策略",
@@ -65,7 +67,7 @@ def _iter_candidate_strategy_modules() -> list[tuple[str, str]]:
             continue
         if "__pycache__" in path.parts:
             continue
-        if path.stem != "base_backtest" and "_backtest" not in path.stem:
+        if path.stem not in {"base_backtest", "backtest_v1"} and "_backtest" not in path.stem:
             continue
         module_name = ".".join(path.relative_to(backtest_dir.parent).with_suffix("").parts)
         candidates.append((path.stem, module_name))

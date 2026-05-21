@@ -12,7 +12,7 @@ r"""
    - 把 CONFIG["optimize"] 设为 True
    - 设置 opt_fast 和 opt_slow，格式为 start:end:step，例如 5:20:5
 4. 运行方式：
-   - venv\Scripts\python.exe backtest\base_backtest.py
+   - venv\Scripts\python.exe backtest\backtest_v1.py
 5. 常用参数：
    - code: 股票代码，例如 sh.000001
    - adjust_flag: 复权类型，例如 cq、qfq、hfq、dypre
@@ -58,6 +58,8 @@ from utils.backtest_report_builder import (
 from analysis.service import maybe_generate_single_stock_analysis
 from utils.default_stocks import (
     DEFAULT_PRIMARY_STOCK_CODE,
+    DEFAULT_BASE_STRATEGY_BRIEF,
+    DEFAULT_BASE_STRATEGY_NAME,
     build_default_stock_test_cases,
 )
 from utils.project_utils import load_daily_data
@@ -124,8 +126,8 @@ CONFIG: dict[str, Any] = {
     # 报告的配置
     "report_dir": "logs/backtest",
     "report_name": "base_backtest",
-    "strategy_name": "S-BMK策略",
-    "strategy_brief": "BMK",
+    "strategy_name": DEFAULT_BASE_STRATEGY_NAME,
+    "strategy_brief": DEFAULT_BASE_STRATEGY_BRIEF,
     "current_position": "auto",
     "enable_llm_analysis": False,
     # 启用的策略增强补丁，按 backtest/patches/*.py 的模块名填写

@@ -23,7 +23,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from backtest.base_backtest import (
+from backtest.backtest_v1 import (
     add_analyzers,
     build_data_feed,
     create_cerebro,

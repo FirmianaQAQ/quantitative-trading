@@ -36,7 +36,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from backtest.base_backtest import CONFIG, TEST_CASES
+from backtest.backtest_v1 import CONFIG, TEST_CASES
 from utils.ak_share_utils import get_a_share_code_name_df_and_filter
 from utils.project_utils import (
     SUPPORTED_ADJUST_FLAGS,

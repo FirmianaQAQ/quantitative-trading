@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pandas as pd
 
+from utils.default_stocks import DEFAULT_BASE_STRATEGY_NAME
 from utils.backtest_report import (
     _build_next_trade_plan_card,
     _build_advice_panel,
@@ -61,7 +62,7 @@ class BacktestReportAdviceTests(unittest.TestCase):
                     "chart_name": "指标概览",
                     "chart_data": {
                         "股票代码": "sh.600236",
-                        "策略名称": "S-BMK策略",
+                        "策略名称": DEFAULT_BASE_STRATEGY_NAME,
                         "复权口径": "Dypre 动态前复权",
                         "均线说明": "快线看短期节奏，慢线看中期趋势。",
                         "总收益率": "41.20%",

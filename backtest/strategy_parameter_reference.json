@@ -128,7 +128,7 @@
       "benchmark_code": "sh.000001",
       "report_dir": "logs/backtest",
       "report_name": "base_backtest",
-      "strategy_name": "S-BMK策略",
+      "strategy_name": "宽论策略",
       "strategy_brief": "Sea Turtle + BMK",
       "current_position": "auto",
       "enable_llm_analysis": false,
@@ -337,7 +337,7 @@
   },
   "strategies": {
     "base_backtest": {
-      "display_name": "S-BMK策略",
+      "display_name": "宽论策略",
       "family_id": "base_backtest",
       "menu_enabled": true,
       "template": "simple_ma_base",
