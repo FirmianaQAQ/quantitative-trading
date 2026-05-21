@@ -93,13 +93,46 @@ def build_returns_series(strategy: bt.Strategy) -> pd.Series:
     return returns_series
 
 
-def extract_trade_metrics(trade_analysis: Any) -> dict[str, Any]:
+def extract_trade_metrics(
+    trade_analysis: Any,
+    strategy: bt.Strategy | None = None,
+) -> dict[str, Any]:
     """从 TradeAnalyzer 的结果中提取交易相关的指标，提供默认值以避免 KeyError"""
     total_closed = get_nested_value(trade_analysis, ["total", "closed"], 0) or 0
     won_total = get_nested_value(trade_analysis, ["won", "total"], 0) or 0
     lost_total = get_nested_value(trade_analysis, ["lost", "total"], 0) or 0
     net_total = get_nested_value(trade_analysis, ["pnl", "net", "total"])
     net_average = get_nested_value(trade_analysis, ["pnl", "net", "average"])
+
+    # 一些自定义成交/复权场景下，TradeAnalyzer 可能拿不到闭合交易。
+    # 这时回退到策略自身维护的成交统计，避免汇总指标误报为 0。
+    fallback_total = int(getattr(strategy, "completed_trades_total", 0) or 0)
+    fallback_sell_orders = int(getattr(strategy, "completed_sell_orders", 0) or 0)
+    fallback_sell_markers = len(getattr(strategy, "sell_markers", []) or [])
+    fallback_total = max(fallback_total, fallback_sell_orders, fallback_sell_markers)
+    if total_closed <= 0 and fallback_total > 0:
+        total_closed = fallback_total
+        if int(getattr(strategy, "completed_trades_total", 0) or 0) > 0:
+            won_total = int(getattr(strategy, "completed_trades_won", 0) or 0)
+            lost_total = int(getattr(strategy, "completed_trades_lost", 0) or 0)
+            if won_total + lost_total > total_closed:
+                won_total = min(won_total, total_closed)
+                lost_total = min(lost_total, total_closed - won_total)
+            net_total = float(
+                getattr(strategy, "completed_trade_net_profit", 0.0) or 0.0
+            )
+            net_average = (net_total / total_closed) if total_closed else None
+        else:
+            won_total = int(getattr(strategy, "completed_sell_estimated_won", 0) or 0)
+            lost_total = int(getattr(strategy, "completed_sell_estimated_lost", 0) or 0)
+            if won_total + lost_total > total_closed:
+                won_total = min(won_total, total_closed)
+                lost_total = min(lost_total, total_closed - won_total)
+            net_total = float(
+                getattr(strategy, "completed_sell_estimated_net_profit", 0.0) or 0.0
+            )
+            net_average = (net_total / total_closed) if total_closed else None
+
     win_rate = (won_total / total_closed * 100) if total_closed else 0.0
 
     return {
@@ -140,7 +173,7 @@ def summarize_result(strategy: bt.Strategy, initial_value: float) -> dict[str, A
         "buy_signals_total": int(getattr(strategy, "buy_signals_total", 0) or 0),
         "buy_signals_blocked": int(getattr(strategy, "buy_signals_blocked", 0) or 0),
     }
-    result.update(extract_trade_metrics(trade_analysis))
+    result.update(extract_trade_metrics(trade_analysis, strategy=strategy))
     return result
 
 

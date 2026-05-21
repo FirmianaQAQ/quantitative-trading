@@ -22,6 +22,7 @@ from sync.sync_akshare import (
     refresh_eastmoney_cookie,
     refresh_eastmoney_cookie_from_chrome,
     refresh_eastmoney_cookie_from_chrome_profile,
+    resolve_target_codes,
     resolve_effective_adjust_flag,
     resolve_eastmoney_cookie_bootstrap_urls,
     should_full_refresh_history,
@@ -55,6 +56,32 @@ def build_row(trade_date: str, close_price: float) -> dict:
 
 
 class SyncAkshareHistoryTests(unittest.TestCase):
+    def test_resolve_target_codes_keeps_default_config_code_first(self) -> None:
+        fake_spec = mock.Mock()
+        fake_spec.config = {
+            "code": "sh.600580",
+            "benchmark_code": "sh.000001",
+        }
+        fake_spec.test_cases = [
+            {"code": "sz.000725"},
+            {"code": "sh.600580"},
+            {"code": "sz.000100"},
+        ]
+
+        with (
+            mock.patch(
+                "sync.sync_akshare.get_default_sync_strategy_spec",
+                return_value=fake_spec,
+            ),
+            mock.patch("sync.sync_akshare.should_include_benchmark", return_value=True),
+        ):
+            target_codes = resolve_target_codes([], False, "auto")
+
+        self.assertEqual(
+            target_codes,
+            ["sh.600580", "sz.000725", "sz.000100", "sh.000001"],
+        )
+
     def test_dynamic_pre_alias_maps_to_qfq_across_sync_helpers(self) -> None:
         self.assertEqual(resolve_effective_adjust_flag("dypre"), "qfq")
         self.assertEqual(to_baostock_adjust_flag("dypre"), "2")

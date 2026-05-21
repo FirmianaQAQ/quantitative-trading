@@ -55,8 +55,8 @@ choose_source_arg() {
 
 echo ""
 echo "请选择同步方式："
-echo "1. 输入固定股票代码同步"
-echo "2. 拉取默认设置的数据"
+echo "1. 拉取默认设置的数据"
+echo "2. 输入固定股票代码同步"
 echo "3. 拉取全部上证主板普通账户可买股票"
 echo ""
 
@@ -65,6 +65,9 @@ source_arg="$(choose_source_arg)" || exit 1
 
 case "$sync_mode" in
   1)
+    exec ./.venv/bin/python sync/sync_akshare.py "$source_arg"
+    ;;
+  2)
     echo ""
     echo "支持输入一个或多个股票代码，用空格或逗号分隔。"
     echo "示例：600580 或 sh.600580, sz.000725"
@@ -78,9 +81,6 @@ case "$sync_mode" in
     fi
 
     exec ./.venv/bin/python sync/sync_akshare.py "$source_arg" "${code_args[@]}"
-    ;;
-  2)
-    exec ./.venv/bin/python sync/sync_akshare.py "$source_arg"
     ;;
   3)
     exec ./.venv/bin/python sync/sync_akshare.py "$source_arg" --all-sh-main

@@ -104,7 +104,13 @@ def submit_patch_exit(
     patch_name: str,
     reason: str,
 ) -> bool:
-    if getattr(strategy, "order", None) is not None or not strategy.position:
+    if getattr(strategy, "order", None) is not None:
+        return False
+    has_position_method = getattr(strategy, "has_effective_position", None)
+    if callable(has_position_method):
+        if not bool(has_position_method()):
+            return False
+    elif not strategy.position:
         return False
     strategy.log(f"{patch_name} 补丁触发卖出 | 原因={reason}")
     strategy.order = strategy.close()

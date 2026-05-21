@@ -225,13 +225,19 @@ class StrategyPatchManager:
             current_date = None
 
         position = getattr(self.strategy, "position", None)
+        has_position_method = getattr(self.strategy, "has_effective_position", None)
+        has_position = (
+            bool(has_position_method())
+            if callable(has_position_method)
+            else bool(position)
+        )
         config = getattr(self.strategy, "param", {})
         context = {
             "config": config,
             "code": config.get("code"),
             "bar_index": len(self.strategy),
             "current_date": current_date,
-            "has_position": bool(position),
+            "has_position": has_position,
             "position_size": float(getattr(position, "size", 0.0) or 0.0),
             "active_patches": self.active_patch_names,
         }

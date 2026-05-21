@@ -384,6 +384,16 @@ class SimpleMovingAverageStrategy(HStrategy):
         self.has_completed_sell = False
         self.buy_signals_total = 0
         self.buy_signals_blocked = 0
+        self.completed_trades_total = 0
+        self.completed_trades_won = 0
+        self.completed_trades_lost = 0
+        self.completed_trade_net_profit = 0.0
+        self.completed_trade_profit_samples: list[float] = []
+        self.completed_sell_orders = 0
+        self.completed_sell_estimated_won = 0
+        self.completed_sell_estimated_lost = 0
+        self.completed_sell_estimated_net_profit = 0.0
+        self._dust_position_logged = False
         self.patch_manager = StrategyPatchManager(
             self,
             self.param.get("patches"),
@@ -415,13 +425,46 @@ class SimpleMovingAverageStrategy(HStrategy):
         ratio = float(getattr(self.data, "_dypre_applied_ratio", 1.0) or 1.0)
         if abs(ratio - 1.0) <= 1e-12:
             return
-        if self.position:
+        if bool(self.position):
             self.log(
                 "Dypre 除权同步"
                 f" | 等价股数调整倍率={ratio:.6f}"
                 f" | 当前持仓数量={abs(self.position.size):.4f}"
                 f" | 当前持仓成本={self.position.price:.4f}"
             )
+
+    def get_position_size(self) -> float:
+        return abs(float(getattr(self.position, "size", 0.0) or 0.0))
+
+    def get_effective_position_threshold(self) -> float:
+        raw_threshold = self.param.get("dust_position_threshold")
+        if raw_threshold is not None:
+            return max(float(raw_threshold), 0.0)
+        return float(max(int(self.param.get("lot_size", 100)), 1))
+
+    def has_effective_position(self) -> bool:
+        if not bool(self.position):
+            return False
+        return self.get_position_size() >= self.get_effective_position_threshold()
+
+    def _sync_effective_position_state(self) -> None:
+        if not bool(self.position):
+            self._dust_position_logged = False
+            return
+        if self.has_effective_position():
+            self._dust_position_logged = False
+            return
+
+        if not self._dust_position_logged:
+            self.log(
+                "检测到零碎残仓，按空仓处理"
+                f" | 当前持仓数量={self.get_position_size():.4f}"
+                f" | 阈值={self.get_effective_position_threshold():.4f}"
+            )
+            self._dust_position_logged = True
+        self.last_buy_price = None
+        self.last_buy_turnover = None
+        self.reset_sell_setup()
 
     def calculate_buy_size(self) -> int:
         """计算本次买入的数量，考虑可用资金、手续费、跳空风险等因素"""
@@ -470,6 +513,7 @@ class SimpleMovingAverageStrategy(HStrategy):
             if order.isbuy():
                 self.last_buy_price = signal_price
                 self.last_buy_turnover = turnover
+                self._dust_position_logged = False
                 self.buy_markers.append((executed_at, signal_price))
                 self.log(
                     "买入成交"
@@ -482,6 +526,18 @@ class SimpleMovingAverageStrategy(HStrategy):
                     f"{trade_interval_msg}"
                 )
             else:
+                if executed_size >= self.get_effective_position_threshold():
+                    self.completed_sell_orders += 1
+                    if self.last_buy_price is not None:
+                        estimated_pnl = (
+                            (signal_price - float(self.last_buy_price)) * executed_size
+                            - float(order.executed.comm)
+                        )
+                        self.completed_sell_estimated_net_profit += estimated_pnl
+                        if estimated_pnl > 0:
+                            self.completed_sell_estimated_won += 1
+                        elif estimated_pnl < 0:
+                            self.completed_sell_estimated_lost += 1
                 self.has_completed_sell = True
                 self.sell_markers.append((executed_at, signal_price))
                 self.log(
@@ -510,13 +566,21 @@ class SimpleMovingAverageStrategy(HStrategy):
     def notify_trade(self, trade: bt.Trade) -> None:
         if not trade.isclosed:
             return
+        pnlcomm = float(trade.pnlcomm)
+        self.completed_trades_total += 1
+        self.completed_trade_net_profit += pnlcomm
+        self.completed_trade_profit_samples.append(pnlcomm)
+        if pnlcomm > 0:
+            self.completed_trades_won += 1
+        elif pnlcomm < 0:
+            self.completed_trades_lost += 1
         profit_pct_text = "-"
         if self.last_buy_turnover and self.last_buy_turnover > 0:
-            profit_pct_text = f"{(trade.pnlcomm / self.last_buy_turnover) * 100:.2f}%"
+            profit_pct_text = f"{(pnlcomm / self.last_buy_turnover) * 100:.2f}%"
         self.log(
             "本轮交易结束"
             f" | 毛收益={trade.pnl:.2f}"
-            f" | 净收益={trade.pnlcomm:.2f}"
+            f" | 净收益={pnlcomm:.2f}"
             f" | 持仓天数={trade.barlen}"
             f" | 收益率={profit_pct_text}"
             f" | 现金余额={self.broker.getcash():.2f}"
@@ -830,6 +894,7 @@ class SimpleMovingAverageStrategy(HStrategy):
             # self.log(f"预热中，当前日期 {self.datas[0].datetime.date(0)}，正式回测从 {self.from_date} 开始")
             return
         self._sync_dypre_state()
+        self._sync_effective_position_state()
         # 这个方法必须每天都执行的。放在预热完成之前执行也行，就是嫌它数据会很多。
         self.record_water_up_down_days()
 
@@ -883,7 +948,7 @@ class SimpleMovingAverageStrategy(HStrategy):
                     f"能量值={self.get_power():.2f}"
                 )
 
-        if self.position:
+        if self.has_effective_position():
             self.position_days_total += 1
         elif self.has_completed_sell:
             self.idle_cash_days_total += 1
@@ -898,7 +963,7 @@ class SimpleMovingAverageStrategy(HStrategy):
             self.patch_manager.after_next()
 
     def _check_and_buy(self) -> None:
-        if self.position:
+        if self.has_effective_position():
             # 当前已持有，不买
             return False
         # if  self.now_is_up_day:
@@ -1063,7 +1128,7 @@ class SimpleMovingAverageStrategy(HStrategy):
 
     def _check_and_sell(self) -> None:
         # 卖出逻辑
-        if not self.position:
+        if not self.has_effective_position():
             # 当前未持有，不卖
             return False
 

@@ -69,10 +69,9 @@ from __future__ import annotations
 from typing import Any
 
 from backtest.backtest_v1 import (
-    main as run_main,
     run_backtest,
     run_optimization,
-    validate_config,
+    validate_config as validate_base_config,
 )
 from utils.default_stocks import (
     DEFAULT_BASE_STRATEGY_ID,
@@ -80,6 +79,7 @@ from utils.default_stocks import (
     DEFAULT_PRIMARY_STOCK_CODE,
     build_default_stock_test_cases,
 )
+from utils.project_utils import load_daily_data
 
 
 CONFIG: dict[str, Any] = {
@@ -103,12 +103,12 @@ CONFIG: dict[str, Any] = {
     "buy_price_buffer": 1.015,
     "lot_size": 100,
     # 买入观察窗口：更早关注低位，但要求更明确的回暖确认
-    "buy_trigger_multiplier": 1.03,
+    "buy_trigger_multiplier": 1.02,
     "buy_trigger_window": 10,
     "buy_rise_window": 6,
     "buy_rise_days_required": 3,
     # 卖出阈值略收紧，减少震荡利润回吐
-    "sell_trigger_multiplier": 0.86,
+    "sell_trigger_multiplier": 0.90,
     "stop_loss_pct": 0.12,
     "protect_profit_floor_pct": 0.03,
     "underwater_take_profit_pct": 0.06,
@@ -122,12 +122,22 @@ CONFIG: dict[str, Any] = {
     "report_dir": "logs/backtest",
     "report_name": "base_backtest",
     "strategy_name": DEFAULT_BASE_STRATEGY_NAME,
-    "strategy_brief": "震荡适配版",
+    "strategy_brief": "震荡适配 + ATR短确认",
     "current_position": "auto",
     "enable_llm_analysis": False,
     # 默认启用 dypre 补丁做运行态校验，避免动态前复权数据异常静默通过
     "patches": ["dypre", "atr"],
     "patch_strict": False,
+    # ATR 补丁继续保留，但使用短周期确认，避免用趋势突破逻辑过度拦截震荡低吸。
+    "atr_period": 14,
+    "atr_breakout_period": 5,
+    "atr_breakout_confirm_pct": 0.0,
+    "atr_exit_period": 5,
+    "atr_risk_pct": 0.03,
+    "atr_max_units": 2,
+    "atr_add_unit_atr": 0.8,
+    "atr_stop_atr_multiplier": 1.5,
+    "atr_stop_loss_pct": 0.12,
     # 参数优化开关及范围
     "optimize": False,
     "opt_fast": "8:21:1",
@@ -141,8 +151,48 @@ STRATEGY_ID = DEFAULT_BASE_STRATEGY_ID
 TEST_CASES = build_default_stock_test_cases()
 
 
+def validate_config(config: dict[str, Any]) -> None:
+    validate_base_config(config)
+
+    patches = {str(name).strip().lower() for name in config.get("patches", [])}
+    if "atr" not in patches:
+        return
+
+    if int(config.get("atr_period", 0)) <= 0:
+        raise ValueError("atr_period 必须大于 0")
+    if int(config.get("atr_breakout_period", 0)) <= 0:
+        raise ValueError("atr_breakout_period 必须大于 0")
+    if int(config.get("atr_exit_period", 0)) <= 0:
+        raise ValueError("atr_exit_period 必须大于 0")
+    if int(config["atr_exit_period"]) > int(config["atr_breakout_period"]):
+        raise ValueError("atr_exit_period 不能大于 atr_breakout_period")
+    if float(config.get("atr_breakout_confirm_pct", 0)) < 0:
+        raise ValueError("atr_breakout_confirm_pct 不能小于 0")
+    if float(config.get("atr_risk_pct", 0)) <= 0 or float(
+        config["atr_risk_pct"]
+    ) >= 1:
+        raise ValueError("atr_risk_pct 必须大于 0 且小于 1")
+    if int(config.get("atr_max_units", 0)) <= 0:
+        raise ValueError("atr_max_units 必须大于 0")
+    if float(config.get("atr_add_unit_atr", 0)) <= 0:
+        raise ValueError("atr_add_unit_atr 必须大于 0")
+    if float(config.get("atr_stop_atr_multiplier", 0)) <= 0:
+        raise ValueError("atr_stop_atr_multiplier 必须大于 0")
+    if float(config.get("atr_stop_loss_pct", 0)) <= 0 or float(
+        config["atr_stop_loss_pct"]
+    ) >= 1:
+        raise ValueError("atr_stop_loss_pct 必须大于 0 且小于 1")
+
+
 def main(config: dict[str, Any]) -> None:
-    run_main(config)
+    validate_config(config)
+    df = load_daily_data(config["code"], config["adjust_flag"])
+
+    if config.get("optimize"):
+        run_optimization(config, df)
+        return
+
+    run_backtest(config, df)
 
 
 if __name__ == "__main__":

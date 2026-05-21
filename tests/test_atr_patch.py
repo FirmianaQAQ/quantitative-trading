@@ -114,6 +114,9 @@ class DummyStrategy:
     def close(self):
         return "SELL"
 
+    def has_effective_position(self) -> bool:
+        return abs(float(self.position.size)) >= float(self.param.get("lot_size", 100))
+
 
 class AtrPatchTests(unittest.TestCase):
     def test_loader_discovers_atr_patch(self):
@@ -163,6 +166,22 @@ class AtrPatchTests(unittest.TestCase):
         self.assertEqual(strategy.order, "BUY")
         self.assertEqual(strategy.last_buy_size, 1000)
         self.assertTrue(any("ATR补丁触发加仓" in item for item in strategy.log_messages))
+
+    def test_before_next_ignores_dust_position(self):
+        strategy = DummyStrategy()
+        strategy.position = DummyPosition(size=20, price=10.0)
+        state = getattr(strategy, atr.STATE_KEY)
+        state["observed_position_size"] = 20.0
+        state["unit_size"] = 20
+        state["units"] = 1
+        state["next_add_price"] = 10.0
+        state["stop_price"] = 9.0
+
+        atr.before_next(strategy, {})
+
+        self.assertIsNone(strategy.order)
+        self.assertEqual(state["observed_position_size"], 0.0)
+        self.assertEqual(state["unit_size"], 0)
 
 
 if __name__ == "__main__":

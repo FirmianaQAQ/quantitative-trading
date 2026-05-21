@@ -1,6 +1,7 @@
 import unittest
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pandas as pd
@@ -19,6 +20,7 @@ from utils.backtest_report_builder import (
     build_empty_entry_timing_plan,
     build_next_trade_plan,
     describe_adjust_flag,
+    extract_trade_metrics,
     extract_next_trade_plan_from_chart_data,
 )
 
@@ -47,6 +49,42 @@ def build_buy_sell_report(
 
 
 class BacktestReportAdviceTests(unittest.TestCase):
+    def test_extract_trade_metrics_falls_back_to_strategy_counters(self) -> None:
+        strategy = SimpleNamespace(
+            completed_trades_total=3,
+            completed_trades_won=2,
+            completed_trades_lost=1,
+            completed_trade_net_profit=1500.0,
+        )
+
+        metrics = extract_trade_metrics({}, strategy=strategy)
+
+        self.assertEqual(metrics["trades_total"], 3)
+        self.assertEqual(metrics["trades_won"], 2)
+        self.assertEqual(metrics["trades_lost"], 1)
+        self.assertEqual(metrics["win_rate_pct"], 66.67)
+        self.assertEqual(metrics["net_profit"], 1500.0)
+        self.assertEqual(metrics["avg_trade_profit"], 500.0)
+
+    def test_extract_trade_metrics_uses_sell_estimate_when_trade_counter_missing(self) -> None:
+        strategy = SimpleNamespace(
+            completed_trades_total=0,
+            completed_sell_orders=4,
+            sell_markers=[1, 2, 3, 4],
+            completed_sell_estimated_won=3,
+            completed_sell_estimated_lost=1,
+            completed_sell_estimated_net_profit=800.0,
+        )
+
+        metrics = extract_trade_metrics({}, strategy=strategy)
+
+        self.assertEqual(metrics["trades_total"], 4)
+        self.assertEqual(metrics["trades_won"], 3)
+        self.assertEqual(metrics["trades_lost"], 1)
+        self.assertEqual(metrics["win_rate_pct"], 75.0)
+        self.assertEqual(metrics["net_profit"], 800.0)
+        self.assertEqual(metrics["avg_trade_profit"], 200.0)
+
     def test_describe_adjust_flag_explains_dypre_semantics(self) -> None:
         description = describe_adjust_flag("dypre")
 

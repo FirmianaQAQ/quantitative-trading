@@ -36,7 +36,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from backtest.backtest_v1 import CONFIG, TEST_CASES
+from backtest.strategy_registry import get_default_strategy_spec
 from utils.ak_share_utils import get_a_share_code_name_df_and_filter
 from utils.project_utils import (
     SUPPORTED_ADJUST_FLAGS,
@@ -120,6 +120,18 @@ def configure_logging() -> None:
             logging.FileHandler(log_dir / "sync_akshare.log", encoding="utf-8"),
         ],
     )
+
+
+def get_default_sync_strategy_spec():
+    return get_default_strategy_spec()
+
+
+def get_default_sync_config() -> dict[str, object]:
+    return dict(get_default_sync_strategy_spec().config)
+
+
+def get_default_sync_test_cases() -> list[dict[str, object]]:
+    return list(get_default_sync_strategy_spec().test_cases)
 
 
 def get_tushare_token() -> str:
@@ -426,13 +438,23 @@ def resolve_target_codes(code_args: list[str], sync_all_sh_main: bool, source_na
         return resolve_all_sh_main_codes(source_name)
     if code_args:
         return sorted({normalize_full_code(arg) for arg in code_args})
-    code_set = {
-        CONFIG["code"],
-        *(item["code"] for item in TEST_CASES),
-    }
+    config = get_default_sync_config()
+    ordered_codes: list[str] = []
+    seen_codes: set[str] = set()
+
+    def append_code(raw_code: object) -> None:
+        code = str(raw_code or "").strip()
+        if not code or code in seen_codes:
+            return
+        seen_codes.add(code)
+        ordered_codes.append(code)
+
+    append_code(config.get("code"))
+    for item in get_default_sync_test_cases():
+        append_code(item.get("code"))
     if should_include_benchmark():
-        code_set.add(CONFIG["benchmark_code"])
-    return sorted(code_set)
+        append_code(config.get("benchmark_code"))
+    return ordered_codes
 
 
 def resolve_all_sh_main_codes(source_name: str) -> list[str]:
@@ -559,9 +581,10 @@ def normalize_full_code(raw_code: str) -> str:
 
 
 def resolve_sync_start_date() -> str:
+    config = get_default_sync_config()
     candidate_dates = [
-        CONFIG.get("data_from_date"),
-        CONFIG.get("from_date"),
+        config.get("data_from_date"),
+        config.get("from_date"),
     ]
     valid_dates = [item for item in candidate_dates if item]
     if not valid_dates:
@@ -570,7 +593,8 @@ def resolve_sync_start_date() -> str:
 
 
 def resolve_sync_end_date() -> str:
-    return CONFIG.get("to_date") or date.today().isoformat()
+    config = get_default_sync_config()
+    return str(config.get("to_date") or date.today().isoformat())
 
 
 def resolve_effective_adjust_flag(config_adjust_flag: str) -> str:
@@ -1742,6 +1766,7 @@ def sync_one_code(
     adjust_flag: str,
     source_name: str,
 ) -> str:
+    config = get_default_sync_config()
     csv_path = get_daily_csv_path(full_code, adjust_flag)
     existing_bundle_df = read_existing_history(csv_path)
     merged_histories: dict[str, pd.DataFrame] = {}
@@ -1771,7 +1796,7 @@ def sync_one_code(
             end_date,
         )
 
-        if full_code == CONFIG["benchmark_code"]:
+        if full_code == str(config.get("benchmark_code", "")):
             new_df = fetch_index_history(
                 full_code=full_code,
                 start_date=request_start_date,
@@ -1912,7 +1937,8 @@ def run_sync_batch(
 def main() -> None:
     configure_logging()
     code_args, sync_all_sh_main, source_name = parse_cli_options()
-    adjust_flag = resolve_effective_adjust_flag(CONFIG["adjust_flag"])
+    config = get_default_sync_config()
+    adjust_flag = resolve_effective_adjust_flag(str(config["adjust_flag"]))
     start_date = resolve_sync_start_date()
     end_date = resolve_sync_end_date()
     target_codes = resolve_target_codes(code_args, sync_all_sh_main, source_name)

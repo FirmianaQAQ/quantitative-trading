@@ -66,7 +66,9 @@ def before_next(strategy: Any, context: dict[str, Any]) -> None:
 
     _sync_holding_state(strategy)
 
-    if getattr(strategy, "order", None) is not None or not strategy.position:
+    if getattr(strategy, "order", None) is not None or not _has_effective_position(
+        strategy
+    ):
         return
 
     exit_reason = _build_exit_reason(strategy)
@@ -212,7 +214,7 @@ def _sync_holding_state(strategy: Any) -> None:
     state = _get_state(strategy)
     position_size = abs(float(getattr(strategy.position, "size", 0.0) or 0.0))
     previous_size = float(state.get("observed_position_size", 0.0) or 0.0)
-    if position_size <= 0:
+    if position_size <= 0 or not _has_effective_position(strategy):
         _reset_holding_state(state)
         return
 
@@ -287,6 +289,13 @@ def _trade_price(strategy: Any, field: str, ago: int = 0) -> float:
     if callable(getter):
         return float(getter(field, ago=ago))
     return float(getattr(strategy.data, field)[ago])
+
+
+def _has_effective_position(strategy: Any) -> bool:
+    checker = getattr(strategy, "has_effective_position", None)
+    if callable(checker):
+        return bool(checker())
+    return bool(getattr(strategy, "position", None))
 
 
 def _risk_per_share(strategy: Any, entry_price: float, atr_value: float) -> float:
