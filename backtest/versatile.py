@@ -140,8 +140,8 @@ BASE_CONFIG: dict[str, Any] = {
     "cash": 100000.0,
     # 券商佣金率，按成交额双边收取。
     "commission": 0.0000854,
-    # 卖出印花税率。
-    "stamp_duty": 0,
+    # 卖出印花税率。A 股现行税率为成交额的 0.05%（万分之五）。
+    "stamp_duty": 0.0005,
     # 双边过户费率。
     "transfer_fee": 0,
     # 单笔最低佣金。
