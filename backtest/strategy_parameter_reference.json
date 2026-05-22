@@ -32,7 +32,7 @@
     "report_name": "报告文件名前缀。",
     "strategy_name": "策略展示名称。",
     "strategy_brief": "策略简述，用于菜单和报告摘要。",
-    "current_position": "报告里明日操作建议的当前持仓状态。常用值为 auto/empty/hold。",
+    "current_position": "报告里当日操作建议的当前持仓状态。常用值为 auto/empty/hold。",
     "enable_llm_analysis": "是否在回测后触发大模型分析。",
     "patches": "策略增强补丁列表。填写 backtest/patches 目录下的模块名，例如 [\"macd\", \"boll\"]。",
     "patch_strict": "是否严格校验补丁。为 true 时，补丁缺失、没有 hook 或 hook 执行失败会直接报错；否则仅记录并跳过。",

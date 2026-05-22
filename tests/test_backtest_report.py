@@ -140,11 +140,11 @@ class BacktestReportAdviceTests(unittest.TestCase):
                         "复权口径": "Dypre 动态前复权",
                         "均线说明": "快线看短期节奏，慢线看中期趋势。",
                         "总收益率": "41.20%",
-                        "空仓-下一交易日策略": "观察买点",
+                        "空仓-当日策略": "观察买点",
                         "空仓-预判摘要": "趋势转暖，但仍需等更好的入场点。",
                         "空仓-建仓时机": "等待趋势翻多",
                         "空仓-建仓提示": "当前均线结构还没完全转强。",
-                        "持仓-下一交易日策略": "偏持有",
+                        "持仓-当日策略": "偏持有",
                         "持仓-预判摘要": "当前更适合继续持有。",
                         "新闻情绪": "偏积极",
                         "新闻主题": "订单合同",
@@ -166,9 +166,9 @@ class BacktestReportAdviceTests(unittest.TestCase):
         self.assertNotIn("策略名称", html)
         self.assertNotIn("复权口径", html)
         self.assertNotIn("均线说明", html)
-        self.assertNotIn("空仓-下一交易日策略", html)
+        self.assertNotIn("空仓-当日策略", html)
         self.assertNotIn("空仓-建仓提示", html)
-        self.assertNotIn("持仓-下一交易日策略", html)
+        self.assertNotIn("持仓-当日策略", html)
         self.assertNotIn("新闻情绪", html)
         self.assertNotIn("新闻主题", html)
         self.assertNotIn("资金面判断", html)
@@ -209,6 +209,7 @@ class BacktestReportAdviceTests(unittest.TestCase):
         self.assertIn("继续持有", html)
         self.assertIn("预判依据", html)
         self.assertIn("2026-05-19", html)
+        self.assertIn("当日策略", html)
         self.assertNotIn("今日策略", html)
         self.assertNotIn("明日策略", html)
 
@@ -341,7 +342,7 @@ class BacktestReportAdviceTests(unittest.TestCase):
 
         self.assertEqual(plan["action"], "hold")
         self.assertEqual(plan["display_action"], "偏持有")
-        self.assertIn("下一交易日", plan["title"])
+        self.assertIn("当日", plan["title"])
 
     def test_build_empty_entry_timing_plan_returns_entry_window_hint(self) -> None:
         dates = pd.date_range("2026-04-01", periods=40, freq="D")

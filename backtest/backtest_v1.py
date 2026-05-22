@@ -1457,7 +1457,7 @@ def print_summary(summary: dict[str, Any]) -> None:
         hold_plan = next_trade_plan_by_position.get("hold")
         if isinstance(empty_plan, dict) and empty_plan:
             print(
-                "  明日策略预判(当前空仓): "
+                "  当日策略预判(当前空仓): "
                 f"{empty_plan.get('display_action', empty_plan.get('action', '-'))}"
             )
             print(f"  空仓预判摘要: {empty_plan.get('summary', '-')}")
@@ -1470,7 +1470,7 @@ def print_summary(summary: dict[str, Any]) -> None:
                     print(f"  空仓参考价位: {entry_timing.get('reference', '-')}")
         if isinstance(hold_plan, dict) and hold_plan:
             print(
-                "  明日策略预判(当前持仓): "
+                "  当日策略预判(当前持仓): "
                 f"{hold_plan.get('display_action', hold_plan.get('action', '-'))}"
             )
             print(f"  持仓预判摘要: {hold_plan.get('summary', '-')}")
@@ -1479,7 +1479,7 @@ def print_summary(summary: dict[str, Any]) -> None:
     next_trade_plan = summary.get("next_trade_plan")
     if isinstance(next_trade_plan, dict) and next_trade_plan:
         print(
-            "  下一交易日策略: "
+            "  当日策略: "
             f"{next_trade_plan.get('display_action', next_trade_plan.get('action', '-'))}"
         )
         print(f"  预判摘要: {next_trade_plan.get('summary', '-')}")

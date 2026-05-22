@@ -386,7 +386,7 @@ def build_backtest_report_data(
     if empty_plan:
         summary_items.extend(
             [
-                {"label": "空仓-下一交易日策略", "value": empty_plan["display_action"]},
+                {"label": "空仓-当日策略", "value": empty_plan["display_action"]},
                 {"label": "空仓-预判摘要", "value": empty_plan["summary"]},
             ]
         )
@@ -401,7 +401,7 @@ def build_backtest_report_data(
     if hold_plan:
         summary_items.extend(
             [
-                {"label": "持仓-下一交易日策略", "value": hold_plan["display_action"]},
+                {"label": "持仓-当日策略", "value": hold_plan["display_action"]},
                 {"label": "持仓-预判摘要", "value": hold_plan["summary"]},
             ]
         )
@@ -760,16 +760,16 @@ def extract_next_trade_plan_from_chart_data(
         else _NEXT_TRADE_ACTION_SUMMARIES.get(action, raw_summary)
     )
 
-    summary_prefix = "基于最新趋势结构，"
+    summary_prefix = "基于最新当日数据与趋势结构，"
     if latest_date:
-        summary_prefix = f"基于 {latest_date} 收盘后的趋势结构，"
+        summary_prefix = f"基于 {latest_date} 当日最新数据与趋势结构，"
 
     return {
         "as_of_date": latest_date,
-        "session_label": "下一交易日",
+        "session_label": "当日",
         "action": action,
         "display_action": display_action,
-        "title": f"下一交易日{display_action}",
+        "title": f"当日{display_action}",
         "summary": summary_prefix + latest_summary if latest_summary else summary_prefix,
         "reason": reason,
     }
@@ -845,8 +845,8 @@ def build_empty_entry_timing_plan(
         label = "可考虑试探建仓"
         summary = (
             f"{ma_status_text}"
-            f"明日若价格继续站在慢线 {float(slow_ma):.2f} 上方，"
-            f"且没有明显高开脱离快线 {float(fast_ma):.2f}，可考虑分批试探建仓。"
+            f"当前若价格仍站在慢线 {float(slow_ma):.2f} 上方，"
+            f"且没有明显拉开与快线 {float(fast_ma):.2f} 的距离，可考虑分批试探建仓。"
         )
     elif bullish_trend and momentum_ok and liquidity_ok and chase_too_far:
         label = "等待回踩再建仓"
@@ -860,14 +860,14 @@ def build_empty_entry_timing_plan(
         summary = (
             f"{ma_status_text}"
             "趋势和动能都不差，但当前位置偏高。"
-            f"明日优先等回踩到 {pullback_text} 一带，再考虑建仓，不追高。"
+            f"当前优先等回踩到 {pullback_text} 一带，再考虑建仓，不追高。"
         )
     elif bullish_trend and not momentum_ok:
         label = "等待动能确认"
         summary = (
             f"{ma_status_text}"
             "长线趋势已转暖，但短线动能还不够。"
-            "明日优先等近 4 日上涨天数达到 3 天以上，或 3 日动能转正到 1% 附近后，再考虑建仓。"
+            "当前优先等近 4 日上涨天数达到 3 天以上，或 3 日动能转正到 1% 附近后，再考虑建仓。"
         )
     elif bullish_trend and momentum_ok and not liquidity_ok:
         label = "等待量能恢复"
@@ -876,7 +876,7 @@ def build_empty_entry_timing_plan(
         summary = (
             f"{ma_status_text}"
             "趋势条件接近满足，但量能/换手偏弱。"
-            f"明日优先等换手回到 {turn_text} 以上，再考虑建仓。"
+            f"当前优先等换手回到 {turn_text} 以上，再考虑建仓。"
         )
     else:
         label = "等待趋势翻多"
@@ -884,7 +884,7 @@ def build_empty_entry_timing_plan(
         summary = (
             "当前均线结构还没完全转强。"
             f"{ma_status_text}"
-            f"明日优先观察收盘重新站上 {slow_text}，且快线不弱于慢线后，再考虑建仓。"
+            f"当前优先观察价格重新站上 {slow_text}，且快线不弱于慢线后，再考虑建仓。"
         )
 
     return {

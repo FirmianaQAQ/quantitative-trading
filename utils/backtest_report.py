@@ -829,10 +829,12 @@ HIDDEN_METRIC_CARD_LABELS = {
     "新闻主题",
     "资金面判断",
     "财报面判断",
+    "空仓-当日策略",
     "空仓-下一交易日策略",
     "空仓-预判摘要",
     "空仓-建仓时机",
     "空仓-建仓提示",
+    "持仓-当日策略",
     "持仓-下一交易日策略",
     "持仓-预判摘要",
 }
@@ -949,7 +951,9 @@ def _extract_next_trade_plan_preview(report_data: list[dict[str, Any]]) -> dict[
     action = str(latest_advice.get("action", "")).strip().lower()
     if not action:
         display_action = (
-            str(metrics_payload.get("持仓-下一交易日策略", "")).strip()
+            str(metrics_payload.get("持仓-当日策略", "")).strip()
+            or str(metrics_payload.get("持仓-下一交易日策略", "")).strip()
+            or str(metrics_payload.get("当日策略", "")).strip()
             or str(metrics_payload.get("下一交易日策略", "")).strip()
         )
         summary_text = (
@@ -975,7 +979,9 @@ def _extract_next_trade_plan_preview(report_data: list[dict[str, Any]]) -> dict[
     }
     return {
         "display_action": (
-            str(metrics_payload.get("持仓-下一交易日策略", "")).strip()
+            str(metrics_payload.get("持仓-当日策略", "")).strip()
+            or str(metrics_payload.get("持仓-下一交易日策略", "")).strip()
+            or str(metrics_payload.get("当日策略", "")).strip()
             or str(metrics_payload.get("下一交易日策略", "")).strip()
             or str(latest_advice.get("title", "")).strip()
         ),
@@ -1037,9 +1043,9 @@ def _build_forecast_scenario_html(
 ) -> str:
     as_of_text = ""
     if preview.get("as_of_date"):
-        as_of_text = f"{html_escape(str(preview['as_of_date']))} 收盘后推演"
+        as_of_text = f"{html_escape(str(preview['as_of_date']))} 当日策略"
     if preview.get("price"):
-        price_prefix = f"收盘价 {html_escape(str(preview['price']))}"
+        price_prefix = f"当日价 {html_escape(str(preview['price']))}"
         as_of_text = f"{price_prefix} · {as_of_text}" if as_of_text else price_prefix
 
     reason_html = ""
@@ -1070,7 +1076,7 @@ def _build_forecast_scenario_html(
     <article class="forecast-scenario is-{html_escape(str(preview.get("tone", "neutral")))}">
       {scenario_label_html}
       <div class="forecast-scenario-head">
-        <div class="forecast-scenario-meta">{as_of_text or "基于最新收盘后的趋势结构"}</div>
+        <div class="forecast-scenario-meta">{as_of_text or "基于最新当日数据与趋势结构"}</div>
         <div class="forecast-scenario-action">{html_escape(str(preview.get("display_action", "-")))}</div>
       </div>
       <p class="forecast-scenario-summary">{html_escape(str(preview.get("summary", "-")))}</p>

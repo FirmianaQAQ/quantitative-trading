@@ -21,6 +21,37 @@ def _to_builtin(value: Any) -> Any:
     return value
 
 
+def _normalize_trade_plan_text(text: str) -> str:
+    normalized = str(text)
+    replacements = [
+        ("收盘后的趋势结构", "当日最新数据与趋势结构"),
+        ("下一交易日", "当日"),
+        ("明日策略", "当日策略"),
+        ("明日若", "当前若"),
+        ("明日优先", "当前优先"),
+        ("明日", "当日"),
+    ]
+    for source, target in replacements:
+        normalized = normalized.replace(source, target)
+    return normalized
+
+
+def _normalize_performance_summary_for_llm(value: Any) -> Any:
+    if isinstance(value, dict):
+        normalized_dict: dict[str, Any] = {}
+        for key, item in value.items():
+            normalized_key = _normalize_trade_plan_text(str(key))
+            normalized_dict[normalized_key] = _normalize_performance_summary_for_llm(item)
+        return normalized_dict
+    if isinstance(value, list):
+        return [_normalize_performance_summary_for_llm(item) for item in value]
+    if isinstance(value, tuple):
+        return [_normalize_performance_summary_for_llm(item) for item in value]
+    if isinstance(value, str):
+        return _normalize_trade_plan_text(value)
+    return value
+
+
 def _filter_df(
     df: pd.DataFrame,
     from_date: str | None = None,
@@ -98,7 +129,7 @@ def build_single_stock_analysis_payload(
             "bars": len(filtered_df),
             "as_of_date": pd.Timestamp(latest_row["date"]).strftime("%Y-%m-%d"),
         },
-        "performance_summary": summary,
+        "performance_summary": _normalize_performance_summary_for_llm(summary),
         "market_snapshot": {
             "latest_close": round(float(latest_row["close"]), 4),
             "latest_turn": round(float(latest_row["turn"]), 4),
@@ -182,7 +213,7 @@ def build_pair_analysis_payload(
             "bars": len(filtered_df),
             "as_of_date": pd.Timestamp(latest_row["date"]).strftime("%Y-%m-%d"),
         },
-        "performance_summary": summary,
+        "performance_summary": _normalize_performance_summary_for_llm(summary),
         "pair_snapshot": {
             "latest_spread_close": round(float(latest_row["close"]), 6),
             "latest_spread_zscore": _round_or_none(latest_row.get("spread_zscore"), 4),

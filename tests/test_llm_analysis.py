@@ -95,7 +95,7 @@ class LLMAnalysisTests(unittest.TestCase):
                 "next_trade_plan": {
                     "action": "watch_buy",
                     "display_action": "观察买点",
-                    "summary": "基于 2024-03-30 收盘后的趋势结构，趋势转暖，但仍需等更好的入场点。",
+                    "summary": "基于 2024-03-30 当日最新数据与趋势结构，趋势转暖，但仍需等更好的入场点。",
                 },
             },
             df=_build_sample_price_df(),
@@ -118,6 +118,14 @@ class LLMAnalysisTests(unittest.TestCase):
         self.assertEqual(
             payload["performance_summary"]["next_trade_plan"]["action"],
             "watch_buy",
+        )
+        self.assertIn(
+            "当日最新数据与趋势结构",
+            payload["performance_summary"]["next_trade_plan"]["summary"],
+        )
+        self.assertNotIn(
+            "收盘后的趋势结构",
+            payload["performance_summary"]["next_trade_plan"]["summary"],
         )
 
     def test_build_single_stock_analysis_payload_can_include_external_context(self) -> None:
