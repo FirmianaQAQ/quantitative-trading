@@ -99,7 +99,7 @@ CONFIG: dict[str, Any] = {
     # 单笔最低佣金 5 元
     "min_commission": 5.0,
     # 买入时使用现金的比例，给跳空和手续费留缓冲
-    "buy_cash_ratio": 0.30,
+    "buy_cash_ratio": 0.95,
     # 按更高的估算成交价计算仓位，避免次日高开导致资金不足
     "buy_price_buffer": 1.01,
     # 每次买入按多少股的整数倍下单，A 股通常为 100
@@ -107,17 +107,21 @@ CONFIG: dict[str, Any] = {
     # 买入触发阈值：价格 <= X * buy_trigger_multiplier
     "buy_trigger_multiplier": 1.05,
     # 价格触发后，最多等待多少个交易日寻找买点
-    "buy_trigger_window": 7,
+    "buy_trigger_window": 10,
     # 连续观察窗口长度，例如 5 表示统计最近 5 个交易日
-    "buy_rise_window": 7,
+    "buy_rise_window": 4,
     # 连续观察窗口内至少多少个上涨日才买入
-    "buy_rise_days_required": 3,
+    "buy_rise_days_required": 2,
     # 买入封顶：价格位于 recent_low~recent_high 区间的百分位达到该值后不再追高买入
-    "buy_limit_position_pct": 0.9,
+    "buy_limit_position_pct": 0.95,
     # 卖出触发阈值的加权值（仅用于卖出）
-    "sell_trigger_multiplier": 0.9,
+    "sell_trigger_multiplier": 0.85,
     # 相对买入价的止损跌幅，例如 0.1 表示跌 10% 止损
-    "stop_loss_pct": 0.5,
+    "stop_loss_pct": 0.1,
+    # 首次建 30% 底仓，持仓中允许补到 50% 做 T。
+    "core_position_ratio": 0.30,
+    "max_position_ratio": 0.50,
+    "enable_t_trade": True,
     "print_log": True,
     # 单次回测使用的均线周期
     "fast": 8,  # 这个试过5，感觉还是很容易反复切割年线
@@ -389,6 +393,9 @@ class SimpleMovingAverageStrategy(HStrategy):
         # 计算资金占用和空闲时长
         self.position_days_total = 0
         self.idle_cash_days_total = 0
+        self.capital_usage_days_weighted = 0.0
+        self.capital_idle_days_weighted = 0.0
+        self.capital_usage_tracking_days = 0
         self.has_completed_sell = False
         self.buy_signals_total = 0
         self.buy_signals_blocked = 0
@@ -488,6 +495,85 @@ class SimpleMovingAverageStrategy(HStrategy):
             cash_usage_ratio=float(self.param.get("buy_cash_ratio")),
             config=self.param,
         )
+
+    def get_position_ratio(self, reference_price: float | None = None) -> float:
+        total_value = float(self.broker.getvalue())
+        if total_value <= 0:
+            return 0.0
+
+        price = (
+            float(reference_price)
+            if reference_price is not None
+            else max(
+                self._get_trade_price("open"),
+                self._get_trade_price("close"),
+                self._get_trade_price("high"),
+            )
+        )
+        position_value = self.get_position_size() * max(price, 0.0)
+        return max(min(position_value / total_value, 1.0), 0.0)
+
+    def calculate_buy_size_for_target_ratio(self, target_ratio: float) -> int:
+        total_value = float(self.broker.getvalue())
+        available_cash = float(self.broker.getcash())
+        if total_value <= 0 or available_cash <= 0:
+            return 0
+
+        estimated_price = max(
+            self._get_trade_price("open"),
+            self._get_trade_price("close"),
+            self._get_trade_price("high"),
+        ) * float(self.param.get("buy_price_buffer"))
+        current_position_value = self.get_position_size() * estimated_price
+        target_position_value = total_value * max(float(target_ratio), 0.0)
+        incremental_budget = min(
+            max(target_position_value - current_position_value, 0.0),
+            available_cash,
+        )
+        if incremental_budget <= 0:
+            return 0
+
+        return estimate_max_buy_size(
+            available_cash=incremental_budget,
+            price=estimated_price,
+            lot_size=max(int(self.param.get("lot_size")), 1),
+            cash_usage_ratio=1.0,
+            config=self.param,
+        )
+
+    def calculate_sell_size_for_target_ratio(self, target_ratio: float) -> int:
+        current_size = int(self.get_position_size())
+        if current_size <= 0:
+            return 0
+
+        reference_price = max(
+            self._get_trade_price("open"),
+            self._get_trade_price("close"),
+        )
+        total_value = float(self.broker.getvalue())
+        if total_value <= 0 or reference_price <= 0:
+            return 0
+
+        current_position_value = current_size * reference_price
+        target_position_value = total_value * max(float(target_ratio), 0.0)
+        reduce_value = max(current_position_value - target_position_value, 0.0)
+        if reduce_value <= 0:
+            return 0
+
+        lot_size = max(int(self.param.get("lot_size")), 1)
+        reduce_size = int(reduce_value / reference_price)
+        reduce_size = (reduce_size // lot_size) * lot_size
+        return max(min(reduce_size, current_size), 0)
+
+    def _record_capital_usage(self) -> None:
+        total_value = float(self.broker.getvalue())
+        if total_value <= 0:
+            return
+        cash_value = float(self.broker.getcash())
+        usage_ratio = max(min((total_value - cash_value) / total_value, 1.0), 0.0)
+        self.capital_usage_tracking_days += 1
+        self.capital_usage_days_weighted += usage_ratio
+        self.capital_idle_days_weighted += 1.0 - usage_ratio
 
     def notify_order(self, order: bt.Order) -> None:
         # 接收并处理订单（Order）状态变化的通知。
@@ -997,6 +1083,7 @@ class SimpleMovingAverageStrategy(HStrategy):
             self.position_days_total += 1
         elif self.has_completed_sell:
             self.idle_cash_days_total += 1
+        self._record_capital_usage()
 
         self.patch_manager.before_next()
         try:
@@ -1008,8 +1095,14 @@ class SimpleMovingAverageStrategy(HStrategy):
             self.patch_manager.after_next()
 
     def _check_and_buy(self) -> None:
-        if self.has_effective_position():
-            # 当前已持有，不买
+        has_position = self.has_effective_position()
+        enable_t_trade = bool(self.param.get("enable_t_trade", False))
+        core_position_ratio = float(self.param.get("core_position_ratio", 0.30))
+        max_position_ratio = float(self.param.get("max_position_ratio", 0.50))
+        current_position_ratio = self.get_position_ratio()
+        if has_position and (
+            not enable_t_trade or current_position_ratio >= max_position_ratio - 0.01
+        ):
             return False
         # if  self.now_is_up_day:
         #     # 金叉后不适合买入规则1，所以要重置规则1的所有状态
@@ -1099,10 +1192,18 @@ class SimpleMovingAverageStrategy(HStrategy):
                 if rise_days_num >= rise_days_required or plan_b:
                     # 上涨天数够，或者差1天，但上涨金额够
                     self.buy_signals_total += 1
-                    size = self.calculate_buy_size()
+                    target_ratio = (
+                        max_position_ratio
+                        if has_position and enable_t_trade
+                        else core_position_ratio
+                    )
+                    size = self.calculate_buy_size_for_target_ratio(target_ratio)
                     if size <= 0:
                         self.log(
-                            f"买点已满足，但可用资金不足 当前现金={self.broker.getcash():.2f}"
+                            "买点已满足，但无法补到目标仓位"
+                            f" 当前仓位={current_position_ratio * 100:.2f}%"
+                            f" 目标仓位={target_ratio * 100:.2f}%"
+                            f" 当前现金={self.broker.getcash():.2f}"
                         )
                         self.reset_buy_setup()
                         return
@@ -1155,7 +1256,7 @@ class SimpleMovingAverageStrategy(HStrategy):
                         return
                     self.buy_patch_deferred_reason = None
                     self.log(
-                        "买点满足，提交买单"
+                        ("持仓做T补仓，提交买单" if has_position else "买点满足，提交底仓买单")
                         + (
                             "(差1天，但上涨金额够)"
                             if plan_b
@@ -1163,6 +1264,8 @@ class SimpleMovingAverageStrategy(HStrategy):
                         )
                         + f" 收盘价={current_close:.2f}"
                         f" 下单数量={size}"
+                        f" 当前仓位={current_position_ratio * 100:.2f}%"
+                        f" 目标仓位={target_ratio * 100:.2f}%"
                         f" 当前现金={self.broker.getcash():.2f}"
                         f" 上一个最低价={lowest_price_previous:.2f}"
                         f" 买入封顶价={buy_limit:.2f}"
@@ -1206,6 +1309,9 @@ class SimpleMovingAverageStrategy(HStrategy):
 
         highest_price_previous = self.get_last_minmax_price(weighted=True)
         current_close = float(self.data.close[0])
+        enable_t_trade = bool(self.param.get("enable_t_trade", False))
+        core_position_ratio = float(self.param.get("core_position_ratio", 0.30))
+        current_position_ratio = self.get_position_ratio(reference_price=current_close)
 
         # 止损
         if self.last_buy_price is not None:
@@ -1328,7 +1434,29 @@ class SimpleMovingAverageStrategy(HStrategy):
                 recent_up_days=up_days,
             ):
                 return False
-            self.order = self.close()
+            if enable_t_trade and current_position_ratio > core_position_ratio + 0.01:
+                reduce_size = self.calculate_sell_size_for_target_ratio(core_position_ratio)
+                if reduce_size <= 0:
+                    self.log(
+                        "触发做T减仓，但可减数量不足一个 lot，跳过本次减仓"
+                        f" 当前仓位={current_position_ratio * 100:.2f}%"
+                        f" 目标仓位={core_position_ratio * 100:.2f}%"
+                    )
+                    self.reset_sell_setup()
+                    return False
+                self.log(
+                    "触发做T减仓，先降回底仓"
+                    f" 当前仓位={current_position_ratio * 100:.2f}%"
+                    f" 目标仓位={core_position_ratio * 100:.2f}%"
+                    f" 减仓数量={reduce_size}"
+                )
+                self.order = self.sell(size=reduce_size)
+            else:
+                self.log(
+                    "卖点继续恶化，执行清仓"
+                    f" 当前仓位={current_position_ratio * 100:.2f}%"
+                )
+                self.order = self.close()
             self.reset_sell_setup()
             return True
 
@@ -1652,6 +1780,14 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("sell_trigger_multiplier 必须大于 0")
     if float(config["stop_loss_pct"]) < 0 or float(config["stop_loss_pct"]) >= 1:
         raise ValueError("stop_loss_pct 必须大于等于 0 且小于 1")
+    core_position_ratio = float(config.get("core_position_ratio", 0.30))
+    max_position_ratio = float(config.get("max_position_ratio", 0.50))
+    if core_position_ratio <= 0 or core_position_ratio >= 1:
+        raise ValueError("core_position_ratio 必须大于 0 且小于 1")
+    if max_position_ratio <= 0 or max_position_ratio >= 1:
+        raise ValueError("max_position_ratio 必须大于 0 且小于 1")
+    if core_position_ratio > max_position_ratio:
+        raise ValueError("core_position_ratio 不能大于 max_position_ratio")
     current_position = str(config.get("current_position", "auto")).strip().lower()
     if current_position not in {"auto", "empty", "hold"}:
         raise ValueError("current_position 仅支持 auto、empty、hold")

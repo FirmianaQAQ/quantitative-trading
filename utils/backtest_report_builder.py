@@ -174,6 +174,7 @@ def summarize_result(strategy: bt.Strategy, initial_value: float) -> dict[str, A
         "buy_signals_blocked": int(getattr(strategy, "buy_signals_blocked", 0) or 0),
     }
     result.update(extract_trade_metrics(trade_analysis, strategy=strategy))
+    result.update(extract_capital_usage_metrics(strategy))
     return result
 
 
@@ -199,6 +200,27 @@ def extract_buy_execution_metrics(strategy: bt.Strategy | None = None) -> dict[s
     return {
         "latest_buy_turnover": safe_round(latest_turnover),
         "avg_buy_turnover": safe_round(avg_turnover),
+    }
+
+
+def extract_capital_usage_metrics(strategy: bt.Strategy | None = None) -> dict[str, Any]:
+    tracked_days = int(getattr(strategy, "capital_usage_tracking_days", 0) or 0)
+    weighted_position_days = float(
+        getattr(strategy, "capital_usage_days_weighted", 0.0) or 0.0
+    )
+    weighted_idle_days = float(
+        getattr(strategy, "capital_idle_days_weighted", 0.0) or 0.0
+    )
+    avg_usage_pct = (
+        safe_round(weighted_position_days / tracked_days * 100)
+        if tracked_days > 0
+        else None
+    )
+    return {
+        "capital_usage_tracking_days": tracked_days,
+        "capital_usage_days_weighted": safe_round(weighted_position_days),
+        "capital_idle_days_weighted": safe_round(weighted_idle_days),
+        "avg_capital_usage_pct": avg_usage_pct,
     }
 
 
@@ -375,6 +397,9 @@ def build_backtest_report_data(
         {"label": "资金占用天数占比", "value": (summary["position_days_total"] / total_days * 100) if total_days > 0 else 0, "kind": "percent"},
         {"label": "资金空闲天数", "value": summary["idle_cash_days_total"]},
         {"label": "资金空闲天数占比", "value": (summary["idle_cash_days_total"] / total_days * 100) if total_days > 0 else 0, "kind": "percent"},
+        {"label": "平均资金占用率", "value": summary.get("avg_capital_usage_pct"), "kind": "percent"},
+        {"label": "资金加权占用天数", "value": summary.get("capital_usage_days_weighted"), "kind": "number"},
+        {"label": "资金加权空闲天数", "value": summary.get("capital_idle_days_weighted"), "kind": "number"},
     ]
     summary_items.extend(
         _build_external_context_summary_items(external_context)

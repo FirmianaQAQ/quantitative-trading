@@ -23,6 +23,7 @@ from utils.backtest_report_builder import (
     build_empty_entry_timing_plan,
     build_next_trade_plan,
     describe_adjust_flag,
+    extract_capital_usage_metrics,
     extract_buy_execution_metrics,
     extract_trade_metrics,
     extract_next_trade_plan_from_chart_data,
@@ -130,6 +131,20 @@ class BacktestReportAdviceTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["买入资金额"], 10200.0)
         self.assertEqual(rows[0]["占初始资金比例"], 10.2)
+
+    def test_extract_capital_usage_metrics_returns_weighted_usage(self) -> None:
+        strategy = SimpleNamespace(
+            capital_usage_tracking_days=10,
+            capital_usage_days_weighted=4.25,
+            capital_idle_days_weighted=5.75,
+        )
+
+        metrics = extract_capital_usage_metrics(strategy)
+
+        self.assertEqual(metrics["capital_usage_tracking_days"], 10)
+        self.assertEqual(metrics["capital_usage_days_weighted"], 4.25)
+        self.assertEqual(metrics["capital_idle_days_weighted"], 5.75)
+        self.assertEqual(metrics["avg_capital_usage_pct"], 42.5)
 
     def test_metric_cards_hide_redundant_strategy_and_forecast_cards(self) -> None:
         html = _build_metric_cards(
