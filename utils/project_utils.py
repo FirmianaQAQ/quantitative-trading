@@ -74,7 +74,14 @@ def _build_dypre_price_frame(df: pd.DataFrame) -> pd.DataFrame:
         missing_columns = sorted(required_columns - set(cq_df.columns))
         raise ValueError(f"Dypre 日线缺少不复权字段: {missing_columns}")
 
-    selected_df = qfq_df.copy()
+    # 某些增量同步场景下，最新交易日可能已经写入了 cq / hfq，
+    # 但 qfq 仍为空。这里保留 qfq 优先级，只在 qfq 缺值时用同日 cq 回填，
+    # 避免最新一根被静默丢弃，导致报告和策略停留在前一日。
+    selected_df = (
+        qfq_df.set_index("date")
+        .combine_first(cq_df.set_index("date"))
+        .reset_index()
+    )
     selected_df["raw_open"] = pd.to_numeric(cq_df["open"], errors="coerce")
     selected_df["raw_high"] = pd.to_numeric(cq_df["high"], errors="coerce")
     selected_df["raw_low"] = pd.to_numeric(cq_df["low"], errors="coerce")
