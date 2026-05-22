@@ -12,10 +12,12 @@ from utils.backtest_report import (
     _build_advice_panel,
     _build_metric_cards,
     _extract_daily_advice_entries,
+    _extract_latest_price_snapshot,
     html as generate_backtest_html,
     merge_backtest_html_with_ai_report,
 )
 from utils.backtest_report_builder import (
+    build_backtest_report_data,
     build_buy_trade_detail_rows,
     build_enhanced_trade_chart_data,
     build_empty_entry_timing_plan,
@@ -403,6 +405,109 @@ class BacktestReportAdviceTests(unittest.TestCase):
         self.assertEqual(hold_plan["action"], "hold")
         self.assertIn("继续持有观察", hold_plan["reason"])
 
+    def test_build_backtest_report_data_uses_latest_available_data_for_current_snapshot(self) -> None:
+        strategy = SimpleNamespace(
+            broker=SimpleNamespace(getvalue=lambda: 105000.0),
+            analyzers=SimpleNamespace(
+                time_return=SimpleNamespace(
+                    get_analysis=lambda: {
+                        "2026-05-19": 0.01,
+                        "2026-05-20": 0.02,
+                    }
+                ),
+                returns=SimpleNamespace(get_analysis=lambda: {"rnorm100": 12.3}),
+                drawdown=SimpleNamespace(
+                    get_analysis=lambda: {
+                        "max": {"drawdown": 5.6, "moneydown": 3200.0, "len": 8}
+                    }
+                ),
+                sharpe=SimpleNamespace(get_analysis=lambda: {"sharperatio": 1.1}),
+                trades=SimpleNamespace(get_analysis=lambda: {}),
+            ),
+            buy_markers=[],
+            sell_markers=[],
+            buy_trade_records=[],
+            position_days_total=2,
+            idle_cash_days_total=1,
+            buy_signals_total=1,
+            buy_signals_blocked=0,
+            completed_trades_total=0,
+            completed_sell_orders=0,
+            completed_sell_estimated_won=0,
+            completed_sell_estimated_lost=0,
+            completed_sell_estimated_net_profit=0.0,
+        )
+        price_df = pd.DataFrame(
+            [
+                {
+                    "date": "2026-05-19",
+                    "open": 10.0,
+                    "high": 10.2,
+                    "low": 9.9,
+                    "close": 10.0,
+                    "volume": 100000,
+                    "turn": 1.0,
+                },
+                {
+                    "date": "2026-05-20",
+                    "open": 10.2,
+                    "high": 10.4,
+                    "low": 10.1,
+                    "close": 10.3,
+                    "volume": 120000,
+                    "turn": 1.1,
+                },
+                {
+                    "date": "2026-05-21",
+                    "open": 10.4,
+                    "high": 10.7,
+                    "low": 10.3,
+                    "close": 10.6,
+                    "volume": 140000,
+                    "turn": 1.2,
+                },
+            ]
+        )
+
+        with patch("utils.backtest_report_builder.load_daily_data", return_value=price_df):
+            with patch(
+                "utils.backtest_report_builder.enrich_single_stock_context",
+                return_value={},
+            ):
+                report_data = build_backtest_report_data(
+                    strategy,
+                    config={
+                        "code": "sh.600000",
+                        "adjust_flag": "cq",
+                        "from_date": "2026-05-19",
+                        "to_date": "2026-05-20",
+                        "cash": 100000.0,
+                        "benchmark_code": "",
+                        "strategy_name": DEFAULT_BASE_STRATEGY_NAME,
+                        "stop_loss_pct": 0.1,
+                        "fast": 2,
+                        "slow": 3,
+                    },
+                    ma=[2, 3],
+                )
+
+        summary_payload = next(
+            item["chart_data"]
+            for item in report_data
+            if item.get("chart_name") == "指标概览"
+        )
+        optimized_payload = next(
+            item["chart_data"]
+            for item in report_data
+            if item.get("chart_name") == "优化买卖点"
+        )
+        latest_price = _extract_latest_price_snapshot(report_data)
+
+        self.assertEqual(optimized_payload["x_axis"][-1], "2026-05-21")
+        self.assertIn("2026-05-21", summary_payload["空仓-预判摘要"])
+        self.assertEqual(latest_price["date"], "2026-05-21")
+        self.assertEqual(latest_price["price"], "10.60")
+
     def test_latest_advice_respects_empty_position_when_backtest_is_holding(self) -> None:
         report_data = build_buy_sell_report(
             dates=["2026-05-13", "2026-05-14"],
@@ -503,6 +608,43 @@ class BacktestReportAdviceTests(unittest.TestCase):
         self.assertIn('data-default-advice-source="strategy"', html)
         self.assertIn("优化策略", html)
         self.assertIn("优化观察", html)
+
+    def test_advice_panel_defaults_to_optimized_when_it_has_newer_date(self) -> None:
+        report_data = build_buy_sell_report(
+            dates=["2026-05-13", "2026-05-14"],
+            buy_points=[["2026-05-13", 10.0]],
+        )
+        report_data.append(
+            {
+                "chart_name": "优化买卖点",
+                "chart_data": {
+                    "x_axis": ["2026-05-13", "2026-05-14", "2026-05-15"],
+                    "candles": [[10.0, 10.0], [10.5, 10.5], [11.0, 11.0]],
+                    "buy_points": [["2026-05-13", 10.0]],
+                    "sell_points": [],
+                    "indicator_lines": [],
+                    "advice_entries": [
+                        {
+                            "date": "2026-05-15",
+                            "action": "watch_buy",
+                            "title": "优化观察",
+                            "price": "11.00",
+                            "summary": "等待更好的入场点。",
+                            "reason": "最新数据已经更新到更晚日期，默认优先展示更新口径。",
+                            "is_signal": True,
+                        }
+                    ],
+                },
+            }
+        )
+
+        html = _build_advice_panel(
+            report_data,
+            log_lines=[],
+            current_position="auto",
+        )
+
+        self.assertIn('data-default-advice-source="optimized"', html)
 
     def test_advice_panel_defaults_to_main_strategy_even_after_external_patch(self) -> None:
         report_data = build_buy_sell_report(

@@ -263,40 +263,38 @@ def build_backtest_report_data(
         to_date=config.get("to_date"),
     )
     filtered_df = filtered_df.copy()
-    external_context = enrich_single_stock_context(config, filtered_df)
-    
+    report_live_df = filter_backtest_data(
+        df,
+        from_date=config.get("from_date"),
+        to_date=None,
+    )
+    report_live_df = report_live_df.copy()
+    report_display_df = report_live_df if not report_live_df.empty else filtered_df
+    report_display_config = {**config, "to_date": None}
+    external_context = enrich_single_stock_context(report_display_config, report_display_df)
+
     # 计算均线数据并添加到指标线列表中
-    indicator_lines = []
     ma_source_df = df.copy()
     ma_source_df["date"] = pd.to_datetime(ma_source_df["date"])
-    filtered_dates = pd.to_datetime(filtered_df["date"])
-    for m in ma:
-        temp = ma_source_df[["date"]].copy()
-        temp[f"MA{m}"] = (
-            ma_source_df["close"]
-            .rolling(window=m, min_periods=1)
-            .mean()
-            .round(4)
-        )
-        aligned_ma = (
-            temp.set_index("date")
-            .reindex(filtered_dates)[f"MA{m}"]
-            .round(4)
-            .tolist()
-        )
-        indicator_lines.append({
-            "name": f"MA{m}",
-            "data": aligned_ma,
-        })
+    indicator_lines = _build_indicator_lines_for_target_df(
+        ma_source_df=ma_source_df,
+        target_df=filtered_df,
+        ma_periods=ma,
+    )
+    report_indicator_lines = _build_indicator_lines_for_target_df(
+        ma_source_df=ma_source_df,
+        target_df=report_display_df,
+        ma_periods=ma,
+    )
     optimized_chart_data = build_optimized_trade_chart_data(
         source_df=df,
-        filtered_df=filtered_df,
-        config=config,
-        indicator_lines=indicator_lines,
+        filtered_df=report_display_df,
+        config=report_display_config,
+        indicator_lines=report_indicator_lines,
         ma_periods=ma,
     )
     optimized_chart_data = build_enhanced_trade_chart_data(
-        filtered_df=filtered_df,
+        filtered_df=report_display_df,
         optimized_chart_data=optimized_chart_data,
         external_context=external_context,
     )
@@ -312,7 +310,7 @@ def build_backtest_report_data(
     }
     empty_entry_timing = build_empty_entry_timing_plan(
         source_df=df,
-        config=config,
+        config=report_display_config,
         ma_periods=ma,
     )
     if next_trade_plan_by_position.get("empty") and empty_entry_timing:
@@ -475,6 +473,39 @@ def filter_backtest_data(
         filtered = filtered[filtered["date"] <= pd.Timestamp(to_date)]
 
     return filtered.reset_index(drop=True)
+
+
+def _build_indicator_lines_for_target_df(
+    ma_source_df: pd.DataFrame,
+    target_df: pd.DataFrame,
+    ma_periods: list[int] | None = None,
+) -> list[dict[str, Any]]:
+    if target_df.empty:
+        return []
+
+    indicator_lines: list[dict[str, Any]] = []
+    target_dates = pd.to_datetime(target_df["date"])
+    for period in ma_periods or []:
+        temp = ma_source_df[["date"]].copy()
+        temp[f"MA{period}"] = (
+            ma_source_df["close"]
+            .rolling(window=period, min_periods=1)
+            .mean()
+            .round(4)
+        )
+        aligned_ma = (
+            temp.set_index("date")
+            .reindex(target_dates)[f"MA{period}"]
+            .round(4)
+            .tolist()
+        )
+        indicator_lines.append(
+            {
+                "name": f"MA{period}",
+                "data": aligned_ma,
+            }
+        )
+    return indicator_lines
 
 
 def build_cumulative_returns_series(returns_series: pd.Series, name: str) -> pd.Series:

@@ -430,10 +430,9 @@ def _build_advice_panel(
     ]
     if not available_sources:
         return ""
-    default_source = (
-        ADVICE_SOURCE_STRATEGY
-        if ADVICE_SOURCE_STRATEGY in available_sources
-        else available_sources[0]
+    default_source = _resolve_default_advice_source(
+        source_entries_by_position=source_entries_by_position,
+        available_sources=available_sources,
     )
 
     position_mode_labels = {
@@ -560,6 +559,49 @@ def _build_advice_panel(
       <div class="advice-empty" id="advice-empty" style="display:none;">当前筛选条件下没有可展示的操作建议。</div>
     </aside>
     """
+
+
+def _resolve_default_advice_source(
+    source_entries_by_position: dict[str, dict[str, list[dict[str, Any]]]],
+    available_sources: list[str],
+) -> str:
+    if not available_sources:
+        return ADVICE_SOURCE_STRATEGY
+    if len(available_sources) == 1:
+        return available_sources[0]
+    if ADVICE_SOURCE_STRATEGY not in available_sources:
+        return available_sources[0]
+
+    strategy_latest_date = _resolve_latest_advice_date(
+        source_entries_by_position.get(ADVICE_SOURCE_STRATEGY, {})
+    )
+    optimized_latest_date = _resolve_latest_advice_date(
+        source_entries_by_position.get(ADVICE_SOURCE_OPTIMIZED, {})
+    )
+    if (
+        optimized_latest_date is not None
+        and strategy_latest_date is not None
+        and optimized_latest_date > strategy_latest_date
+    ):
+        return ADVICE_SOURCE_OPTIMIZED
+    return ADVICE_SOURCE_STRATEGY
+
+
+def _resolve_latest_advice_date(
+    entries_by_position: dict[str, list[dict[str, Any]]],
+) -> pd.Timestamp | None:
+    latest_date: pd.Timestamp | None = None
+    for entries in entries_by_position.values():
+        for entry in entries or []:
+            date_text = str(entry.get("date", "")).strip()
+            if not date_text:
+                continue
+            current_date = pd.to_datetime(date_text, errors="coerce")
+            if pd.isna(current_date):
+                continue
+            if latest_date is None or current_date > latest_date:
+                latest_date = current_date
+    return latest_date
 
 
 def _normalize_series_payload(data: Any, default_name: str) -> dict[str, Any]:
