@@ -189,16 +189,16 @@ BASE_CONFIG: dict[str, Any] = {
     # 报告里展示的策略名称。
     "strategy_name": DEFAULT_BASE_STRATEGY_NAME,
     # 报告里的策略简述。
-    "strategy_brief": "震荡适配 + ATR短确认",
+    "strategy_brief": "震荡适配",
     # 当前持仓状态。auto / empty / hold。
     "current_position": "auto",
     # 是否启用大模型分析。
     "enable_llm_analysis": False,
-    # 启用的补丁列表。dypre 负责数据校验，atr 负责波动率风控。
-    "patches": ["dypre", "atr"],
+    # 启用的补丁列表。当前默认只保留 dypre 数据校验，暂不启用 atr 买入校验。
+    "patches": ["dypre"],
     # 补丁严格模式。True 时补丁缺失或执行失败会直接报错。
     "patch_strict": False,
-    # ATR 周期。越小越跟着短期波动走，越大越平滑。
+    # ATR 周期。当前默认未启用 ATR 补丁，参数先保留，后续重新开启时可直接复用。
     "atr_period": 14,
     # ATR 突破确认周期。越短越敏感，越长越保守；震荡市通常不建议太大。
     "atr_breakout_period": 5,
@@ -249,6 +249,7 @@ BASE_CONFIG: dict[str, Any] = {
 # 预设参数库：
 # - 这里只放“风格差异化参数”，没有出现的字段继续沿用 BASE_CONFIG
 # - 三套预设的关系不是谁更高级，而是分别对应不同的风险偏好和行情阶段
+# - 预设里仍然保留 atr_* 参数，但只有 patches 里显式加入 "atr" 时才会生效
 # - 推荐流程：
 #   1. 先选最接近当前行情的预设
 #   2. 再通过 PRESET_OVERRIDES 做少量局部修正
