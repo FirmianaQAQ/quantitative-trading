@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 DEFAULT_STOCK_NAMES = {
+    "sh.600360": "华微电子",
     "sh.600726": "华电能源",
     "sz.002421": "达实智能",
     "sh.601991": "大唐发电",
