@@ -33,7 +33,6 @@ class StrategySpec:
 
 STRATEGY_FAMILY_DISPLAY_NAMES = {
     DEFAULT_BASE_STRATEGY_ID: DEFAULT_BASE_STRATEGY_NAME,
-    "MAS": "MAS",
     "pair_trade_backtest": "统计套利配对交易",
     "rotation_backtest": "多因子轮动策略",
     "cta_event_backtest": "CTA策略",
@@ -42,12 +41,11 @@ STRATEGY_FAMILY_DISPLAY_NAMES = {
 }
 STRATEGY_FAMILY_ORDER = {
     DEFAULT_BASE_STRATEGY_ID: 0,
-    "MAS": 1,
-    "pair_trade_backtest": 2,
-    "rotation_backtest": 3,
-    "cta_event_backtest": 4,
-    "intraday_t_backtest": 5,
-    "asset_allocation_backtest": 6,
+    "pair_trade_backtest": 1,
+    "rotation_backtest": 2,
+    "cta_event_backtest": 3,
+    "intraday_t_backtest": 4,
+    "asset_allocation_backtest": 5,
 }
 
 # 白名单开关：
@@ -58,7 +56,6 @@ STRATEGY_ID_WHITELIST: frozenset[str] = frozenset()
 STRATEGY_FAMILY_WHITELIST: frozenset[str] = frozenset(
     {
         DEFAULT_BASE_STRATEGY_ID,
-        "MAS",
     }
 )
 
@@ -81,9 +78,6 @@ def _iter_candidate_strategy_modules() -> list[tuple[str, str]]:
             and module_name == DEFAULT_BASE_STRATEGY_MODULE_NAME
         )
         if is_configured_default_source:
-            candidates.append((path.stem, module_name))
-            continue
-        if path.stem == "mas":
             candidates.append((path.stem, module_name))
             continue
         if path.stem in {"base_backtest", "backtest_v1"}:

@@ -19,12 +19,12 @@ class DefaultStrategySourceTests(unittest.TestCase):
 
     def test_normalize_strategy_source_module_supports_python_file_path(self) -> None:
         self.assertEqual(
-            normalize_strategy_source_module("backtest/versatile.py"),
-            "backtest.versatile",
+            normalize_strategy_source_module("backtest/mas.py"),
+            "backtest.mas",
         )
         self.assertEqual(
-            normalize_strategy_source_module(r"backtest\\versatile.py"),
-            "backtest.versatile",
+            normalize_strategy_source_module(r"backtest\\mas.py"),
+            "backtest.mas",
         )
 
     def test_default_strategy_spec_points_to_configured_source_module(self) -> None:
@@ -36,15 +36,15 @@ class DefaultStrategySourceTests(unittest.TestCase):
         self.assertEqual(spec.module_name, DEFAULT_BASE_STRATEGY_MODULE_NAME)
         self.assertEqual(spec.display_name, DEFAULT_BASE_STRATEGY_NAME)
 
-    def test_registry_exposes_mas_as_top_level_family(self) -> None:
+    def test_registry_exposes_only_mas_as_top_level_family(self) -> None:
         list_strategy_specs.cache_clear()
 
         grouped_specs = group_strategy_specs()
         family_names = [family_name for family_name, _ in grouped_specs]
 
-        self.assertGreaterEqual(len(family_names), 2)
-        self.assertEqual(family_names[:2], [DEFAULT_BASE_STRATEGY_NAME, "MAS"])
-        mas_specs = grouped_specs[1][1]
+        self.assertEqual(family_names, [DEFAULT_BASE_STRATEGY_NAME])
+        self.assertNotIn("Versatile", family_names)
+        mas_specs = grouped_specs[0][1]
         self.assertEqual(len(mas_specs), 1)
         self.assertEqual(mas_specs[0].strategy_id, "MAS")
         self.assertEqual(mas_specs[0].family_id, "MAS")

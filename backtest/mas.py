@@ -32,106 +32,195 @@ STRATEGY_FAMILY_ID = "MAS"
 
 CONFIG: dict[str, Any] = {
     # 基础回测参数。
+    # 默认回测股票代码，统一跟随 utils/default_stocks.py 的 DEFAULT_PRIMARY_STOCK_CODE。
     "code": DEFAULT_PRIMARY_STOCK_CODE,
+    # 复权口径。MAS 默认用前复权 qfq；也支持 cq / dypre，不支持 hfq。
     "adjust_flag": "qfq",
+    # 策略正式计入绩效的起始日期。
     "from_date": "2020-01-01",
+    # 策略正式计入绩效的结束日期；None 表示使用数据最后一天。
     "to_date": None,
+    # 指标预热起始日期，必须早于 from_date，避免 MA 和筹码计算预热不足。
     "data_from_date": "2019-01-01",
+    # 初始资金。
     "cash": 100000.0,
+    # 券商佣金率，按成交额双边收取。
     "commission": 0.0000854,
+    # 卖出印花税率。
     "stamp_duty": 0.0005,
+    # 双边过户费率；当前默认 0。
     "transfer_fee": 0.0,
+    # 单笔最低佣金。
     "min_commission": 5.0,
+    # A 股下单股数步长，通常为 100 股。
     "lot_size": 100,
+    # 是否在终端打印逐日信号过滤和交易日志。
     "print_log": True,
+    # 是否生成 HTML 回测报告，报告路径仍走原项目流程。
     "plot": True,
+    # 报告里的对照基准代码；空字符串表示不展示基准。
     "benchmark_code": "sh.000001",
+    # HTML 回测报告输出目录。
     "report_dir": "logs/backtest",
+    # HTML 回测报告文件名前缀。
     "report_name": "mas_backtest",
+    # 报告和菜单展示的策略名称。
     "strategy_name": "MAS",
+    # 菜单和报告摘要里的策略简述。
     "strategy_brief": "银山谷 + 筹码集中 + 量比确认",
+    # 当日建议的持仓状态视角：auto / empty / hold。
     "current_position": "auto",
+    # 是否启用大模型分析，默认关闭，避免普通回测触发外部分析流程。
     "enable_llm_analysis": False,
     # 银山谷均线参数。默认对应 5 日、10 日、20 日均线。
+    # 短期均线周期，对应银山谷里的 MA5。
     "ma_short": 5,
+    # 中期均线周期，对应银山谷里的 MA10。
     "ma_mid": 10,
+    # 长期均线周期，对应银山谷里的 MA20。
     "ma_long": 20,
+    # MA5 上穿 MA10 后，至少持续站上 MA10 的确认天数。
     "short_mid_confirm_days": 2,
+    # 第一段建仓允许在 MA5 上穿 MA10 后多少个交易日内触发。
     "stage1_entry_window": 6,
+    # 三次上穿必须在该交易日跨度内完成，避免拖太久的松散形态。
     "silver_valley_max_span": 20,
     # 形态流畅度。ma_short_slope_period 内 MA5 平均斜率需要达到阈值。
+    # 计算 MA5 平均斜率的回看周期。
     "ma_short_slope_period": 5,
+    # MA5 平均日斜率下限，0.005 表示平均每天至少上行约 0.5%。
     "ma_short_min_avg_slope_pct": 0.005,
+    # 是否要求 MA10 和 MA20 斜率同步向上。
     "require_mid_long_slope_up": True,
+    # MA10 单日斜率下限，0 表示至少不下降。
     "ma_mid_min_slope_pct": 0.0,
+    # MA20 单日斜率下限，0 表示至少不下降。
     "ma_long_min_slope_pct": 0.0,
     # 边长比例验证。中期均线上穿段涨幅必须强于短线段，避免短炒式假突破。
+    # 是否启用银山谷三角边长比例校验。
     "edge_ratio_enabled": True,
+    # MA10 上穿段涨幅需要达到 MA5 上穿段涨幅的倍数。
     "edge_mid_gain_multiplier": 1.0,
     # 筹码集中度参数。集中度单位为百分比，越低表示筹码越集中。
+    # 是否启用筹码集中度过滤。
     "chip_enabled": True,
+    # 筹码分布回看周期。
     "chip_period": 120,
+    # 筹码分布价格网格数量，越大越细，但计算越慢。
     "chip_bins": 70,
+    # 集中度计算使用的筹码比例，0.90 表示统计 90% 筹码分布区间。
     "chip_concentration_threshold": 0.90,
+    # 买入允许的 90% 筹码集中度上限，小于该值才视为高度集中。
     "chip_concentration_max_pct": 10.0,
+    # 观察池上限，10%~15% 只观察，不执行买入。
     "chip_watch_max_pct": 15.0,
+    # 规避阈值，集中度大于等于该值直接放弃。
     "chip_avoid_min_pct": 20.0,
+    # 是否要求筹码分布呈单峰密集形态。
     "chip_single_peak_enabled": True,
+    # 识别有效峰值的相对高度，0.55 表示峰值至少达到最高峰的 55%。
     "chip_peak_min_height_ratio": 0.55,
+    # 允许的有效峰值数量，默认只接受单峰。
     "chip_max_peak_count": 1,
     # 本地 turn 字段为空或全 0 时，用成交量相对 20 日均量估算换手率。
+    # 换手率来源：auto 自动选择，data 强制用 turn，estimate 强制估算。
     "turnover_source": "auto",
+    # 估算换手率的基础值，成交量等于均量时约等于该值。
     "turnover_estimate_base_pct": 0.025,
+    # 估算换手率时使用的成交量均线周期。
     "turnover_estimate_ma_period": 20,
+    # 估算换手率下限，避免筹码完全不滚动。
     "turnover_estimate_min_pct": 0.001,
+    # 估算换手率上限，避免异常成交量导致筹码瞬间全换手。
     "turnover_estimate_max_pct": 0.12,
     # 位置过滤。低位或涨幅温和才允许介入，防止高位筹码集中陷阱。
+    # 是否启用股价位置过滤。
     "position_filter_enabled": True,
+    # 近期涨幅回看周期，默认约 3 个月交易日。
     "recent_gain_lookback": 60,
+    # 近期涨幅买入上限，超过该值认为已经不够低位。
     "recent_gain_max_pct": 0.30,
+    # 近期涨幅放弃阈值，超过该值直接视为高位风险。
     "recent_gain_abandon_pct": 0.80,
+    # 相对高低位计算周期。
     "relative_low_lookback": 120,
+    # 当前价在区间高低位中的最大允许位置，0.65 表示不追到区间高位。
     "relative_position_max_pct": 0.65,
     # 量能确认。三角成型附近需要明显放量，量比确认大资金介入。
+    # 是否启用量能过滤。
     "volume_confirm_enabled": True,
+    # 计算均量和量比的基础周期。
     "volume_ma_period": 20,
+    # 统计三角形成前后放量的回看窗口。
     "volume_expand_lookback": 5,
+    # 近 3-5 日均量相对 20 日均量的最低放大倍数。
     "volume_expand_min_ratio": 1.20,
+    # 当日量比下限，默认要求大于 1.45。
     "volume_ratio_min": 1.45,
+    # 第一段建仓是否必须满足放量确认。
     "stage1_require_volume_confirm": False,
+    # 第二段建仓是否必须满足放量确认。
     "stage2_require_volume_confirm": True,
+    # 第三段回踩加仓是否必须满足放量确认。
     "stage3_require_volume_confirm": False,
     # 基本面兜底。默认关闭；开启后若数据缺列会快速失败，避免伪过滤。
+    # 是否启用基本面过滤；当前本地日线通常没有这些字段，所以默认关闭。
     "fundamental_filter_enabled": False,
+    # 业绩字段名，开启基本面过滤时会读取该列。
     "fundamental_profit_column": "profit_ttm",
+    # 商誉占比字段名，开启基本面过滤时会读取该列。
     "fundamental_goodwill_column": "goodwill_ratio",
+    # 股东减持标记字段名，开启基本面过滤时会读取该列。
     "fundamental_reduction_column": "shareholder_reduction_flag",
+    # 最低盈利要求，低于该值会被过滤。
     "fundamental_min_profit": 0.0,
+    # 最高商誉占比，超过该值会被过滤。
     "fundamental_max_goodwill_ratio": 0.30,
     # 分步建仓。三个阶段合计默认 30%，满足单票最大仓位约束。
+    # 单只股票最大持仓占总资产比例。
     "max_position_pct": 0.30,
+    # 第一段：MA5 上穿 MA10 并确认后的建仓比例。
     "stage1_position_pct": 0.10,
+    # 第二段：完整银山谷成型且量能确认后的加仓比例。
     "stage2_position_pct": 0.10,
+    # 第三段：回踩 MA10 不破并再次拉升后的加仓比例。
     "stage3_position_pct": 0.10,
+    # 买入成交估算价格缓冲，1.0 表示按收盘价估算。
     "buy_price_buffer": 1.0,
+    # 卖出成交估算价格缓冲，1.0 表示按收盘价估算。
     "sell_price_buffer": 1.0,
     # 第三段建仓：回踩 MA10 不破并再次拉升。
+    # 判断“回踩 MA10”的允许上方偏离，0.01 表示最低价接近 MA10 上方 1% 内即可。
     "pullback_tolerance_pct": 0.01,
+    # 判断“未跌破 MA10”的容忍度，0.005 表示收盘价可略低于 MA10 0.5%。
     "pullback_break_tolerance_pct": 0.005,
     # 卖出与风控。
+    # 连续多少天收盘跌破 MA10 后清仓。
     "sell_below_mid_ma_days": 2,
+    # 单笔硬止损比例，亏损达到该值无条件清仓。
     "hard_stop_loss_pct": 0.06,
+    # 是否启用 MA5 死叉 MA20 清仓。
     "dead_cross_exit_enabled": True,
+    # 是否启用持仓后的筹码派发预警。
     "chip_warning_enabled": True,
+    # 持仓盈利后，集中度扩大到该值以上视为派发风险。
     "chip_warning_concentration_pct": 15.0,
+    # 筹码派发预警生效所需的最低浮盈，避免低位震荡误杀。
     "chip_warning_min_profit_pct": 0.20,
     # 参数优化。默认关闭；开启后只遍历 MAS 自己的配置项。
+    # 是否开启参数优化模式；开启后不会生成 HTML 报告。
     "optimize": False,
+    # MA5 优化范围，格式 start:end:step。
     "opt_ma_short": "4:8:1",
+    # MA10 优化范围，格式 start:end:step。
     "opt_ma_mid": "9:13:1",
+    # MA20 优化范围，格式 start:end:step。
     "opt_ma_long": "18:30:2",
+    # 筹码集中度买入阈值优化范围。
     "opt_chip_concentration_max_pct": "8:12:2",
+    # 量比阈值优化范围。
     "opt_volume_ratio_min": "1.20:1.80:0.15",
+    # 参数优化结果展示前 N 名。
     "top": 10,
 }
 
