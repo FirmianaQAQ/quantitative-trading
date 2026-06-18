@@ -27,7 +27,7 @@ class MasFilterTests(unittest.TestCase):
                 {
                     "fundamental_pass": True,
                     "chip_concentration_pct": 16.5,
-                    "chip_single_peak": True,
+                    "chip_single_peak": False,
                     "recent_gain_pct": 0.45,
                     "relative_position_pct": 0.82,
                     "volume_ratio": 1.20,
@@ -66,6 +66,7 @@ class MasFilterTests(unittest.TestCase):
         self.assertTrue(normal_reasons)
         self.assertTrue(uptrend_allowed)
         self.assertEqual(uptrend_reasons, [])
+        self.assertIn("筹码分布不是单峰密集", normal_reasons)
 
 
 if __name__ == "__main__":

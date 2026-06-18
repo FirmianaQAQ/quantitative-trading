@@ -70,8 +70,10 @@ CONFIG: dict[str, Any] = {
     "strategy_brief": "银山谷 + 筹码集中 + 量比确认",
     # 当日建议的持仓状态视角：auto / empty / hold。
     "current_position": "auto",
-    # 市场整体趋势：normal 常规过滤；uptrend 表示当前处于上升趋势，放宽入场阈值。
-    "market_trend_mode": "normal",
+    # 市场整体趋势：normal 常规过滤；uptrend 表示当前处于上升趋势，
+    # 会放宽入场阈值，并跳过“筹码必须单峰”的严格限制。
+    # 当前默认按上升趋势处理；若后续转弱，可切回 normal。
+    "market_trend_mode": "uptrend",
     # 是否启用大模型分析，默认关闭，避免普通回测触发外部分析流程。
     "enable_llm_analysis": False,
     # 银山谷均线参数。默认对应 5 日、10 日、20 日均线。
@@ -118,7 +120,7 @@ CONFIG: dict[str, Any] = {
     "chip_watch_max_pct": 18.0,
     # 规避阈值，集中度大于等于该值直接放弃。
     "chip_avoid_min_pct": 20.0,
-    # 是否要求筹码分布呈单峰密集形态。
+    # 是否要求筹码分布呈单峰密集形态；uptrend 模式下会自动放宽这条限制。
     "chip_single_peak_enabled": True,
     # 识别有效峰值的相对高度，0.55 表示峰值至少达到最高峰的 55%。
     "chip_peak_min_height_ratio": 0.55,
@@ -557,6 +559,10 @@ def _resolve_market_trend_label(config: dict[str, Any]) -> str:
     return "整体上升趋势" if _resolve_market_trend_mode(config) == "uptrend" else "常规过滤"
 
 
+def _should_enforce_single_peak(config: dict[str, Any]) -> bool:
+    return bool(config["chip_single_peak_enabled"]) and _resolve_market_trend_mode(config) != "uptrend"
+
+
 def _build_effective_entry_thresholds(config: dict[str, Any]) -> dict[str, float]:
     thresholds = {
         "chip_concentration_max_pct": float(config["chip_concentration_max_pct"]),
@@ -899,7 +905,7 @@ def _evaluate_entry_filters(
                 reasons.append(f"90%筹码集中度 {concentration:.2f}% 仅适合观察")
             else:
                 reasons.append(f"90%筹码集中度 {concentration:.2f}% 超过买入阈值")
-        if bool(config["chip_single_peak_enabled"]) and not bool(row.get("chip_single_peak", False)):
+        if _should_enforce_single_peak(config) and not bool(row.get("chip_single_peak", False)):
             reasons.append("筹码分布不是单峰密集")
 
     if bool(config["position_filter_enabled"]):
