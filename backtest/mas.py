@@ -70,6 +70,8 @@ CONFIG: dict[str, Any] = {
     "strategy_brief": "银山谷 + 筹码集中 + 量比确认",
     # 当日建议的持仓状态视角：auto / empty / hold。
     "current_position": "auto",
+    # 市场整体趋势：normal 常规过滤；uptrend 表示当前处于上升趋势，放宽入场阈值。
+    "market_trend_mode": "normal",
     # 是否启用大模型分析，默认关闭，避免普通回测触发外部分析流程。
     "enable_llm_analysis": False,
     # 银山谷均线参数。默认对应 5 日、10 日、20 日均线。
@@ -82,14 +84,14 @@ CONFIG: dict[str, Any] = {
     # MA5 上穿 MA10 后，至少持续站上 MA10 的确认天数。
     "short_mid_confirm_days": 2,
     # 第一段建仓允许在 MA5 上穿 MA10 后多少个交易日内触发。
-    "stage1_entry_window": 6,
+    "stage1_entry_window": 3,
     # 三次上穿必须在该交易日跨度内完成，避免拖太久的松散形态。
-    "silver_valley_max_span": 20,
+    "silver_valley_max_span": 10,
     # 形态流畅度。ma_short_slope_period 内 MA5 平均斜率需要达到阈值。
     # 计算 MA5 平均斜率的回看周期。
     "ma_short_slope_period": 5,
-    # MA5 平均日斜率下限，0.005 表示平均每天至少上行约 0.5%。
-    "ma_short_min_avg_slope_pct": 0.005,
+    # MA5 平均日斜率下限，适度放宽，减少趋势初期被误杀。
+    "ma_short_min_avg_slope_pct": 0.0035,
     # 是否要求 MA10 和 MA20 斜率同步向上。
     "require_mid_long_slope_up": True,
     # MA10 单日斜率下限，0 表示至少不下降。
@@ -105,15 +107,15 @@ CONFIG: dict[str, Any] = {
     # 是否启用筹码集中度过滤。
     "chip_enabled": True,
     # 筹码分布回看周期。
-    "chip_period": 120,
+    "chip_period": 30,
     # 筹码分布价格网格数量，越大越细，但计算越慢。
     "chip_bins": 70,
     # 集中度计算使用的筹码比例，0.90 表示统计 90% 筹码分布区间。
     "chip_concentration_threshold": 0.90,
-    # 买入允许的 90% 筹码集中度上限，小于该值才视为高度集中。
-    "chip_concentration_max_pct": 10.0,
-    # 观察池上限，10%~15% 只观察，不执行买入。
-    "chip_watch_max_pct": 15.0,
+    # 买入允许的 90% 筹码集中度上限，放宽到 15% 左右。
+    "chip_concentration_max_pct": 15.0,
+    # 观察池上限，进一步放宽到 18% 左右。
+    "chip_watch_max_pct": 18.0,
     # 规避阈值，集中度大于等于该值直接放弃。
     "chip_avoid_min_pct": 20.0,
     # 是否要求筹码分布呈单峰密集形态。
@@ -137,15 +139,15 @@ CONFIG: dict[str, Any] = {
     # 是否启用股价位置过滤。
     "position_filter_enabled": True,
     # 近期涨幅回看周期，默认约 3 个月交易日。
-    "recent_gain_lookback": 60,
+    "recent_gain_lookback": 30,
     # 近期涨幅买入上限，超过该值认为已经不够低位。
-    "recent_gain_max_pct": 0.30,
+    "recent_gain_max_pct": 0.40,
     # 近期涨幅放弃阈值，超过该值直接视为高位风险。
-    "recent_gain_abandon_pct": 0.80,
+    "recent_gain_abandon_pct": 1.00,
     # 相对高低位计算周期。
-    "relative_low_lookback": 120,
+    "relative_low_lookback": 30,
     # 当前价在区间高低位中的最大允许位置，0.65 表示不追到区间高位。
-    "relative_position_max_pct": 0.65,
+    "relative_position_max_pct": 0.75,
     # 量能确认。三角成型附近需要明显放量，量比确认大资金介入。
     # 是否启用量能过滤。
     "volume_confirm_enabled": True,
@@ -154,9 +156,9 @@ CONFIG: dict[str, Any] = {
     # 统计三角形成前后放量的回看窗口。
     "volume_expand_lookback": 5,
     # 近 3-5 日均量相对 20 日均量的最低放大倍数。
-    "volume_expand_min_ratio": 1.20,
-    # 当日量比下限，默认要求大于 1.45。
-    "volume_ratio_min": 1.45,
+    "volume_expand_min_ratio": 1.10,
+    # 当日量比下限，适度放宽，减少趋势延续段的误杀。
+    "volume_ratio_min": 1.30,
     # 第一段建仓是否必须满足放量确认。
     "stage1_require_volume_confirm": False,
     # 第二段建仓是否必须满足放量确认。
@@ -196,9 +198,9 @@ CONFIG: dict[str, Any] = {
     "pullback_break_tolerance_pct": 0.005,
     # 卖出与风控。
     # 连续多少天收盘跌破 MA10 后清仓。
-    "sell_below_mid_ma_days": 2,
+    "sell_below_mid_ma_days": 1,
     # 单笔硬止损比例，亏损达到该值无条件清仓。
-    "hard_stop_loss_pct": 0.06,
+    "hard_stop_loss_pct": 0.6,
     # 是否启用 MA5 死叉 MA20 清仓。
     "dead_cross_exit_enabled": True,
     # 是否启用持仓后的筹码派发预警。
@@ -325,6 +327,8 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("sell_price_buffer 必须大于 0")
     if str(config["turnover_source"]).strip().lower() not in {"auto", "data", "estimate"}:
         raise ValueError("turnover_source 仅支持 auto、data、estimate")
+    if str(config["market_trend_mode"]).strip().lower() not in {"normal", "uptrend"}:
+        raise ValueError("market_trend_mode 仅支持 normal、uptrend")
 
     if float(config["chip_concentration_max_pct"]) > float(config["chip_watch_max_pct"]):
         raise ValueError("chip_concentration_max_pct 不能大于 chip_watch_max_pct")
@@ -543,6 +547,43 @@ def _filter_trade_frame(frame: pd.DataFrame, config: dict[str, Any]) -> pd.DataF
     if config.get("to_date"):
         filtered = filtered[filtered["date"] <= pd.Timestamp(config["to_date"])]
     return filtered
+
+
+def _resolve_market_trend_mode(config: dict[str, Any]) -> str:
+    return str(config.get("market_trend_mode", "normal")).strip().lower()
+
+
+def _resolve_market_trend_label(config: dict[str, Any]) -> str:
+    return "整体上升趋势" if _resolve_market_trend_mode(config) == "uptrend" else "常规过滤"
+
+
+def _build_effective_entry_thresholds(config: dict[str, Any]) -> dict[str, float]:
+    thresholds = {
+        "chip_concentration_max_pct": float(config["chip_concentration_max_pct"]),
+        "chip_watch_max_pct": float(config["chip_watch_max_pct"]),
+        "recent_gain_max_pct": float(config["recent_gain_max_pct"]),
+        "recent_gain_abandon_pct": float(config["recent_gain_abandon_pct"]),
+        "relative_position_max_pct": float(config["relative_position_max_pct"]),
+        "volume_expand_min_ratio": float(config["volume_expand_min_ratio"]),
+        "volume_ratio_min": float(config["volume_ratio_min"]),
+        "ma_short_min_avg_slope_pct": float(config["ma_short_min_avg_slope_pct"]),
+    }
+    if _resolve_market_trend_mode(config) != "uptrend":
+        return thresholds
+
+    chip_avoid_min_pct = float(config["chip_avoid_min_pct"])
+    thresholds["chip_watch_max_pct"] = min(thresholds["chip_watch_max_pct"] + 2.0, chip_avoid_min_pct - 0.1)
+    thresholds["chip_concentration_max_pct"] = min(
+        thresholds["chip_concentration_max_pct"] + 2.0,
+        thresholds["chip_watch_max_pct"],
+    )
+    thresholds["recent_gain_max_pct"] += 0.10
+    thresholds["recent_gain_abandon_pct"] += 0.15
+    thresholds["relative_position_max_pct"] = min(thresholds["relative_position_max_pct"] + 0.10, 0.95)
+    thresholds["volume_expand_min_ratio"] = max(thresholds["volume_expand_min_ratio"] - 0.10, 1.0)
+    thresholds["volume_ratio_min"] = max(thresholds["volume_ratio_min"] - 0.15, 1.0)
+    thresholds["ma_short_min_avg_slope_pct"] = max(thresholds["ma_short_min_avg_slope_pct"] - 0.001, 0.0)
+    return thresholds
 
 
 def _build_turnover_series(frame: pd.DataFrame, config: dict[str, Any]) -> pd.Series:
@@ -842,6 +883,7 @@ def _evaluate_entry_filters(
 ) -> tuple[bool, list[str]]:
     row = frame.iloc[idx]
     reasons: list[str] = []
+    thresholds = _build_effective_entry_thresholds(config)
 
     if not bool(row.get("fundamental_pass", True)):
         reasons.append("基本面兜底不通过")
@@ -852,8 +894,8 @@ def _evaluate_entry_filters(
             reasons.append("筹码集中度不可用")
         elif concentration >= float(config["chip_avoid_min_pct"]):
             reasons.append(f"90%筹码集中度 {concentration:.2f}% >= 规避阈值")
-        elif concentration > float(config["chip_concentration_max_pct"]):
-            if concentration <= float(config["chip_watch_max_pct"]):
+        elif concentration > thresholds["chip_concentration_max_pct"]:
+            if concentration <= thresholds["chip_watch_max_pct"]:
                 reasons.append(f"90%筹码集中度 {concentration:.2f}% 仅适合观察")
             else:
                 reasons.append(f"90%筹码集中度 {concentration:.2f}% 超过买入阈值")
@@ -863,11 +905,11 @@ def _evaluate_entry_filters(
     if bool(config["position_filter_enabled"]):
         recent_gain = _safe_float(row.get("recent_gain_pct"))
         relative_position = _safe_float(row.get("relative_position_pct"))
-        if recent_gain is not None and recent_gain > float(config["recent_gain_abandon_pct"]):
+        if recent_gain is not None and recent_gain > thresholds["recent_gain_abandon_pct"]:
             reasons.append(f"近阶段涨幅 {recent_gain:.2%} 已达到放弃买入区")
-        elif recent_gain is not None and recent_gain > float(config["recent_gain_max_pct"]):
+        elif recent_gain is not None and recent_gain > thresholds["recent_gain_max_pct"]:
             reasons.append(f"近阶段涨幅 {recent_gain:.2%} 超过低位过滤阈值")
-        if relative_position is not None and relative_position > float(config["relative_position_max_pct"]):
+        if relative_position is not None and relative_position > thresholds["relative_position_max_pct"]:
             reasons.append(f"价格相对区间位置 {relative_position:.2%} 偏高")
 
     volume_required = (
@@ -881,13 +923,13 @@ def _evaluate_entry_filters(
     if volume_required:
         volume_ratio = _safe_float(row.get("volume_ratio"))
         volume_expand_ratio = _safe_float(row.get("volume_expand_ratio"))
-        if volume_ratio is None or volume_ratio < float(config["volume_ratio_min"]):
+        if volume_ratio is None or volume_ratio < thresholds["volume_ratio_min"]:
             reasons.append("当日量比不足")
-        if volume_expand_ratio is None or volume_expand_ratio < float(config["volume_expand_min_ratio"]):
+        if volume_expand_ratio is None or volume_expand_ratio < thresholds["volume_expand_min_ratio"]:
             reasons.append("近3-5日放量不足")
 
     short_slope = _safe_float(row.get("ma_short_avg_slope_pct"))
-    if short_slope is None or short_slope < float(config["ma_short_min_avg_slope_pct"]):
+    if short_slope is None or short_slope < thresholds["ma_short_min_avg_slope_pct"]:
         reasons.append("MA5 平均斜率不足")
     if bool(config["require_mid_long_slope_up"]):
         mid_slope = _safe_float(row.get("ma_mid_slope_pct"))
@@ -1153,6 +1195,8 @@ def _build_summary(
             if state.buy_trade_records
             else None
         ),
+        "market_trend_mode": _resolve_market_trend_mode(config),
+        "market_trend_label": _resolve_market_trend_label(config),
         "fast_period": int(config["ma_short"]),
         "mid_period": int(config["ma_mid"]),
         "slow_period": int(config["ma_long"]),
@@ -1253,6 +1297,7 @@ def _build_metrics_payload(summary: dict[str, Any], config: dict[str, Any]) -> d
     return {
         "股票代码": config["code"],
         "策略名称": config["strategy_name"],
+        "市场环境": summary["market_trend_label"],
         "复权口径": config["adjust_flag"],
         "均线说明": f"MA{config['ma_short']}、MA{config['ma_mid']}、MA{config['ma_long']} 银山谷",
         "初始资金": _format_number(summary["initial_value"]),
@@ -1455,6 +1500,7 @@ def _parse_number_range(raw_value: Any, cast_type: type, name: str) -> list[Any]
 
 def _print_summary(summary: dict[str, Any]) -> None:
     print("回测结果:")
+    print(f"  市场环境: {summary['market_trend_label']}")
     print(f"  均线周期: MA{summary['fast_period']}/MA{summary['mid_period']}/MA{summary['slow_period']}")
     print(f"  初始资金: {summary['initial_value']:.2f}")
     print(f"  期末资产: {summary['final_value']:.2f}")
